@@ -14,12 +14,12 @@ import {
 import { Button } from "@/components/ui/button"
 
 const navItems = [
-  { icon: LayoutDashboard, label: "Dashboard", href: "#", active: true },
-  { icon: Hash, label: "Keywords", href: "#keywords" },
-  { icon: Users, label: "Sources / Groups", href: "#sources" },
-  { icon: Bell, label: "Notifications", href: "#notifications" },
-  { icon: CreditCard, label: "Billing", href: "#billing" },
-  { icon: Settings, label: "Settings", href: "#settings" },
+  { icon: LayoutDashboard, label: "Панель", href: "#", active: true },
+  { icon: Hash, label: "Ключевые слова", href: "#keywords" },
+  { icon: Users, label: "Группы", href: "#sources" },
+  { icon: Bell, label: "Уведомления", href: "#notifications" },
+  { icon: CreditCard, label: "Оплата", href: "#billing" },
+  { icon: Settings, label: "Настройки", href: "#settings" },
 ]
 
 interface SidebarNavProps {
@@ -80,7 +80,7 @@ export function SidebarNav({ collapsed, onToggle, activeItem, onNavigate }: Side
           className={cn("size-8 text-muted-foreground hover:text-sidebar-foreground", !collapsed && "ml-auto")}
         >
           {collapsed ? <ChevronRight className="size-4" /> : <ChevronLeft className="size-4" />}
-          <span className="sr-only">{collapsed ? "Expand sidebar" : "Collapse sidebar"}</span>
+          <span className="sr-only">{collapsed ? "Развернуть" : "Свернуть"}</span>
         </Button>
       </div>
     </aside>

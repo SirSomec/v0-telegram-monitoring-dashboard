@@ -17,12 +17,12 @@ import {
 import { cn } from "@/lib/utils"
 
 const navItems = [
-  { icon: LayoutDashboard, label: "Dashboard" },
-  { icon: Hash, label: "Keywords" },
-  { icon: Users, label: "Sources / Groups" },
-  { icon: Bell, label: "Notifications" },
-  { icon: CreditCard, label: "Billing" },
-  { icon: Settings, label: "Settings" },
+  { icon: LayoutDashboard, label: "Панель" },
+  { icon: Hash, label: "Ключевые слова" },
+  { icon: Users, label: "Группы" },
+  { icon: Bell, label: "Уведомления" },
+  { icon: CreditCard, label: "Оплата" },
+  { icon: Settings, label: "Настройки" },
 ]
 
 interface MobileSidebarProps {

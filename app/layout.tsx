@@ -7,8 +7,8 @@ const _inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 const _jetbrainsMono = JetBrains_Mono({ subsets: ["latin"], variable: "--font-jetbrains" });
 
 export const metadata: Metadata = {
-  title: 'TeleScope - Telegram Monitoring Dashboard',
-  description: 'Monitor Telegram mentions, track keywords, and discover leads in real-time.',
+  title: 'TeleScope - Мониторинг Telegram в реальном времени',
+  description: 'Отслеживайте упоминания в Telegram, управляйте ключевыми словами и находите лиды автоматически.',
   generator: 'v0.app',
   icons: {
     icon: [
@@ -41,7 +41,7 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en" className="dark">
+    <html lang="ru" className="dark">
       <body className={`${_inter.variable} ${_jetbrainsMono.variable} font-sans antialiased`}>
         {children}
         <Analytics />

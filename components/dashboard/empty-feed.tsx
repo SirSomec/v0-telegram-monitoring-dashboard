@@ -16,17 +16,17 @@ export function EmptyFeed({ onAddKeyword }: EmptyFeedProps) {
           <SearchX className="size-8 text-muted-foreground" />
         </div>
         <h3 className="mt-4 text-lg font-semibold text-card-foreground">
-          No mentions yet
+          Упоминаний пока нет
         </h3>
         <p className="mt-2 max-w-sm text-sm leading-relaxed text-muted-foreground">
-          Add some keywords to start monitoring Telegram groups. Mentions will appear here as they are detected in real-time.
+          Добавьте ключевые слова для начала мониторинга Telegram-групп. Упоминания будут появляться здесь по мере обнаружения в реальном времени.
         </p>
         <Button
           onClick={onAddKeyword}
           className="mt-6 bg-primary text-primary-foreground hover:bg-primary/90"
         >
           <Plus className="mr-2 size-4" />
-          Add Your First Keyword
+          Добавить первое ключевое слово
         </Button>
       </CardContent>
     </Card>

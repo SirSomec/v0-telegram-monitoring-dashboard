@@ -11,12 +11,12 @@ import { Plus, X, Sparkles, Target } from "lucide-react"
 
 const initialKeywords = [
   "bitcoin",
-  "crypto exchange",
-  "NFT marketplace",
-  "DeFi protocol",
-  "web3 jobs",
+  "крипто биржа",
+  "NFT маркетплейс",
+  "DeFi протокол",
+  "web3 вакансии",
   "solana",
-  "ethereum merge",
+  "ethereum",
 ]
 
 export function KeywordsManager() {
@@ -48,13 +48,13 @@ export function KeywordsManager() {
       <CardHeader className="pb-4">
         <div className="flex items-center justify-between">
           <CardTitle className="text-base font-semibold text-card-foreground">
-            Keywords Management
+            Управление ключевыми словами
           </CardTitle>
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2">
               <Target className="size-4 text-muted-foreground" />
               <Label htmlFor="search-mode" className="text-xs text-muted-foreground cursor-pointer">
-                Exact Match
+                Точное
               </Label>
               <Switch
                 id="search-mode"
@@ -63,7 +63,7 @@ export function KeywordsManager() {
               />
               <Label htmlFor="search-mode" className="flex items-center gap-1 text-xs text-muted-foreground cursor-pointer">
                 <Sparkles className="size-3" />
-                AI Semantic
+                ИИ семантика
               </Label>
             </div>
           </div>
@@ -72,7 +72,7 @@ export function KeywordsManager() {
       <CardContent className="space-y-4">
         <div className="flex gap-2">
           <Input
-            placeholder="Add a keyword..."
+            placeholder="Добавить ключевое слово..."
             value={newKeyword}
             onChange={(e) => setNewKeyword(e.target.value)}
             onKeyDown={handleKeyDown}
@@ -80,7 +80,7 @@ export function KeywordsManager() {
           />
           <Button onClick={addKeyword} size="sm" className="shrink-0 bg-primary text-primary-foreground hover:bg-primary/90">
             <Plus className="mr-1 size-4" />
-            Add
+            Добавить
           </Button>
         </div>
 
@@ -95,7 +95,7 @@ export function KeywordsManager() {
               <button
                 onClick={() => removeKeyword(keyword)}
                 className="ml-0.5 rounded-full p-0.5 hover:bg-muted transition-colors"
-                aria-label={`Remove ${keyword}`}
+                aria-label={`Удалить ${keyword}`}
               >
                 <X className="size-3" />
               </button>
@@ -105,7 +105,7 @@ export function KeywordsManager() {
 
         {keywords.length === 0 && (
           <p className="py-4 text-center text-sm text-muted-foreground">
-            No keywords added. Type a keyword above and press Enter to start monitoring.
+            Ключевые слова не добавлены. Введите слово выше и нажмите Enter для начала мониторинга.
           </p>
         )}
       </CardContent>

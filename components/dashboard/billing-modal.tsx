@@ -14,38 +14,41 @@ import { cn } from "@/lib/utils"
 
 const plans = [
   {
-    name: "Starter",
-    price: "$19",
-    period: "/month",
-    features: ["5 keywords", "10 groups", "Email notifications", "7-day history"],
+    name: "Стартовый",
+    price: "1 490",
+    currency: "\u20BD",
+    period: "/мес",
+    features: ["5 ключевых слов", "10 групп", "Email-уведомления", "История за 7 дней"],
     current: false,
   },
   {
-    name: "Pro",
-    price: "$49",
-    period: "/month",
+    name: "Про",
+    price: "3 990",
+    currency: "\u20BD",
+    period: "/мес",
     features: [
-      "25 keywords",
-      "Unlimited groups",
-      "Real-time alerts",
-      "30-day history",
-      "AI semantic search",
-      "Lead tracking",
+      "25 ключевых слов",
+      "Безлимит групп",
+      "Уведомления в реальном времени",
+      "История за 30 дней",
+      "ИИ семантический поиск",
+      "Трекинг лидов",
     ],
     current: true,
   },
   {
-    name: "Enterprise",
-    price: "$149",
-    period: "/month",
+    name: "Бизнес",
+    price: "9 990",
+    currency: "\u20BD",
+    period: "/мес",
     features: [
-      "Unlimited keywords",
-      "Unlimited groups",
-      "Priority support",
-      "365-day history",
-      "API access",
-      "Custom integrations",
-      "Dedicated account manager",
+      "Безлимит ключевых слов",
+      "Безлимит групп",
+      "Приоритетная поддержка",
+      "История за 365 дней",
+      "API-доступ",
+      "Кастомные интеграции",
+      "Персональный менеджер",
     ],
     current: false,
   },
@@ -61,9 +64,9 @@ export function BillingModal({ open, onOpenChange }: BillingModalProps) {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-2xl bg-card border-border">
         <DialogHeader>
-          <DialogTitle className="text-card-foreground">Subscription Plans</DialogTitle>
+          <DialogTitle className="text-card-foreground">Тарифные планы</DialogTitle>
           <DialogDescription>
-            Choose the plan that fits your monitoring needs.
+            Выберите план, который подходит для ваших задач мониторинга.
           </DialogDescription>
         </DialogHeader>
 
@@ -80,14 +83,14 @@ export function BillingModal({ open, onOpenChange }: BillingModalProps) {
             >
               {plan.current && (
                 <Badge className="absolute -top-2.5 left-1/2 -translate-x-1/2 bg-primary text-primary-foreground text-xs">
-                  Current Plan
+                  Текущий план
                 </Badge>
               )}
 
               <h3 className="font-semibold text-card-foreground">{plan.name}</h3>
               <div className="mt-2 flex items-baseline gap-0.5">
                 <span className="text-2xl font-bold text-card-foreground">{plan.price}</span>
-                <span className="text-sm text-muted-foreground">{plan.period}</span>
+                <span className="text-sm text-muted-foreground">{" "}{plan.currency}{plan.period}</span>
               </div>
 
               <ul className="mt-4 flex-1 space-y-2">
@@ -108,7 +111,7 @@ export function BillingModal({ open, onOpenChange }: BillingModalProps) {
                 )}
                 disabled={plan.current}
               >
-                {plan.current ? "Active" : "Upgrade"}
+                {plan.current ? "Активен" : "Перейти"}
               </Button>
             </div>
           ))}

@@ -21,13 +21,13 @@ export function Header({ onMobileMenuToggle, serviceOnline }: HeaderProps) {
         onClick={onMobileMenuToggle}
       >
         <Menu className="size-5" />
-        <span className="sr-only">Toggle menu</span>
+        <span className="sr-only">Открыть меню</span>
       </Button>
 
       <div className="relative flex-1 max-w-md">
         <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
         <Input
-          placeholder="Global search..."
+          placeholder="Глобальный поиск..."
           className="pl-9 bg-secondary border-border text-foreground placeholder:text-muted-foreground"
         />
       </div>
@@ -41,12 +41,12 @@ export function Header({ onMobileMenuToggle, serviceOnline }: HeaderProps) {
           }
         >
           <span className={`mr-1.5 inline-block size-2 rounded-full ${serviceOnline ? "bg-success" : "bg-destructive"}`} />
-          {serviceOnline ? "Service Online" : "Service Offline"}
+          {serviceOnline ? "Сервис онлайн" : "Сервис оффлайн"}
         </Badge>
 
         <Avatar className="size-8 border border-border">
           <AvatarFallback className="bg-secondary text-foreground text-xs font-medium">
-            JD
+            АП
           </AvatarFallback>
         </Avatar>
       </div>

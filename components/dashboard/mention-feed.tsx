@@ -22,68 +22,68 @@ interface Mention {
 const sampleMentions: Mention[] = [
   {
     id: "1",
-    groupName: "Crypto Trading Signals",
-    groupIcon: "CT",
-    userName: "Alex Petrov",
-    userInitials: "AP",
-    message: "Looking for a reliable crypto exchange with low fees. Currently exploring different DeFi protocol options for my portfolio.",
-    keyword: "crypto exchange",
-    timestamp: "2 min ago",
+    groupName: "Крипто Трейдинг Сигналы",
+    groupIcon: "КТ",
+    userName: "Алексей Петров",
+    userInitials: "АП",
+    message: "Ищу надёжную крипто биржу с низкими комиссиями. Сейчас изучаю разные DeFi протокол варианты для своего портфеля.",
+    keyword: "крипто биржа",
+    timestamp: "2 мин назад",
     isLead: false,
   },
   {
     id: "2",
-    groupName: "Web3 Developers Hub",
+    groupName: "Web3 Разработчики",
     groupIcon: "W3",
-    userName: "Maria Chen",
-    userInitials: "MC",
-    message: "Anyone hiring for web3 jobs? I have 3 years of Solidity experience and looking for remote opportunities in the ethereum ecosystem.",
-    keyword: "web3 jobs",
-    timestamp: "8 min ago",
+    userName: "Мария Чен",
+    userInitials: "МЧ",
+    message: "Кто-нибудь нанимает на web3 вакансии? У меня 3 года опыта с Solidity, ищу удалённую работу в экосистеме ethereum.",
+    keyword: "web3 вакансии",
+    timestamp: "8 мин назад",
     isLead: true,
   },
   {
     id: "3",
-    groupName: "NFT Collectors",
-    groupIcon: "NC",
-    userName: "Dmitry Volkov",
-    userInitials: "DV",
-    message: "Just launched our new NFT marketplace on Solana. Lower gas fees and faster transactions compared to ETH-based platforms.",
-    keyword: "NFT marketplace",
-    timestamp: "15 min ago",
+    groupName: "NFT Коллекционеры",
+    groupIcon: "НК",
+    userName: "Дмитрий Волков",
+    userInitials: "ДВ",
+    message: "Только что запустили новый NFT маркетплейс на Solana. Более низкие комиссии за газ и быстрые транзакции по сравнению с ETH-платформами.",
+    keyword: "NFT маркетплейс",
+    timestamp: "15 мин назад",
     isLead: false,
   },
   {
     id: "4",
-    groupName: "Bitcoin Daily",
-    groupIcon: "BD",
-    userName: "Sarah Kim",
-    userInitials: "SK",
-    message: "Bitcoin just broke the 100k resistance level. This bull run is different from 2021. HODLers are being rewarded finally!",
+    groupName: "Bitcoin Ежедневно",
+    groupIcon: "БЕ",
+    userName: "Сара Ким",
+    userInitials: "СК",
+    message: "Bitcoin только что пробил уровень сопротивления 100k. Этот бычий забег отличается от 2021. Холдеры наконец вознаграждены!",
     keyword: "bitcoin",
-    timestamp: "23 min ago",
+    timestamp: "23 мин назад",
     isLead: false,
   },
   {
     id: "5",
-    groupName: "DeFi Innovators",
-    groupIcon: "DI",
-    userName: "James Wright",
-    userInitials: "JW",
-    message: "Our new DeFi protocol just launched yield farming with 12% APY. Looking for early adopters and partnership opportunities.",
-    keyword: "DeFi protocol",
-    timestamp: "31 min ago",
+    groupName: "DeFi Инноваторы",
+    groupIcon: "ДИ",
+    userName: "Джеймс Райт",
+    userInitials: "ДР",
+    message: "Наш новый DeFi протокол запустил фарминг с 12% APY. Ищем ранних последователей и партнёрские возможности.",
+    keyword: "DeFi протокол",
+    timestamp: "31 мин назад",
     isLead: false,
   },
   {
     id: "6",
-    groupName: "Ethereum Developers",
-    groupIcon: "ED",
-    userName: "Lena Ivanova",
-    userInitials: "LI",
-    message: "Post ethereum merge the gas fees have dropped significantly. Great time to deploy new smart contracts on mainnet.",
-    keyword: "ethereum merge",
-    timestamp: "45 min ago",
+    groupName: "Ethereum Разработчики",
+    groupIcon: "ЕР",
+    userName: "Лена Иванова",
+    userInitials: "ЛИ",
+    message: "После обновления ethereum комиссии за газ значительно снизились. Отличное время для деплоя новых смарт-контрактов в мейннет.",
+    keyword: "ethereum",
+    timestamp: "45 мин назад",
     isLead: true,
   },
 ]
@@ -117,10 +117,10 @@ export function MentionFeed() {
         <div className="flex items-center justify-between">
           <CardTitle className="flex items-center gap-2 text-base font-semibold text-card-foreground">
             <MessageSquare className="size-4 text-primary" />
-            Mention Feed
+            Лента упоминаний
           </CardTitle>
           <Badge variant="outline" className="border-primary/30 bg-primary/10 text-primary text-xs font-mono">
-            {mentions.length} results
+            {mentions.length} результатов
           </Badge>
         </div>
       </CardHeader>
@@ -167,7 +167,7 @@ export function MentionFeed() {
                       className="h-7 gap-1.5 text-xs text-muted-foreground hover:text-foreground"
                     >
                       <ExternalLink className="size-3" />
-                      Go to Message
+                      К сообщению
                     </Button>
                     <Button
                       variant={mention.isLead ? "default" : "outline"}
@@ -182,12 +182,12 @@ export function MentionFeed() {
                       {mention.isLead ? (
                         <>
                           <Check className="size-3" />
-                          Lead Saved
+                          Лид сохранён
                         </>
                       ) : (
                         <>
                           <UserPlus className="size-3" />
-                          Mark as Lead
+                          Отметить как лид
                         </>
                       )}
                     </Button>

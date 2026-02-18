@@ -5,15 +5,15 @@ import { MessageSquare, Hash, UserPlus, CalendarClock } from "lucide-react"
 
 const stats = [
   {
-    label: "Total Mentions Today",
-    value: "1,284",
+    label: "Упоминаний сегодня",
+    value: "1 284",
     change: "+12%",
     icon: MessageSquare,
     color: "text-primary",
     bgColor: "bg-primary/10",
   },
   {
-    label: "Active Keywords",
+    label: "Активных ключевых слов",
     value: "23",
     change: "+3",
     icon: Hash,
@@ -21,7 +21,7 @@ const stats = [
     bgColor: "bg-success/10",
   },
   {
-    label: "New Leads Found",
+    label: "Новых лидов найдено",
     value: "47",
     change: "+8",
     icon: UserPlus,
@@ -29,9 +29,9 @@ const stats = [
     bgColor: "bg-warning/10",
   },
   {
-    label: "Subscription Days Left",
+    label: "Дней подписки осталось",
     value: "18",
-    change: "Pro Plan",
+    change: "Тариф Про",
     icon: CalendarClock,
     color: "text-chart-4",
     bgColor: "bg-chart-4/10",
