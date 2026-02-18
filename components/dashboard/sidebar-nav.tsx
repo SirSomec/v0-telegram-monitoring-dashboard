@@ -1,0 +1,88 @@
+"use client"
+
+import { cn } from "@/lib/utils"
+import {
+  LayoutDashboard,
+  Settings,
+  Users,
+  Bell,
+  CreditCard,
+  Hash,
+  ChevronLeft,
+  ChevronRight,
+} from "lucide-react"
+import { Button } from "@/components/ui/button"
+
+const navItems = [
+  { icon: LayoutDashboard, label: "Dashboard", href: "#", active: true },
+  { icon: Hash, label: "Keywords", href: "#keywords" },
+  { icon: Users, label: "Sources / Groups", href: "#sources" },
+  { icon: Bell, label: "Notifications", href: "#notifications" },
+  { icon: CreditCard, label: "Billing", href: "#billing" },
+  { icon: Settings, label: "Settings", href: "#settings" },
+]
+
+interface SidebarNavProps {
+  collapsed: boolean
+  onToggle: () => void
+  activeItem: string
+  onNavigate: (item: string) => void
+}
+
+export function SidebarNav({ collapsed, onToggle, activeItem, onNavigate }: SidebarNavProps) {
+  return (
+    <aside
+      className={cn(
+        "fixed left-0 top-0 z-40 flex h-screen flex-col border-r border-sidebar-border bg-sidebar transition-all duration-300",
+        collapsed ? "w-16" : "w-60"
+      )}
+    >
+      <div className={cn("flex h-16 items-center border-b border-sidebar-border px-4", collapsed ? "justify-center" : "gap-3")}>
+        <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" className="text-primary-foreground">
+            <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+        </div>
+        {!collapsed && (
+          <span className="text-lg font-semibold tracking-tight text-sidebar-foreground">
+            TeleScope
+          </span>
+        )}
+      </div>
+
+      <nav className="flex flex-1 flex-col gap-1 p-3">
+        {navItems.map((item) => {
+          const isActive = activeItem === item.label
+          return (
+            <button
+              key={item.label}
+              onClick={() => onNavigate(item.label)}
+              className={cn(
+                "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
+                collapsed && "justify-center px-0",
+                isActive
+                  ? "bg-sidebar-accent text-primary"
+                  : "text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground"
+              )}
+            >
+              <item.icon className="size-5 shrink-0" />
+              {!collapsed && <span>{item.label}</span>}
+            </button>
+          )
+        })}
+      </nav>
+
+      <div className="border-t border-sidebar-border p-3">
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={onToggle}
+          className={cn("size-8 text-muted-foreground hover:text-sidebar-foreground", !collapsed && "ml-auto")}
+        >
+          {collapsed ? <ChevronRight className="size-4" /> : <ChevronLeft className="size-4" />}
+          <span className="sr-only">{collapsed ? "Expand sidebar" : "Collapse sidebar"}</span>
+        </Button>
+      </div>
+    </aside>
+  )
+}
