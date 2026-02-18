@@ -8,3 +8,11 @@ node_modules/
 .next/
 .env*.local
 .DS_Store
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Cursor / temp
+.tmp/
