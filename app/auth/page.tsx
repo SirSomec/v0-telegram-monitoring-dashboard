@@ -1,6 +1,6 @@
 "use client"
 
-import { Suspense, useState } from "react"
+import { Suspense, useEffect, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
@@ -15,7 +15,12 @@ function AuthPageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const defaultTab = searchParams.get("tab") === "register" ? "register" : "login"
-  const { login, register } = useAuth()
+  const { user, loading, login, register } = useAuth()
+
+  useEffect(() => {
+    if (loading) return
+    if (user) router.replace("/dashboard")
+  }, [loading, user, router])
 
   const [activeTab, setActiveTab] = useState(defaultTab)
   const [showPassword, setShowPassword] = useState(false)
@@ -93,6 +98,14 @@ function AuthPageContent() {
     } finally {
       setSubmitting(false)
     }
+  }
+
+  if (loading || user) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <p className="text-muted-foreground">Загрузка...</p>
+      </div>
+    )
   }
 
   return (
