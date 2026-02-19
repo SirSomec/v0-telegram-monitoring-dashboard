@@ -44,3 +44,29 @@ export function wsMentionsUrl(token: string | null): string {
   if (!token) return `${wsBase}/ws/mentions`
   return `${wsBase}/ws/mentions?token=${encodeURIComponent(token)}`
 }
+
+export type ExportMentionsParams = {
+  keyword?: string
+  leadsOnly?: boolean
+  dateFrom?: string
+  dateTo?: string
+}
+
+/** Скачивает CSV экспорт упоминаний (с текущими заголовками авторизации). */
+export async function downloadMentionsCsv(params: ExportMentionsParams = {}): Promise<void> {
+  const search = new URLSearchParams()
+  if (params.keyword?.trim()) search.set("keyword", params.keyword.trim())
+  if (params.leadsOnly) search.set("leadsOnly", "true")
+  if (params.dateFrom) search.set("dateFrom", params.dateFrom)
+  if (params.dateTo) search.set("dateTo", params.dateTo)
+  const url = `${getApiUrl()}/api/mentions/export${search.toString() ? `?${search}` : ""}`
+  const res = await fetch(url, { headers: getAuthHeaders() })
+  if (!res.ok) throw new Error(await res.text().catch(() => `HTTP ${res.status}`))
+  const blob = await res.blob()
+  const u = URL.createObjectURL(blob)
+  const a = document.createElement("a")
+  a.href = u
+  a.download = "mentions.csv"
+  a.click()
+  URL.revokeObjectURL(u)
+}

@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import csv
+import io
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-from fastapi import Depends, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, Header, HTTPException, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from sqlalchemy import desc, func, select
+from sqlalchemy import desc, func, select, update
 from sqlalchemy.orm import Session
 
 from auth_utils import create_token, decode_token, hash_password, verify_password
@@ -168,6 +170,11 @@ class RegisterRequest(BaseModel):
 class AuthResponse(BaseModel):
     token: str
     user: "UserOut"
+
+
+class ChangePasswordRequest(BaseModel):
+    currentPassword: str = Field(..., min_length=1)
+    newPassword: str = Field(..., min_length=8)
 
 
 class ConnectionManager:
@@ -362,6 +369,23 @@ def auth_login(body: LoginRequest, db: Session = Depends(get_db)) -> AuthRespons
 
 @app.get("/auth/me", response_model=UserOut)
 def auth_me(user: User = Depends(get_current_user)) -> UserOut:
+    return _user_to_out(user)
+
+
+@app.patch("/auth/me", response_model=UserOut)
+def update_me(
+    body: ChangePasswordRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> UserOut:
+    if not user.password_hash:
+        raise HTTPException(status_code=400, detail="User has no password set")
+    if not verify_password(body.currentPassword, user.password_hash):
+        raise HTTPException(status_code=400, detail="Invalid current password")
+    user.password_hash = hash_password(body.newPassword)
+    db.add(user)
+    db.commit()
+    db.refresh(user)
     return _user_to_out(user)
 
 
@@ -739,16 +763,102 @@ def delete_chat(chat_id: int, user: User = Depends(get_current_user), db: Sessio
 def list_mentions(
     user: User = Depends(get_current_user),
     limit: int = 50,
+    offset: int = 0,
     unreadOnly: bool = False,
+    keyword: str | None = None,
     db: Session = Depends(get_db),
 ) -> list[MentionOut]:
     _ensure_default_user(db)
     limit = max(1, min(500, limit))
+    offset = max(0, offset)
     stmt = select(Mention).where(Mention.user_id == user.id)
     if unreadOnly:
         stmt = stmt.where(Mention.is_read.is_(False))
-    rows = db.scalars(stmt.order_by(desc(Mention.created_at)).limit(limit)).all()
+    if keyword is not None and keyword.strip():
+        stmt = stmt.where(Mention.keyword_text == keyword.strip())
+    rows = (
+        db.scalars(
+            stmt.order_by(desc(Mention.created_at)).offset(offset).limit(limit)
+        ).all()
+    )
     return [_mention_to_front(m) for m in rows][::-1]
+
+
+_EXPORT_MAX = 10_000
+
+
+@app.get("/api/mentions/export")
+def export_mentions_csv(
+    user: User = Depends(get_current_user),
+    keyword: str | None = None,
+    leadsOnly: bool = False,
+    dateFrom: str | None = None,
+    dateTo: str | None = None,
+    db: Session = Depends(get_db),
+) -> Response:
+    _ensure_default_user(db)
+    stmt = select(Mention).where(Mention.user_id == user.id)
+    if keyword is not None and keyword.strip():
+        stmt = stmt.where(Mention.keyword_text == keyword.strip())
+    if leadsOnly:
+        stmt = stmt.where(Mention.is_lead.is_(True))
+    if dateFrom:
+        try:
+            dt_from = datetime.fromisoformat(dateFrom.replace("Z", "+00:00"))
+            if dt_from.tzinfo is None:
+                dt_from = dt_from.replace(tzinfo=timezone.utc)
+            stmt = stmt.where(Mention.created_at >= dt_from)
+        except ValueError:
+            pass
+    if dateTo:
+        try:
+            dt_to = datetime.fromisoformat(dateTo.replace("Z", "+00:00"))
+            if dt_to.tzinfo is None:
+                dt_to = dt_to.replace(tzinfo=timezone.utc)
+            stmt = stmt.where(Mention.created_at <= dt_to)
+        except ValueError:
+            pass
+    rows = db.scalars(
+        stmt.order_by(desc(Mention.created_at)).limit(_EXPORT_MAX)
+    ).all()
+    out = io.StringIO()
+    writer = csv.writer(out)
+    writer.writerow(
+        ["id", "created_at", "chat", "sender", "message", "keyword", "is_lead", "is_read", "message_link"]
+    )
+    for m in rows:
+        created = m.created_at.isoformat() if m.created_at else ""
+        chat = (m.chat_name or m.chat_username or "").strip()
+        sender = (m.sender_name or "").strip()
+        link = _message_link(m.chat_id, m.message_id) or ""
+        writer.writerow(
+            [str(m.id), created, chat, sender, (m.message_text or ""), m.keyword_text, m.is_lead, m.is_read, link]
+        )
+    body = out.getvalue().encode("utf-8-sig")
+    return Response(
+        content=body,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=mentions.csv"},
+    )
+
+
+class MarkAllReadOut(BaseModel):
+    marked: int
+
+
+@app.post("/api/mentions/mark-all-read", response_model=MarkAllReadOut)
+def mark_all_mentions_read(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> MarkAllReadOut:
+    _ensure_default_user(db)
+    result = db.execute(
+        update(Mention)
+        .where(Mention.user_id == user.id, Mention.is_read.is_(False))
+        .values(is_read=True)
+    )
+    db.commit()
+    return MarkAllReadOut(marked=result.rowcount or 0)
 
 
 @app.patch("/api/mentions/{mention_id}/lead", response_model=MentionOut)

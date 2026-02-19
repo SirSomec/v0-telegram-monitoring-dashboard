@@ -50,6 +50,8 @@ export default function DashboardPage() {
   function handleNavigate(item: string) {
     if (item === "Оплата") {
       setBillingOpen(true)
+    } else if (item === "Настройки") {
+      router.push("/settings")
     } else {
       setActiveNav(item)
     }
