@@ -101,17 +101,18 @@ nano .env
 | `TG_API_ID` | Число с [my.telegram.org](https://my.telegram.org) |
 | `TG_API_HASH` | Строка с my.telegram.org |
 | `TG_SESSION_STRING` | Сессия Telethon (StringSession), созданная локально |
+| `NEXT_PUBLIC_API_URL` | **URL бэкенда, с которым работает браузер.** При доступе по IP: `http://IP_ВАШЕГО_СЕРВЕРА:8000` (подставьте свой IP, например `http://89.108.66.125:8000`). Значение подставляется в фронт при **сборке** образа, поэтому после изменения нужно пересобрать фронт: `docker compose build --no-cache frontend && docker compose up -d`. |
 
-**Для Docker Compose** `DATABASE_URL` можно не менять — в `docker-compose.yml` он переопределён на `postgresql+psycopg2://postgres:postgres@postgres:5432/telegram_monitor`. При одном сервере (фронт :3000, бэкенд :8000) CORS настраивать не нужно — бэкенд по умолчанию разрешает запросы с любого origin.
+**Для Docker Compose** `DATABASE_URL` можно не менять — в `docker-compose.yml` он переопределён на `postgresql+psycopg2://postgres:postgres@postgres:5432/telegram_monitor`. При одном сервере CORS настраивать не нужно — бэкенд по умолчанию разрешает запросы с любого origin.
 
-**Если фронт и API доступны по домену через Nginx**, добавьте в `.env`:
+**Если фронт и API доступны по домену через Nginx** (один домен, API проксируется), в `.env` можно задать:
 
 ```env
 CORS_ORIGINS=https://ваш-домен.com
 NEXT_PUBLIC_API_URL=
 ```
 
-(Если Nginx проксирует API с того же домена, `NEXT_PUBLIC_API_URL` можно оставить пустым.)
+(Если Nginx проксирует API с того же домена, оставьте `NEXT_PUBLIC_API_URL` пустым и пересоберите фронт.)
 
 **Опционально:** автозапуск парсера при старте контейнеров:
 
@@ -285,21 +286,23 @@ docker compose up -d --build backend
 
 ---
 
-## 7a. Если при создании пользователя или в админке появляется 404
+## 7a. Если при регистрации, входе или в админке появляется 404
 
-Обычно это значит, что браузер ходит не на бэкенд, а на фронт (Next.js отдаёт 404 для `/api/*`). Сделайте по шагам:
+Запрос уходит на порт 3000 вместо 8000 — фронт не знает адрес бэкенда. Нужно задать его в `.env` и **пересобрать** фронт (значение подставляется при сборке):
 
-1. **Обязательно пересоберите фронт** после `git pull` (иначе старый код без правок API-URL остаётся в образе):
+1. В `.env` на сервере добавьте или исправьте (подставьте **свой** IP или домен):
+   ```env
+   NEXT_PUBLIC_API_URL=http://89.108.66.125:8000
+   ```
+
+2. Пересоберите фронт и перезапустите контейнеры:
    ```bash
    cd /opt/telegram-monitor/v0-telegram-monitoring-dashboard
-   git pull
    docker compose build --no-cache frontend
    docker compose up -d
    ```
 
-2. Откройте сайт **по тому же адресу, что и раньше** (например `http://IP_СЕРВЕРА:3000`). В браузере (F12 → вкладка Network) при нажатии «Добавить» в админке запрос к созданию пользователя должен уходить на **`http://IP_СЕРВЕРА:8000/api/users`**, а не на `...:3000/api/users`. Если уходит на 3000 — фронт всё ещё старый, пересоберите образ и перезапустите контейнеры.
-
-3. Убедитесь, что бэкенд доступен: в браузере откройте `http://IP_СЕРВЕРА:8000/docs` — должна открыться документация API.
+3. Обновите страницу в браузере (лучше Ctrl+Shift+R). В Network (F12) запросы к API должны уходить на **`:8000`**, а не на `:3000`.
 
 ---
 
@@ -320,6 +323,36 @@ git pull
 ```
 
 Подробнее про скрипты деплоя — в [scripts/README.md](../scripts/README.md).
+
+---
+
+## 8a. Если сборка не может скачать образы (Docker Hub недоступен)
+
+Ошибка вида `failed to resolve source metadata for docker.io/library/node:20-alpine: net/http: TLS handshake timeout` значит, что сервер не достучался до Docker Hub (сеть, фаервол, ограничения хостера).
+
+**Что можно сделать:**
+
+1. **Повторить позже** — иногда это временный сбой.
+2. **Проверить доступ с сервера:**  
+   `curl -I https://registry-1.docker.io/v2/`  
+   Если таймаут — до Docker Hub с этого сервера выйти не получается.
+3. **Собрать фронт у себя, образ перенести на сервер** (раздел **5a**): на своей машине, где Docker Hub доступен, выполнить:
+   ```bash
+   git clone https://github.com/SirSomec/v0-telegram-monitoring-dashboard.git
+   cd v0-telegram-monitoring-dashboard
+   # в .env задать NEXT_PUBLIC_API_URL=http://IP_СЕРВЕРА:8000
+   docker build -f Dockerfile.frontend -t telescope-frontend:latest .
+   docker save telescope-frontend:latest -o telescope-frontend.tar
+   scp telescope-frontend.tar root@IP_СЕРВЕРА:/opt/telegram-monitor/
+   ```
+   На сервере — только backend и postgres (образы легче или уже есть), фронт подгрузить из файла:
+   ```bash
+   cd /opt/telegram-monitor/v0-telegram-monitoring-dashboard
+   docker load -i /opt/telegram-monitor/telescope-frontend.tar
+   docker compose -f docker-compose.weak-server.yml up -d --build
+   ```
+   (Сборка затронет только backend; образ фронта будет из `telescope-frontend.tar`.)
+4. **Зеркало Docker Hub** (если у хостера или в сети есть): в `/etc/docker/daemon.json` добавить `registry-mirrors`, перезапустить Docker (`systemctl restart docker`) и снова запустить сборку.
 
 ---
 
