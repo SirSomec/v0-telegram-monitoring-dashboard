@@ -10,6 +10,17 @@ import {
 } from "react"
 import { apiBaseUrl, apiJson } from "@/lib/api"
 
+/** Базовый URL API: из env или тот же хост:8000 (деплой на одном сервере). */
+function authApiBase(): string {
+  const base = apiBaseUrl()
+  if (base) return base
+  if (typeof window !== "undefined") {
+    const { protocol, hostname } = window.location
+    return `${protocol}//${hostname}:8000`
+  }
+  return "http://127.0.0.1:8000"
+}
+
 const TOKEN_KEY = "telescope_token"
 
 export type UserMe = {
@@ -45,7 +56,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const loadUser = useCallback(async (t: string) => {
     try {
-      const u = await apiJson<UserMe>(`${apiBaseUrl()}/auth/me`, {
+      const u = await apiJson<UserMe>(`${authApiBase()}/auth/me`, {
         headers: { Authorization: `Bearer ${t}` },
       })
       setUser(u)
@@ -65,7 +76,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [loadUser])
 
   const login = useCallback(async (email: string, password: string) => {
-    const res = await apiJson<{ token: string; user: UserMe }>(`${apiBaseUrl()}/auth/login`, {
+    const res = await apiJson<{ token: string; user: UserMe }>(`${authApiBase()}/auth/login`, {
       method: "POST",
       body: JSON.stringify({ email, password }),
     })
@@ -75,7 +86,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const register = useCallback(async (email: string, password: string, name?: string) => {
-    const res = await apiJson<{ token: string; user: UserMe }>(`${apiBaseUrl()}/auth/register`, {
+    const res = await apiJson<{ token: string; user: UserMe }>(`${authApiBase()}/auth/register`, {
       method: "POST",
       body: JSON.stringify({ email, password, name: name || null }),
     })
