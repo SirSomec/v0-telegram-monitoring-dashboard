@@ -1,3 +1,9 @@
+# Для слабого сервера (мало RAM): фронт НЕ собирается на сервере.
+# Соберите образ фронта на своей машине, перенесите на сервер (см. docs/install-ubuntu.md),
+# затем запускайте:
+#   docker compose -f docker-compose.weak-server.yml up -d --build
+# (соберётся только backend; frontend берётся из образа telescope-frontend:latest)
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -39,12 +45,7 @@ services:
         condition: service_healthy
 
   frontend:
-    build:
-      context: .
-      dockerfile: Dockerfile.frontend
-      args:
-        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-}
-        API_PROXY_TARGET: http://backend:8000
+    image: telescope-frontend:latest
     environment:
       API_PROXY_TARGET: http://backend:8000
     ports:

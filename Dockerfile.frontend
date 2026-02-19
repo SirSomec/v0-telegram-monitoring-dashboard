@@ -10,7 +10,9 @@ RUN pnpm install --frozen-lockfile
 
 COPY . .
 ARG NEXT_PUBLIC_API_URL
+ARG API_PROXY_TARGET=http://backend:8000
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+ENV API_PROXY_TARGET=$API_PROXY_TARGET
 # Ограничение памяти при сборке (для слабых VPS, избегает OOM)
 ENV NODE_OPTIONS="--max-old-space-size=512"
 RUN pnpm build

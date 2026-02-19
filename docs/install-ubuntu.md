@@ -133,7 +133,7 @@ docker compose up -d --build
 
 Первый запуск может занять **5–15 минут**: скачиваются образы, ставятся зависимости Python/Node, собирается фронт (Next.js). Это нормально.
 
-Если на этапе `[frontend builder 7/7] RUN pnpm build` или сообщения «Creating an optimized production build» вывод не меняется несколько минут — сборка Next.js просто тяжёлая на слабом сервере. Подождите ещё 5–10 минут; прерывать не нужно.
+Если на этапе `[frontend builder 7/7] RUN pnpm build` или сообщения «Creating an optimized production build» вывод не меняется несколько минут — сборка Next.js тяжёлая на слабом сервере. Подождите 5–10 минут. **Если сервер зависает или SSH отваливается** — используйте вариант без сборки фронта на сервере: раздел **5a** ниже.
 
 Проверка после успешного запуска:
 
@@ -148,6 +148,41 @@ docker compose ps
 - Документация API: **http://IP_СЕРВЕРА:8000/docs**
 
 Откройте в браузере `http://IP_СЕРВЕРА:3000`, зарегистрируйтесь — первый пользователь станет администратором.
+
+---
+
+## 5a. Слабый сервер (мало RAM): не собирать фронт на сервере
+
+Если при `docker compose up -d --build` сервер зависает или сборка фронта идёт больше 15–20 минут, соберите образ фронта **на своей машине** (ПК или другой сервер с достаточной памятью) и перенесите его на сервер. На сервере тогда собирается только backend.
+
+**На своей машине** (в каталоге проекта, где есть `Dockerfile.frontend`):
+
+```bash
+# Сборка образа фронта (задайте NEXT_PUBLIC_API_URL, если API будет по другому адресу)
+export NEXT_PUBLIC_API_URL=   # или например https://api.ваш-домен.com
+docker build -f Dockerfile.frontend -t telescope-frontend:latest --build-arg NEXT_PUBLIC_API_URL="$NEXT_PUBLIC_API_URL" .
+
+# Сохранить образ в файл
+docker save telescope-frontend:latest -o telescope-frontend.tar
+```
+
+Перенесите `telescope-frontend.tar` на сервер (например через `scp`):
+
+```bash
+scp telescope-frontend.tar root@IP_СЕРВЕРА:/opt/telegram-monitor/
+```
+
+**На сервере** (в каталоге проекта, где лежат `docker-compose.yml` и `.env`):
+
+```bash
+cd /opt/telegram-monitor   # или cd /opt/telegram-monitor/v0-telegram-monitoring-dashboard
+docker load -i telescope-frontend.tar
+docker compose -f docker-compose.weak-server.yml up -d --build
+```
+
+Файл `telescope-frontend.tar` положите в этот же каталог или укажите полный путь в `docker load -i`.
+
+Файл `docker-compose.weak-server.yml` поднимает postgres и backend (backend собирается на сервере — он лёгкий), а frontend берётся из уже загруженного образа `telescope-frontend:latest`. Сборки Node/Next.js на сервере не будет.
 
 ---
 
