@@ -1,16 +1,15 @@
 /**
  * Базовый URL бэкенда (FastAPI).
- * В браузере: NEXT_PUBLIC_API_URL, иначе при открытии с порта 3000 — тот же хост:8000 (прямой запрос к бэкенду).
- * На сервере (SSR/proxy): для Route Handlers.
+ * В браузере: NEXT_PUBLIC_API_URL, иначе тот же хост и порт 8000 (деплой на одном сервере).
+ * На сервере (SSR): для Route Handlers.
  */
 function getApiUrl(): string {
   if (typeof window !== "undefined") {
-    const env = process.env.NEXT_PUBLIC_API_URL ?? ""
+    const env = (process.env.NEXT_PUBLIC_API_URL ?? "").trim()
+    if (env === "." || env.toLowerCase() === "same_origin") return ""
     if (env) return env
-    // Тот же хост, порт 8000 — типичный деплой (фронт :3000, бэкенд :8000)
-    const { hostname, port, protocol } = window.location
-    if (port === "3000" || port === "") return `${protocol}//${hostname}:8000`
-    return ""
+    const { hostname, protocol } = window.location
+    return `${protocol}//${hostname}:8000`
   }
   return process.env.NEXT_PUBLIC_API_URL ?? process.env.API_PROXY_TARGET ?? "http://127.0.0.1:8000"
 }
