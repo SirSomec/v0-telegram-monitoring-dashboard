@@ -1,9 +1,12 @@
+# Пароль PostgreSQL: задайте в .env как POSTGRES_PASSWORD или оставьте postgres.
+# Важно: если том postgres_data уже создан с другим паролем, либо задайте тот же пароль в .env,
+# либо удалите том (docker compose down -v) и поднимите заново — данные БД будут потеряны.
 services:
   postgres:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       POSTGRES_DB: telegram_monitor
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -20,7 +23,7 @@ services:
       context: .
       dockerfile: Dockerfile.backend
     environment:
-      DATABASE_URL: postgresql+psycopg2://postgres:postgres@postgres:5432/telegram_monitor
+      DATABASE_URL: postgresql+psycopg2://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/telegram_monitor
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
       TG_API_ID: ${TG_API_ID}
       TG_API_HASH: ${TG_API_HASH}
