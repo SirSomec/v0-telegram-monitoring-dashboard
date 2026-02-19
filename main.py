@@ -851,6 +851,50 @@ def get_parser_logs(_: User = Depends(get_current_admin)) -> list[str]:
     return get_parser_log_lines()
 
 
+class ParserAuthRequestCodeBody(BaseModel):
+    phone: str = Field(..., min_length=1, description="Номер телефона в формате +79...")
+
+
+class ParserAuthSubmitCodeBody(BaseModel):
+    code: str = Field(..., min_length=1, description="Код из Telegram")
+    password: str | None = Field(None, description="Пароль 2FA, если включён")
+
+
+@app.post("/api/admin/parser/auth/request-code")
+async def parser_auth_request_code(
+    body: ParserAuthRequestCodeBody,
+    _: User = Depends(get_current_admin),
+) -> dict[str, bool]:
+    """Запросить код для входа в Telegram. Код придёт в приложение Telegram."""
+    from telegram_auth import request_code
+    try:
+        await request_code(body.phone.strip())
+        return {"ok": True}
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/admin/parser/auth/submit-code")
+async def parser_auth_submit_code(
+    body: ParserAuthSubmitCodeBody,
+    _: User = Depends(get_current_admin),
+) -> dict[str, bool]:
+    """Ввести код (и пароль 2FA при необходимости). Сессия сохранится в настройки парсера."""
+    from telegram_auth import submit_code
+    try:
+        await submit_code(body.code.strip(), body.password.strip() if body.password else None)
+        return {"ok": True}
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/admin/parser/auth/status")
+def parser_auth_status(_: User = Depends(get_current_admin)) -> dict[str, bool]:
+    """Есть ли ожидание ввода кода (показать форму ввода кода)."""
+    from telegram_auth import has_pending
+    return {"pending": has_pending()}
+
+
 @app.get("/api/admin/parser/settings", response_model=ParserSettingsOut)
 def get_parser_settings(_: User = Depends(get_current_admin)) -> ParserSettingsOut:
     return _parser_settings_to_out()

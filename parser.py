@@ -194,8 +194,15 @@ class TelegramScanner:
                 return
 
         # start(): если нет bot token и нет сохраненной сессии, Telethon попросит интерактивный ввод в консоли.
-        # Для server-mode используйте TG_SESSION_STRING (StringSession) или заранее авторизованную session.
-        await client.start(bot_token=get_parser_setting_str("TG_BOT_TOKEN") or None)
+        # В контейнере/сервере нет консоли — при EOFError даём понятную ошибку.
+        try:
+            await client.start(bot_token=get_parser_setting_str("TG_BOT_TOKEN") or None)
+        except EOFError:
+            raise RuntimeError(
+                "Интерактивный вход невозможен (нет консоли). "
+                "Задайте TG_SESSION_STRING в настройках парсера: создайте сессию локально через Telethon StringSession, "
+                "войдите в аккаунт один раз и вставьте выданную строку в админке (Парсер → Настройки)."
+            ) from None
         await client.run_until_disconnected()
 
     async def _load_chats_filter(self) -> list[str | int] | None:

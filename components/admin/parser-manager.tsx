@@ -107,6 +107,12 @@ export function ParserManager() {
   const [saveSuccess, setSaveSuccess] = useState(false)
   const [parserLogs, setParserLogs] = useState<string[]>([])
   const [logLoading, setLogLoading] = useState(false)
+  const [authPending, setAuthPending] = useState(false)
+  const [authPhone, setAuthPhone] = useState("")
+  const [authCode, setAuthCode] = useState("")
+  const [authPassword, setAuthPassword] = useState("")
+  const [authLoading, setAuthLoading] = useState(false)
+  const [authError, setAuthError] = useState("")
 
   // Локальное состояние формы настроек (для редактирования)
   const [form, setForm] = useState<ParserSettingsUpdate & { AUTO_START_SCANNER?: boolean; MULTI_USER_SCANNER?: boolean; TG_USER_ID?: number }>({})
@@ -159,6 +165,67 @@ export function ParserManager() {
     const interval = setInterval(fetchLogs, 5000)
     return () => clearInterval(interval)
   }, [status?.running])
+
+  async function fetchAuthStatus() {
+    try {
+      const data = await apiJson<{ pending: boolean }>("/api/admin/parser/auth/status")
+      setAuthPending(data.pending)
+    } catch {
+      setAuthPending(false)
+    }
+  }
+
+  useEffect(() => {
+    fetchAuthStatus()
+  }, [])
+
+  async function requestAuthCode() {
+    const phone = authPhone.trim()
+    if (!phone) {
+      setAuthError("Введите номер телефона в формате +79...")
+      return
+    }
+    setAuthLoading(true)
+    setAuthError("")
+    try {
+      await apiJson<{ ok: boolean }>("/api/admin/parser/auth/request-code", {
+        method: "POST",
+        body: JSON.stringify({ phone }),
+      })
+      setAuthPending(true)
+      setAuthCode("")
+      setAuthPassword("")
+    } catch (e) {
+      setAuthError(e instanceof Error ? e.message : "Не удалось отправить код")
+    } finally {
+      setAuthLoading(false)
+    }
+  }
+
+  async function submitAuthCode() {
+    const code = authCode.trim()
+    if (!code) {
+      setAuthError("Введите код из Telegram")
+      return
+    }
+    setAuthLoading(true)
+    setAuthError("")
+    try {
+      await apiJson<{ ok: boolean }>("/api/admin/parser/auth/submit-code", {
+        method: "POST",
+        body: JSON.stringify({ code, password: authPassword.trim() || null }),
+      })
+      setAuthPending(false)
+      setAuthPhone("")
+      setAuthCode("")
+      setAuthPassword("")
+      await refresh()
+    } catch (e) {
+      setAuthError(e instanceof Error ? e.message : "Не удалось войти")
+    } finally {
+      setAuthLoading(false)
+    }
+  }
 
   async function startParser() {
     setActionLoading(true)
@@ -409,6 +476,61 @@ export function ParserManager() {
                     placeholder="1BVtsOH0Bu..."
                     hint={PARSER_HINTS.TG_SESSION_STRING}
                   />
+                </div>
+                <div className="sm:col-span-2 rounded-lg border border-dashed border-muted-foreground/30 bg-muted/20 p-4">
+                  <p className="mb-3 text-sm font-medium">Получить сессию через браузер</p>
+                  <p className="mb-3 text-muted-foreground text-xs">
+                    Укажите API ID и Hash выше, затем введите номер — код придёт в Telegram. Введите код и при необходимости пароль 2FA. Сессия сохранится в поле выше.
+                  </p>
+                  {!authPending ? (
+                    <div className="flex flex-wrap items-end gap-2">
+                      <div className="min-w-[200px] flex-1">
+                        <Label htmlFor="auth-phone">Номер телефона</Label>
+                        <Input
+                          id="auth-phone"
+                          type="tel"
+                          placeholder="+79001234567"
+                          value={authPhone}
+                          onChange={(e) => setAuthPhone(e.target.value)}
+                          className="mt-1"
+                        />
+                      </div>
+                      <Button onClick={requestAuthCode} disabled={authLoading}>
+                        {authLoading ? "Отправка…" : "Запросить код"}
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <div>
+                        <Label htmlFor="auth-code">Код из Telegram</Label>
+                        <Input
+                          id="auth-code"
+                          type="text"
+                          placeholder="12345"
+                          value={authCode}
+                          onChange={(e) => setAuthCode(e.target.value)}
+                          className="mt-1 font-mono"
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="auth-password">Пароль 2FA (если включён)</Label>
+                        <Input
+                          id="auth-password"
+                          type="password"
+                          placeholder="Не обязательно"
+                          value={authPassword}
+                          onChange={(e) => setAuthPassword(e.target.value)}
+                          className="mt-1"
+                        />
+                      </div>
+                      <Button onClick={submitAuthCode} disabled={authLoading}>
+                        {authLoading ? "Вход…" : "Войти и сохранить сессию"}
+                      </Button>
+                    </div>
+                  )}
+                  {authError && (
+                    <p className="mt-2 text-destructive text-sm">{authError}</p>
+                  )}
                 </div>
                 <SettingRow
                   id="TG_SESSION_NAME"

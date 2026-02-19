@@ -6,7 +6,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY main.py parser.py parser_config.py parser_log.py database.py models.py auth_utils.py .
+COPY main.py parser.py parser_config.py parser_log.py telegram_auth.py database.py models.py auth_utils.py .
 
 EXPOSE 8000
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
