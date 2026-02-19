@@ -14,6 +14,12 @@ from telethon.sessions import StringSession
 
 from database import db_session
 from models import Chat, Keyword, Mention, User
+from parser_config import (
+    get_parser_setting_str,
+    get_parser_setting_bool,
+    get_parser_setting_int,
+    get_parser_setting,
+)
 
 load_dotenv()
 
@@ -67,9 +73,9 @@ class ProxyConfig:
         return (socks.SOCKS5, self.host, self.port, True, self.username, self.password)
 
 
-def _proxy_from_env() -> ProxyConfig | None:
-    host = os.getenv("TG_PROXY_HOST")
-    port = os.getenv("TG_PROXY_PORT")
+def _proxy_from_config() -> ProxyConfig | None:
+    host = get_parser_setting_str("TG_PROXY_HOST")
+    port = get_parser_setting_str("TG_PROXY_PORT")
     if not host or not port:
         return None
     try:
@@ -79,8 +85,8 @@ def _proxy_from_env() -> ProxyConfig | None:
     return ProxyConfig(
         host=host,
         port=p,
-        username=os.getenv("TG_PROXY_USER") or None,
-        password=os.getenv("TG_PROXY_PASS") or None,
+        username=get_parser_setting_str("TG_PROXY_USER") or None,
+        password=get_parser_setting_str("TG_PROXY_PASS") or None,
     )
 
 
@@ -144,15 +150,17 @@ class TelegramScanner:
         asyncio.run(self._run())
 
     async def _run(self) -> None:
-        api_id = os.getenv("TG_API_ID")
-        api_hash = os.getenv("TG_API_HASH")
+        api_id = get_parser_setting_str("TG_API_ID")
+        api_hash = get_parser_setting_str("TG_API_HASH")
         if not api_id or not api_hash:
-            raise RuntimeError("Нужно задать TG_API_ID и TG_API_HASH в .env")
+            raise RuntimeError(
+                "Задайте TG_API_ID и TG_API_HASH в настройках парсера (Админ → Парсер) или в .env"
+            )
 
-        session_string = os.getenv("TG_SESSION_STRING")
-        session_name = os.getenv("TG_SESSION_NAME", "telegram_monitor")
+        session_string = get_parser_setting_str("TG_SESSION_STRING")
+        session_name = get_parser_setting_str("TG_SESSION_NAME") or "telegram_monitor"
 
-        proxy_cfg = _proxy_from_env()
+        proxy_cfg = _proxy_from_config()
         proxy = proxy_cfg.to_telethon() if proxy_cfg else None
 
         if session_string:
@@ -180,7 +188,7 @@ class TelegramScanner:
 
         # start(): если нет bot token и нет сохраненной сессии, Telethon попросит интерактивный ввод в консоли.
         # Для server-mode используйте TG_SESSION_STRING (StringSession) или заранее авторизованную session.
-        await client.start(bot_token=os.getenv("TG_BOT_TOKEN") or None)
+        await client.start(bot_token=get_parser_setting_str("TG_BOT_TOKEN") or None)
         await client.run_until_disconnected()
 
     async def _load_chats_filter(self) -> list[str | int] | None:
@@ -211,7 +219,7 @@ class TelegramScanner:
             return result if result else None
 
         # Один пользователь: TG_CHATS или БД
-        env_chats = _parse_chat_identifiers(os.getenv("TG_CHATS"))
+        env_chats = _parse_chat_identifiers(get_parser_setting_str("TG_CHATS"))
         if env_chats:
             parsed: list[str | int] = []
             for c in env_chats:

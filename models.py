@@ -90,6 +90,14 @@ class ChatGroup(Base):
     )
 
 
+class ParserSetting(Base):
+    """Настройки парсера (админ-панель). Один ряд на ключ. Значение из БД имеет приоритет над env."""
+    __tablename__ = "parser_settings"
+
+    key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    value: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
 class Mention(Base):
     __tablename__ = "mentions"
 

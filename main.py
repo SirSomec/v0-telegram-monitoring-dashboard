@@ -17,6 +17,12 @@ from auth_utils import create_token, decode_token, hash_password, verify_passwor
 from database import get_db, init_db
 from models import Chat, ChatGroup, Keyword, Mention, User
 from parser import TelegramScanner
+from parser_config import (
+    get_all_parser_settings,
+    get_parser_setting_bool,
+    get_parser_setting_int,
+    save_parser_settings,
+)
 
 
 def _now_utc() -> datetime:
@@ -184,6 +190,40 @@ class ParserStatusOut(BaseModel):
     userId: int | None = None
 
 
+class ParserSettingsOut(BaseModel):
+    """Настройки парсера (значения из БД или env). Пустые строки — не задано."""
+    TG_API_ID: str = ""
+    TG_API_HASH: str = ""
+    TG_SESSION_STRING: str = ""
+    TG_SESSION_NAME: str = ""
+    TG_BOT_TOKEN: str = ""
+    TG_CHATS: str = ""
+    TG_PROXY_HOST: str = ""
+    TG_PROXY_PORT: str = ""
+    TG_PROXY_USER: str = ""
+    TG_PROXY_PASS: str = ""
+    AUTO_START_SCANNER: str = ""
+    MULTI_USER_SCANNER: str = ""
+    TG_USER_ID: str = ""
+
+
+class ParserSettingsUpdate(BaseModel):
+    """Обновление настроек (все поля опциональны)."""
+    TG_API_ID: str | None = None
+    TG_API_HASH: str | None = None
+    TG_SESSION_STRING: str | None = None
+    TG_SESSION_NAME: str | None = None
+    TG_BOT_TOKEN: str | None = None
+    TG_CHATS: str | None = None
+    TG_PROXY_HOST: str | None = None
+    TG_PROXY_PORT: str | None = None
+    TG_PROXY_USER: str | None = None
+    TG_PROXY_PASS: str | None = None
+    AUTO_START_SCANNER: bool | None = None
+    MULTI_USER_SCANNER: bool | None = None
+    TG_USER_ID: int | None = None
+
+
 class ConnectionManager:
     def __init__(self) -> None:
         self._connections: set[WebSocket] = set()
@@ -321,16 +361,14 @@ async def on_startup() -> None:
     with SessionLocal() as db:
         _ensure_default_user(db)
 
-    # Сканер можно включить через ENV AUTO_START_SCANNER=1
-    if os.getenv("AUTO_START_SCANNER", "").strip() in {"1", "true", "True", "yes", "YES"}:
-        # По умолчанию мультипользовательский режим (чаты и ключевые слова из БД по всем пользователям).
-        # Для одного пользователя задайте MULTI_USER_SCANNER=0 и TG_USER_ID.
-        multi = os.getenv("MULTI_USER_SCANNER", "1").strip() in {"1", "true", "True", "yes", "YES"}
+    # Сканер можно включить через настройки (админ) или ENV AUTO_START_SCANNER=1
+    if get_parser_setting_bool("AUTO_START_SCANNER", False):
+        multi = get_parser_setting_bool("MULTI_USER_SCANNER", True)
         if multi:
             scanner = TelegramScanner(on_mention=lambda payload: _schedule_ws_broadcast(payload))
         else:
             scanner = TelegramScanner(
-                user_id=int(os.getenv("TG_USER_ID", "1")),
+                user_id=get_parser_setting_int("TG_USER_ID", 1),
                 on_mention=lambda payload: _schedule_ws_broadcast(payload),
             )
         scanner.start()
@@ -779,9 +817,43 @@ def _parser_status() -> ParserStatusOut:
     )
 
 
+def _parser_settings_to_out() -> ParserSettingsOut:
+    raw = get_all_parser_settings()
+    return ParserSettingsOut(
+        TG_API_ID=raw.get("TG_API_ID", ""),
+        TG_API_HASH=raw.get("TG_API_HASH", ""),
+        TG_SESSION_STRING=raw.get("TG_SESSION_STRING", ""),
+        TG_SESSION_NAME=raw.get("TG_SESSION_NAME", ""),
+        TG_BOT_TOKEN=raw.get("TG_BOT_TOKEN", ""),
+        TG_CHATS=raw.get("TG_CHATS", ""),
+        TG_PROXY_HOST=raw.get("TG_PROXY_HOST", ""),
+        TG_PROXY_PORT=raw.get("TG_PROXY_PORT", ""),
+        TG_PROXY_USER=raw.get("TG_PROXY_USER", ""),
+        TG_PROXY_PASS=raw.get("TG_PROXY_PASS", ""),
+        AUTO_START_SCANNER=raw.get("AUTO_START_SCANNER", ""),
+        MULTI_USER_SCANNER=raw.get("MULTI_USER_SCANNER", ""),
+        TG_USER_ID=raw.get("TG_USER_ID", ""),
+    )
+
+
 @app.get("/api/admin/parser/status", response_model=ParserStatusOut)
 def get_parser_status(_: User = Depends(get_current_admin)) -> ParserStatusOut:
     return _parser_status()
+
+
+@app.get("/api/admin/parser/settings", response_model=ParserSettingsOut)
+def get_parser_settings(_: User = Depends(get_current_admin)) -> ParserSettingsOut:
+    return _parser_settings_to_out()
+
+
+@app.patch("/api/admin/parser/settings", response_model=ParserSettingsOut)
+def update_parser_settings(
+    body: ParserSettingsUpdate,
+    _: User = Depends(get_current_admin),
+) -> ParserSettingsOut:
+    data = body.model_dump(exclude_none=True)
+    save_parser_settings(data)
+    return _parser_settings_to_out()
 
 
 @app.post("/api/admin/parser/start", response_model=ParserStatusOut)
@@ -789,12 +861,12 @@ def start_parser(_: User = Depends(get_current_admin)) -> ParserStatusOut:
     global scanner
     if scanner is not None and scanner.is_running:
         return _parser_status()
-    multi = os.getenv("MULTI_USER_SCANNER", "1").strip() in {"1", "true", "True", "yes", "YES"}
+    multi = get_parser_setting_bool("MULTI_USER_SCANNER", True)
     if multi:
         scanner = TelegramScanner(on_mention=lambda payload: _schedule_ws_broadcast(payload))
     else:
         scanner = TelegramScanner(
-            user_id=int(os.getenv("TG_USER_ID", "1")),
+            user_id=get_parser_setting_int("TG_USER_ID", 1),
             on_mention=lambda payload: _schedule_ws_broadcast(payload),
         )
     scanner.start()

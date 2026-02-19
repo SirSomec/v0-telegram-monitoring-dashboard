@@ -29,14 +29,14 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expi
 
 
 def init_db() -> None:
-    from models import Chat, ChatGroup, Keyword, Mention, User  # noqa: F401
+    from models import Chat, ChatGroup, Keyword, Mention, ParserSetting, User  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
 
 
 def drop_all_tables() -> None:
     """Удаляет все таблицы (для пересоздания схемы). Все данные будут потеряны."""
-    from models import Chat, ChatGroup, Keyword, Mention, User  # noqa: F401
+    from models import Chat, ChatGroup, Keyword, Mention, ParserSetting, User  # noqa: F401
 
     Base.metadata.drop_all(bind=engine)
 

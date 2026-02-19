@@ -31,3 +31,35 @@ export type ParserStatus = {
   userId: number | null
 }
 
+export type ParserSettings = {
+  TG_API_ID: string
+  TG_API_HASH: string
+  TG_SESSION_STRING: string
+  TG_SESSION_NAME: string
+  TG_BOT_TOKEN: string
+  TG_CHATS: string
+  TG_PROXY_HOST: string
+  TG_PROXY_PORT: string
+  TG_PROXY_USER: string
+  TG_PROXY_PASS: string
+  AUTO_START_SCANNER: string
+  MULTI_USER_SCANNER: string
+  TG_USER_ID: string
+}
+
+export type ParserSettingsUpdate = Partial<{
+  TG_API_ID: string
+  TG_API_HASH: string
+  TG_SESSION_STRING: string
+  TG_SESSION_NAME: string
+  TG_BOT_TOKEN: string
+  TG_CHATS: string
+  TG_PROXY_HOST: string
+  TG_PROXY_PORT: string
+  TG_PROXY_USER: string
+  TG_PROXY_PASS: string
+  AUTO_START_SCANNER: boolean
+  MULTI_USER_SCANNER: boolean
+  TG_USER_ID: number
+}>
+
