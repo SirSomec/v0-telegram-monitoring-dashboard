@@ -117,7 +117,10 @@ export function MentionFeed({ userId }: { userId?: number }) {
           setMentions(payload.data)
         }
         if (payload.type === "mention" && payload.data) {
-          setMentions((prev) => [payload.data, ...prev])
+          const data = payload.data as Mention & { userId?: number }
+          if (data.userId === undefined || data.userId === userId) {
+            setMentions((prev) => [data, ...prev])
+          }
         }
       } catch {
         // ignore
@@ -128,7 +131,7 @@ export function MentionFeed({ userId }: { userId?: number }) {
       ws.close()
       wsRef.current = null
     }
-  }, [token])
+  }, [token, userId])
 
   async function toggleLead(id: string) {
     const m = mentions.find((x) => x.id === id)

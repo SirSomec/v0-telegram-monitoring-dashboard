@@ -310,10 +310,16 @@ async def on_startup() -> None:
     import os
 
     if os.getenv("AUTO_START_SCANNER", "").strip() in {"1", "true", "True", "yes", "YES"}:
-        scanner = TelegramScanner(
-            user_id=int(os.getenv("TG_USER_ID", "1")),
-            on_mention=lambda payload: _schedule_ws_broadcast(payload),
-        )
+        # По умолчанию мультипользовательский режим (чаты и ключевые слова из БД по всем пользователям).
+        # Для одного пользователя задайте MULTI_USER_SCANNER=0 и TG_USER_ID.
+        multi = os.getenv("MULTI_USER_SCANNER", "1").strip() in {"1", "true", "True", "yes", "YES"}
+        if multi:
+            scanner = TelegramScanner(on_mention=lambda payload: _schedule_ws_broadcast(payload))
+        else:
+            scanner = TelegramScanner(
+                user_id=int(os.getenv("TG_USER_ID", "1")),
+                on_mention=lambda payload: _schedule_ws_broadcast(payload),
+            )
         scanner.start()
 
 

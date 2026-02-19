@@ -98,25 +98,27 @@ def _parse_chat_identifiers(raw: str | None) -> list[str]:
 
 class TelegramScanner:
     """
-    Сканер Telegram на Telethon, который:
-    - читает активные keywords из БД
-    - слушает events.NewMessage
-    - при совпадении (регистронезависимо, корректно для кириллицы через casefold)
-      пишет запись в mentions и дергает on_mention(payload)
+    Сканер Telegram на Telethon.
+    - Один пользователь (user_id задан): ключевые слова и чаты этого пользователя.
+    - Мультипользовательский (user_id=None): ключевые слова и чаты всех пользователей из БД,
+      упоминания пишутся с соответствующим user_id, в payload передаётся userId.
     """
 
     def __init__(
         self,
         *,
-        user_id: int = 1,
+        user_id: int | None = None,
         on_mention: Callable[[dict], None] | None = None,
     ) -> None:
-        self.user_id = user_id
+        self.user_id = user_id  # None = мультипользовательский режим
         self.on_mention = on_mention
+        self._multi_user = user_id is None
 
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
         self._client: TelegramClient | None = None
+        self._chat_ids_to_users: dict[int, set[int]] = {}
+        self._chat_usernames_to_users: dict[str, set[int]] = {}
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -156,11 +158,11 @@ class TelegramScanner:
 
         self._client = client
 
-        # Создаем/гарантируем user, чтобы FK не падали
-        with db_session() as db:
-            user = db.get(User, self.user_id)
-            if not user:
-                db.add(User(id=self.user_id, name="Default"))
+        if not self._multi_user:
+            with db_session() as db:
+                user = db.get(User, self.user_id)
+                if not user:
+                    db.add(User(id=self.user_id, name="Default"))
 
         chats_filter = await self._load_chats_filter()
 
@@ -177,8 +179,34 @@ class TelegramScanner:
         await client.start(bot_token=os.getenv("TG_BOT_TOKEN") or None)
         await client.run_until_disconnected()
 
-    async def _load_chats_filter(self) -> list[str | int]:
-        # 1) Если задан TG_CHATS, используем его (username/@name или числовые id)
+    async def _load_chats_filter(self) -> list[str | int] | None:
+        # Мультипользовательский режим: только из БД, без TG_CHATS
+        if self._multi_user:
+            with db_session() as db:
+                rows: list[Chat] = (
+                    db.query(Chat).filter(Chat.enabled.is_(True)).order_by(Chat.id.asc()).all()
+                )
+            self._chat_ids_to_users = {}
+            self._chat_usernames_to_users = {}
+            seen: set[str | int] = set()
+            result: list[str | int] = []
+            for r in rows:
+                if r.tg_chat_id is not None:
+                    cid = int(r.tg_chat_id)
+                    self._chat_ids_to_users.setdefault(cid, set()).add(r.user_id)
+                    if cid not in seen:
+                        seen.add(cid)
+                        result.append(cid)
+                if r.username:
+                    uname = (r.username or "").strip()
+                    if uname:
+                        self._chat_usernames_to_users.setdefault(uname, set()).add(r.user_id)
+                        if uname not in seen:
+                            seen.add(uname)
+                            result.append(uname)
+            return result if result else None
+
+        # Один пользователь: TG_CHATS или БД
         env_chats = _parse_chat_identifiers(os.getenv("TG_CHATS"))
         if env_chats:
             parsed: list[str | int] = []
@@ -190,9 +218,8 @@ class TelegramScanner:
                     parsed.append(v.lstrip("@"))
             return parsed
 
-        # 2) Иначе берем enabled-чаты из БД
         with db_session() as db:
-            rows: list[Chat] = (
+            rows = (
                 db.query(Chat)
                 .filter(Chat.user_id == self.user_id, Chat.enabled.is_(True))
                 .order_by(Chat.id.asc())
@@ -232,16 +259,69 @@ class TelegramScanner:
         elif created_at.tzinfo is None:
             created_at = created_at.replace(tzinfo=timezone.utc)
 
+        if self._multi_user:
+            user_ids = set()
+            if chat_id is not None:
+                user_ids |= self._chat_ids_to_users.get(int(chat_id), set())
+            if chat_username:
+                user_ids |= self._chat_usernames_to_users.get((chat_username or "").strip(), set())
+            if not user_ids:
+                return
+            keywords_by_user = self._load_keywords_multi()
+            msg_id = int(msg.id) if getattr(msg, "id", None) is not None else None
+            cid = int(chat_id) if chat_id is not None else None
+            for uid in user_ids:
+                keywords = keywords_by_user.get(uid, [])
+                matches = [kw for kw in keywords if kw.casefold() in text_cf]
+                for kw in matches:
+                    with db_session() as db:
+                        mention = Mention(
+                            user_id=uid,
+                            keyword_text=kw,
+                            message_text=text,
+                            chat_id=cid,
+                            chat_name=chat_title,
+                            chat_username=chat_username,
+                            message_id=msg_id,
+                            sender_id=int(sender_id) if sender_id is not None else None,
+                            sender_name=sender_name,
+                            is_read=False,
+                            is_lead=False,
+                            created_at=created_at,
+                        )
+                        db.add(mention)
+                        db.flush()
+                        message_link = None
+                        if cid is not None and msg_id is not None:
+                            aid = abs(cid)
+                            part = aid % (10**10) if aid >= 10**10 else aid
+                            message_link = f"https://t.me/c/{part}/{msg_id}"
+                        payload = {
+                            "type": "mention",
+                            "data": {
+                                "id": str(mention.id),
+                                "userId": uid,
+                                "groupName": (chat_title or chat_username or "Неизвестный чат"),
+                                "groupIcon": _initials(chat_title or chat_username),
+                                "userName": (sender_name or "Неизвестный пользователь"),
+                                "userInitials": _initials(sender_name),
+                                "message": text,
+                                "keyword": kw,
+                                "timestamp": _humanize_ru(created_at),
+                                "isLead": False,
+                                "isRead": False,
+                                "createdAt": created_at.isoformat(),
+                                "messageLink": message_link,
+                            },
+                        }
+                    if self.on_mention:
+                        self.on_mention(payload)
+            return
+
         keywords = self._load_keywords()
         if not keywords:
             return
-
-        matches: list[str] = []
-        for kw in keywords:
-            kw_cf = kw.casefold()
-            if kw_cf and kw_cf in text_cf:
-                matches.append(kw)
-
+        matches = [kw for kw in keywords if kw.casefold() in text_cf]
         if not matches:
             return
 
@@ -294,11 +374,26 @@ class TelegramScanner:
 
     def _load_keywords(self) -> list[str]:
         with db_session() as db:
-            rows: list[Keyword] = (
+            rows = (
                 db.query(Keyword)
                 .filter(Keyword.user_id == self.user_id, Keyword.enabled.is_(True))
                 .order_by(Keyword.id.asc())
                 .all()
             )
             return [r.text for r in rows if (r.text or "").strip()]
+
+    def _load_keywords_multi(self) -> dict[int, list[str]]:
+        with db_session() as db:
+            rows = (
+                db.query(Keyword)
+                .filter(Keyword.enabled.is_(True))
+                .order_by(Keyword.user_id, Keyword.id.asc())
+                .all()
+            )
+            out: dict[int, list[str]] = {}
+            for r in rows:
+                t = (r.text or "").strip()
+                if t:
+                    out.setdefault(r.user_id, []).append(t)
+            return out
 
