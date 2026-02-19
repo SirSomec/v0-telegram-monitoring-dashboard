@@ -1,6 +1,9 @@
 /**
  * Базовый URL бэкенда (FastAPI).
- * В браузере: NEXT_PUBLIC_API_URL, иначе тот же хост и порт 8000 (деплой на одном сервере).
+ * В браузере:
+ * - NEXT_PUBLIC_API_URL задан — запросы на этот URL (прямо на бэкенд).
+ * - Пусто или не задан — запросы на тот же origin (/auth/*, /api/*), Next.js проксирует на бэкенд (нет CORS, один порт).
+ * - "." или "same_origin" — явно тот же origin (прокси).
  * На сервере (SSR): для Route Handlers.
  */
 function getApiUrl(): string {
@@ -8,8 +11,8 @@ function getApiUrl(): string {
     const env = (process.env.NEXT_PUBLIC_API_URL ?? "").trim()
     if (env === "." || env.toLowerCase() === "same_origin") return ""
     if (env) return env
-    const { hostname, protocol } = window.location
-    return `${protocol}//${hostname}:8000`
+    // Не задан: используем тот же origin — запросы идут на /auth/* и /api/*, Next.js проксирует на бэкенд
+    return ""
   }
   return process.env.NEXT_PUBLIC_API_URL ?? process.env.API_PROXY_TARGET ?? "http://127.0.0.1:8000"
 }
@@ -54,7 +57,12 @@ export async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
 
 /** URL для WebSocket упоминаний. Требуется токен (передаётся в query). */
 export function wsMentionsUrl(token: string | null): string {
-  const base = getApiUrl()
+  let base = getApiUrl()
+  // Когда API идёт через прокси (base пустой), WS на бэкенде — используем тот же хост, порт 8000
+  if (typeof window !== "undefined" && !base) {
+    const { protocol, hostname } = window.location
+    base = `${protocol}//${hostname}:8000`
+  }
   const wsBase = base.replace(/^http/, "ws")
   if (!token) return `${wsBase}/ws/mentions`
   return `${wsBase}/ws/mentions?token=${encodeURIComponent(token)}`
