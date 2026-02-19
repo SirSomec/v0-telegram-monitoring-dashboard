@@ -9,7 +9,14 @@ import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Trash2, Plus, RefreshCw } from "lucide-react"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog"
+import { Trash2, Plus, RefreshCw, Pencil } from "lucide-react"
 import { apiJson } from "@/components/admin/api"
 import type { Chat, ChatGroup } from "@/components/admin/types"
 
@@ -25,6 +32,15 @@ export function ChannelsManager({ userId = 1 }: { userId?: number }) {
   const [selectedGroupIds, setSelectedGroupIds] = useState<number[]>([])
   const [enabled, setEnabled] = useState(true)
   const [isGlobal, setIsGlobal] = useState(false)
+
+  const [editingChannel, setEditingChannel] = useState<Chat | null>(null)
+  const [editTitle, setEditTitle] = useState("")
+  const [editDescription, setEditDescription] = useState("")
+  const [editGroupIds, setEditGroupIds] = useState<number[]>([])
+  const [editEnabled, setEditEnabled] = useState(true)
+  const [editIsGlobal, setEditIsGlobal] = useState(false)
+  const [savingEdit, setSavingEdit] = useState(false)
+  const [editError, setEditError] = useState("")
 
   async function refresh() {
     setLoading(true)
@@ -51,6 +67,44 @@ export function ChannelsManager({ userId = 1 }: { userId?: number }) {
 
   function toggleGroup(id: number) {
     setSelectedGroupIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
+  }
+
+  function openEdit(c: Chat) {
+    setEditingChannel(c)
+    setEditTitle(c.title ?? "")
+    setEditDescription(c.description ?? "")
+    setEditGroupIds(c.groupIds ?? [])
+    setEditEnabled(c.enabled ?? true)
+    setEditIsGlobal(c.isGlobal ?? false)
+    setEditError("")
+  }
+
+  function toggleEditGroup(id: number) {
+    setEditGroupIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
+  }
+
+  async function saveEdit() {
+    if (!editingChannel) return
+    setSavingEdit(true)
+    setEditError("")
+    try {
+      await apiJson<Chat>(`/api/chats/${editingChannel.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          title: editTitle.trim() || null,
+          description: editDescription.trim() || null,
+          groupIds: editGroupIds,
+          enabled: editEnabled,
+          isGlobal: editIsGlobal,
+        }),
+      })
+      setEditingChannel(null)
+      await refresh()
+    } catch (e) {
+      setEditError(e instanceof Error ? e.message : "Ошибка сохранения")
+    } finally {
+      setSavingEdit(false)
+    }
   }
 
   async function createChannel() {
@@ -161,7 +215,7 @@ export function ChannelsManager({ userId = 1 }: { userId?: number }) {
           />
 
           <div className="rounded-lg border border-border bg-secondary/40 p-3">
-            <p className="text-xs font-medium text-muted-foreground">Группы</p>
+            <p className="text-xs font-medium text-muted-foreground">Группы (канал может входить в несколько)</p>
             <div className="mt-2 flex flex-wrap gap-2">
               {groups.map((g) => {
                 const active = selectedGroupIds.includes(g.id)
@@ -181,7 +235,7 @@ export function ChannelsManager({ userId = 1 }: { userId?: number }) {
                 )
               })}
               {groups.length === 0 && (
-                <span className="text-xs text-muted-foreground">Сначала создайте группы (вкладка “Группы”)</span>
+                <span className="text-xs text-muted-foreground">Сначала создайте группы (вкладка «Группы каналов»)</span>
               )}
             </div>
           </div>
@@ -220,7 +274,10 @@ export function ChannelsManager({ userId = 1 }: { userId?: number }) {
 
       <Card className="lg:col-span-3 border-border bg-card">
         <CardHeader className="flex-row items-center justify-between">
-          <CardTitle className="text-base font-semibold text-card-foreground">Каналы мониторинга</CardTitle>
+          <div>
+            <CardTitle className="text-base font-semibold text-card-foreground">Каналы мониторинга</CardTitle>
+            <p className="text-xs text-muted-foreground mt-0.5">Канал может входить в несколько групп. Используйте «Изменить» для смены групп.</p>
+          </div>
           <Button size="sm" variant="outline" onClick={refresh} disabled={loading}>
             <RefreshCw className="mr-2 size-4" />
             Обновить
@@ -272,15 +329,27 @@ export function ChannelsManager({ userId = 1 }: { userId?: number }) {
                     />
                   </TableCell>
                   <TableCell className="text-right">
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => deleteChannel(c.id)}
-                      disabled={loading}
-                      className="text-destructive hover:text-destructive"
-                    >
-                      <Trash2 className="size-4" />
-                    </Button>
+                    <div className="flex items-center justify-end gap-1">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => openEdit(c)}
+                        disabled={loading}
+                        title="Изменить группы и настройки"
+                      >
+                        <Pencil className="size-4" />
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => deleteChannel(c.id)}
+                        disabled={loading}
+                        className="text-destructive hover:text-destructive"
+                        title="Удалить канал"
+                      >
+                        <Trash2 className="size-4" />
+                      </Button>
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}
@@ -295,6 +364,79 @@ export function ChannelsManager({ userId = 1 }: { userId?: number }) {
           </Table>
         </CardContent>
       </Card>
+
+      <Dialog open={!!editingChannel} onOpenChange={(open) => !open && setEditingChannel(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Редактировать канал</DialogTitle>
+          </DialogHeader>
+          {editingChannel && (
+            <div className="space-y-4 py-2">
+              <div className="text-sm text-muted-foreground font-mono">{editingChannel.identifier}</div>
+              <div className="space-y-2">
+                <Label>Название</Label>
+                <Input
+                  value={editTitle}
+                  onChange={(e) => setEditTitle(e.target.value)}
+                  placeholder="Название канала"
+                  className="bg-secondary border-border"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Описание</Label>
+                <Textarea
+                  value={editDescription}
+                  onChange={(e) => setEditDescription(e.target.value)}
+                  placeholder="Описание (опционально)"
+                  className="bg-secondary border-border"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Группы (канал может входить в несколько)</Label>
+                <div className="flex flex-wrap gap-2 rounded-lg border border-border bg-secondary/40 p-3">
+                  {groups.map((g) => {
+                    const active = editGroupIds.includes(g.id)
+                    return (
+                      <button
+                        key={g.id}
+                        type="button"
+                        onClick={() => toggleEditGroup(g.id)}
+                        className={
+                          active
+                            ? "rounded-md border border-primary/30 bg-primary/10 px-2 py-1 text-xs text-primary"
+                            : "rounded-md border border-border bg-secondary px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+                        }
+                      >
+                        {g.name}
+                      </button>
+                    )
+                  })}
+                  {groups.length === 0 && (
+                    <span className="text-xs text-muted-foreground">Нет групп</span>
+                  )}
+                </div>
+              </div>
+              <div className="flex items-center justify-between rounded-lg border border-border bg-secondary/40 px-3 py-2">
+                <Label htmlFor="edit-enabled" className="text-sm cursor-pointer">Мониторить</Label>
+                <Switch id="edit-enabled" checked={editEnabled} onCheckedChange={setEditEnabled} />
+              </div>
+              <div className="flex items-center justify-between rounded-lg border border-border bg-secondary/40 px-3 py-2">
+                <Label htmlFor="edit-isGlobal" className="text-sm cursor-pointer">Доступен всем пользователям</Label>
+                <Switch id="edit-isGlobal" checked={editIsGlobal} onCheckedChange={setEditIsGlobal} />
+              </div>
+              {editError && <p className="text-sm text-destructive">{editError}</p>}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditingChannel(null)} disabled={savingEdit}>
+              Отмена
+            </Button>
+            <Button onClick={saveEdit} disabled={savingEdit}>
+              {savingEdit ? "Сохранение…" : "Сохранить"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
