@@ -53,13 +53,21 @@ sudo usermod -aG docker "$USER"
 
 **Вариант А: клонирование из Git**
 
+Обратите внимание: в конце команды **точка (`.`)** — клонирование в текущий каталог. Без точки Git создаст подпапку с именем репозитория, и все следующие команды нужно выполнять уже в ней.
+
 ```bash
 sudo mkdir -p /opt/telegram-monitor
 sudo chown "$USER:$USER" /opt/telegram-monitor
 cd /opt/telegram-monitor
-git clone https://github.com/ВАШ_ОРГАНИЗАЦИЯ/v0-telegram-monitoring-dashboard.git .
+git clone https://github.com/SirSomec/v0-telegram-monitoring-dashboard.git .
 # или, если репозиторий приватный, настройте SSH-ключ и:
-# git clone git@github.com:...
+# git clone git@github.com:SirSomec/v0-telegram-monitoring-dashboard.git .
+```
+
+Если вы уже склонировали **без точки**, перейдите в каталог репозитория и дальше работайте из него:
+
+```bash
+cd /opt/telegram-monitor/v0-telegram-monitoring-dashboard
 ```
 
 **Вариант Б: загрузка архива**
@@ -77,10 +85,10 @@ tar -xvf telescope.tar.gz
 
 ## 4. Файл окружения `.env`
 
-Создайте `.env` из примера и заполните переменные:
+Создайте `.env` из примера и заполните переменные (команды выполняйте **в корне проекта** — там, где лежат `docker-compose.yml` и `.env.example`):
 
 ```bash
-cd /opt/telegram-monitor   # или ваш каталог
+cd /opt/telegram-monitor   # или cd /opt/telegram-monitor/v0-telegram-monitoring-dashboard
 cp .env.example .env
 nano .env
 ```
