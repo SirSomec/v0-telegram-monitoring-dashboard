@@ -4,14 +4,15 @@ import asyncio
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from sqlalchemy import desc, select
+from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
+from auth_utils import create_token, decode_token, hash_password, verify_password
 from database import get_db, init_db
-from models import Chat, Keyword, Mention, User
+from models import Chat, ChatGroup, Keyword, Mention, User
 from parser import TelegramScanner
 
 
@@ -65,6 +66,8 @@ class KeywordOut(BaseModel):
 class ChatCreate(BaseModel):
     identifier: str = Field(..., min_length=1, max_length=256, description="username (@name) или числовой chat_id")
     title: str | None = None
+    description: str | None = None
+    groupIds: list[int] = Field(default_factory=list)
     enabled: bool = True
     userId: int | None = None
 
@@ -73,9 +76,52 @@ class ChatOut(BaseModel):
     id: int
     identifier: str
     title: str | None
+    description: str | None
+    groupIds: list[int]
     enabled: bool
     userId: int
     createdAt: str
+
+
+class ChatUpdate(BaseModel):
+    title: str | None = None
+    description: str | None = None
+    enabled: bool | None = None
+    groupIds: list[int] | None = None
+
+
+class ChatGroupCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
+    description: str | None = None
+    userId: int | None = None
+
+
+class ChatGroupOut(BaseModel):
+    id: int
+    name: str
+    description: str | None
+    userId: int
+    createdAt: str
+
+
+class UserCreate(BaseModel):
+    email: str | None = None
+    name: str | None = None
+    isAdmin: bool = False
+
+
+class UserOut(BaseModel):
+    id: int
+    email: str | None
+    name: str | None
+    isAdmin: bool
+    createdAt: str
+
+
+class UserUpdate(BaseModel):
+    email: str | None = None
+    name: str | None = None
+    isAdmin: bool | None = None
 
 
 class MentionOut(BaseModel):
@@ -98,6 +144,22 @@ class MentionLeadPatch(BaseModel):
 
 class MentionReadPatch(BaseModel):
     isRead: bool
+
+
+class LoginRequest(BaseModel):
+    email: str = Field(..., min_length=1)
+    password: str = Field(..., min_length=1)
+
+
+class RegisterRequest(BaseModel):
+    email: str = Field(..., min_length=1)
+    name: str | None = None
+    password: str = Field(..., min_length=8)
+
+
+class AuthResponse(BaseModel):
+    token: str
+    user: "UserOut"
 
 
 class ConnectionManager:
@@ -144,10 +206,45 @@ def _ensure_default_user(db: Session) -> User:
     user = db.scalar(select(User).where(User.id == 1))
     if user:
         return user
-    user = User(id=1, email=None, name="Default")
+    user = User(id=1, email=None, name="Default", is_admin=True)
     db.add(user)
     db.commit()
     db.refresh(user)
+    return user
+
+
+def _user_to_out(u: User) -> UserOut:
+    created_at = u.created_at
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    return UserOut(
+        id=u.id,
+        email=u.email,
+        name=u.name,
+        isAdmin=bool(u.is_admin),
+        createdAt=created_at.isoformat(),
+    )
+
+
+def get_current_user(
+    authorization: str | None = Header(None, alias="Authorization"),
+    db: Session = Depends(get_db),
+) -> User:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    token = authorization[7:].strip()
+    user_id = decode_token(token)
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    user = db.scalar(select(User).where(User.id == user_id))
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+    return user
+
+
+def get_current_admin(user: User = Depends(get_current_user)) -> User:
+    if not user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin only")
     return user
 
 
@@ -212,6 +309,43 @@ def _schedule_ws_broadcast(payload: dict[str, Any]) -> None:
 @app.get("/health")
 def health() -> dict[str, Literal["ok"]]:
     return {"status": "ok"}
+
+
+@app.post("/auth/register", response_model=AuthResponse)
+def auth_register(body: RegisterRequest, db: Session = Depends(get_db)) -> AuthResponse:
+    _ensure_default_user(db)
+    existing = db.scalar(select(User).where(User.email == body.email.strip()))
+    if existing:
+        raise HTTPException(status_code=400, detail="Email already registered")
+    # Первый зарегистрированный пользователь получает права админа
+    count = db.scalar(select(func.count(User.id)).where(User.password_hash.isnot(None))) or 0
+    is_first_user = count == 0
+    user = User(
+        email=body.email.strip(),
+        name=(body.name or "").strip() or None,
+        password_hash=hash_password(body.password),
+        is_admin=is_first_user,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return AuthResponse(token=create_token(user.id), user=_user_to_out(user))
+
+
+@app.post("/auth/login", response_model=AuthResponse)
+def auth_login(body: LoginRequest, db: Session = Depends(get_db)) -> AuthResponse:
+    _ensure_default_user(db)
+    user = db.scalar(select(User).where(User.email == body.email.strip()))
+    if not user or not user.password_hash:
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    if not verify_password(body.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    return AuthResponse(token=create_token(user.id), user=_user_to_out(user))
+
+
+@app.get("/auth/me", response_model=UserOut)
+def auth_me(user: User = Depends(get_current_user)) -> UserOut:
+    return _user_to_out(user)
 
 
 @app.get("/api/keywords", response_model=list[KeywordOut])
@@ -286,6 +420,8 @@ def list_chats(userId: int = 1, db: Session = Depends(get_db)) -> list[ChatOut]:
                 id=c.id,
                 identifier=identifier,
                 title=c.title,
+                description=c.description,
+                groupIds=[g.id for g in (c.groups or [])],
                 enabled=bool(c.enabled),
                 userId=c.user_id,
                 createdAt=created_at.isoformat(),
@@ -310,7 +446,18 @@ def create_chat(body: ChatCreate, db: Session = Depends(get_db)) -> ChatOut:
     else:
         username = ident.lstrip("@")
 
-    c = Chat(user_id=user_id, username=username, tg_chat_id=tg_chat_id, title=body.title, enabled=body.enabled)
+    c = Chat(
+        user_id=user_id,
+        username=username,
+        tg_chat_id=tg_chat_id,
+        title=body.title,
+        description=body.description,
+        enabled=body.enabled,
+    )
+
+    if body.groupIds:
+        groups = db.scalars(select(ChatGroup).where(ChatGroup.user_id == user_id, ChatGroup.id.in_(body.groupIds))).all()
+        c.groups = list(groups)
     db.add(c)
     db.commit()
     db.refresh(c)
@@ -323,10 +470,190 @@ def create_chat(body: ChatCreate, db: Session = Depends(get_db)) -> ChatOut:
         id=c.id,
         identifier=identifier,
         title=c.title,
+        description=c.description,
+        groupIds=[g.id for g in (c.groups or [])],
         enabled=bool(c.enabled),
         userId=c.user_id,
         createdAt=created_at.isoformat(),
     )
+
+
+@app.patch("/api/chats/{chat_id}", response_model=ChatOut)
+def update_chat(chat_id: int, body: ChatUpdate, db: Session = Depends(get_db)) -> ChatOut:
+    c = db.scalar(select(Chat).where(Chat.id == chat_id))
+    if not c:
+        raise HTTPException(status_code=404, detail="chat not found")
+
+    if body.title is not None:
+        c.title = body.title
+    if body.description is not None:
+        c.description = body.description
+    if body.enabled is not None:
+        c.enabled = bool(body.enabled)
+
+    if body.groupIds is not None:
+        groups = db.scalars(
+            select(ChatGroup).where(ChatGroup.user_id == c.user_id, ChatGroup.id.in_(body.groupIds))
+        ).all()
+        c.groups = list(groups)
+
+    db.add(c)
+    db.commit()
+    db.refresh(c)
+
+    identifier = c.username or (str(c.tg_chat_id) if c.tg_chat_id is not None else "")
+    created_at = c.created_at
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    return ChatOut(
+        id=c.id,
+        identifier=identifier,
+        title=c.title,
+        description=c.description,
+        groupIds=[g.id for g in (c.groups or [])],
+        enabled=bool(c.enabled),
+        userId=c.user_id,
+        createdAt=created_at.isoformat(),
+    )
+
+
+@app.get("/api/chat-groups", response_model=list[ChatGroupOut])
+def list_chat_groups(userId: int = 1, db: Session = Depends(get_db)) -> list[ChatGroupOut]:
+    _ensure_default_user(db)
+    rows = db.scalars(select(ChatGroup).where(ChatGroup.user_id == userId).order_by(ChatGroup.id.asc())).all()
+    out: list[ChatGroupOut] = []
+    for g in rows:
+        created_at = g.created_at
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        out.append(
+            ChatGroupOut(
+                id=g.id,
+                name=g.name,
+                description=g.description,
+                userId=g.user_id,
+                createdAt=created_at.isoformat(),
+            )
+        )
+    return out
+
+
+@app.post("/api/chat-groups", response_model=ChatGroupOut)
+def create_chat_group(body: ChatGroupCreate, db: Session = Depends(get_db)) -> ChatGroupOut:
+    user_id = body.userId or 1
+    _ensure_default_user(db)
+
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name is required")
+
+    g = ChatGroup(user_id=user_id, name=name, description=body.description)
+    db.add(g)
+    db.commit()
+    db.refresh(g)
+
+    created_at = g.created_at
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    return ChatGroupOut(
+        id=g.id,
+        name=g.name,
+        description=g.description,
+        userId=g.user_id,
+        createdAt=created_at.isoformat(),
+    )
+
+
+@app.delete("/api/chat-groups/{group_id}")
+def delete_chat_group(group_id: int, db: Session = Depends(get_db)) -> dict[str, Any]:
+    g = db.scalar(select(ChatGroup).where(ChatGroup.id == group_id))
+    if not g:
+        raise HTTPException(status_code=404, detail="group not found")
+    db.delete(g)
+    db.commit()
+    return {"ok": True}
+
+
+@app.get("/api/users", response_model=list[UserOut])
+def list_users(_: User = Depends(get_current_admin), db: Session = Depends(get_db)) -> list[UserOut]:
+    _ensure_default_user(db)
+    rows = db.scalars(select(User).order_by(User.id.asc())).all()
+    out: list[UserOut] = []
+    for u in rows:
+        created_at = u.created_at
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        out.append(
+            UserOut(
+                id=u.id,
+                email=u.email,
+                name=u.name,
+                isAdmin=bool(u.is_admin),
+                createdAt=created_at.isoformat(),
+            )
+        )
+    return out
+
+
+@app.post("/api/users", response_model=UserOut)
+def create_user(body: UserCreate, _: User = Depends(get_current_admin), db: Session = Depends(get_db)) -> UserOut:
+    _ensure_default_user(db)
+    u = User(email=body.email, name=body.name, is_admin=bool(body.isAdmin))
+    db.add(u)
+    db.commit()
+    db.refresh(u)
+    created_at = u.created_at
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    return UserOut(
+        id=u.id,
+        email=u.email,
+        name=u.name,
+        isAdmin=bool(u.is_admin),
+        createdAt=created_at.isoformat(),
+    )
+
+
+@app.patch("/api/users/{user_id}", response_model=UserOut)
+def update_user(user_id: int, body: UserUpdate, _: User = Depends(get_current_admin), db: Session = Depends(get_db)) -> UserOut:
+    _ensure_default_user(db)
+    u = db.scalar(select(User).where(User.id == user_id))
+    if not u:
+        raise HTTPException(status_code=404, detail="user not found")
+
+    if body.email is not None:
+        u.email = body.email
+    if body.name is not None:
+        u.name = body.name
+    if body.isAdmin is not None:
+        u.is_admin = bool(body.isAdmin)
+
+    db.add(u)
+    db.commit()
+    db.refresh(u)
+    created_at = u.created_at
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    return UserOut(
+        id=u.id,
+        email=u.email,
+        name=u.name,
+        isAdmin=bool(u.is_admin),
+        createdAt=created_at.isoformat(),
+    )
+
+
+@app.delete("/api/users/{user_id}")
+def delete_user(user_id: int, _: User = Depends(get_current_admin), db: Session = Depends(get_db)) -> dict[str, Any]:
+    _ensure_default_user(db)
+    if user_id == 1:
+        raise HTTPException(status_code=400, detail="default user cannot be deleted")
+    u = db.scalar(select(User).where(User.id == user_id))
+    if not u:
+        raise HTTPException(status_code=404, detail="user not found")
+    db.delete(u)
+    db.commit()
+    return {"ok": True}
 
 
 @app.delete("/api/chats/{chat_id}")

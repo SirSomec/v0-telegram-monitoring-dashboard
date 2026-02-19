@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { cn } from "@/lib/utils"
 import { SidebarNav } from "@/components/dashboard/sidebar-nav"
 import { MobileSidebar } from "@/components/dashboard/mobile-sidebar"
@@ -9,12 +9,33 @@ import { StatsCards } from "@/components/dashboard/stats-cards"
 import { KeywordsManager } from "@/components/dashboard/keywords-manager"
 import { MentionFeed } from "@/components/dashboard/mention-feed"
 import { BillingModal } from "@/components/dashboard/billing-modal"
+import { apiBaseUrl } from "@/lib/api"
+import { useAuth } from "@/lib/auth-context"
 
 export default function DashboardPage() {
+  const { user } = useAuth()
+  const userId = user?.id ?? 1
+
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
   const [activeNav, setActiveNav] = useState("Панель")
   const [billingOpen, setBillingOpen] = useState(false)
+  const [serviceOnline, setServiceOnline] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    fetch(`${apiBaseUrl()}/health`)
+      .then((r) => r.ok)
+      .then((ok) => {
+        if (!cancelled) setServiceOnline(ok)
+      })
+      .catch(() => {
+        if (!cancelled) setServiceOnline(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   function handleNavigate(item: string) {
     if (item === "Оплата") {
@@ -53,7 +74,7 @@ export default function DashboardPage() {
       >
         <Header
           onMobileMenuToggle={() => setMobileOpen(true)}
-          serviceOnline={true}
+          serviceOnline={serviceOnline}
         />
 
         <div className="flex-1 space-y-6 p-4 lg:p-6">
@@ -73,10 +94,10 @@ export default function DashboardPage() {
           {/* Keywords + Feed */}
           <div className="grid gap-6 xl:grid-cols-5">
             <div className="xl:col-span-2">
-              <KeywordsManager />
+              <KeywordsManager userId={userId} />
             </div>
             <div className="xl:col-span-3">
-              <MentionFeed />
+              <MentionFeed userId={userId} />
             </div>
           </div>
         </div>

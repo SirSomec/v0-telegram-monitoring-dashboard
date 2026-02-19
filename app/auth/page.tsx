@@ -8,16 +8,19 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Eye, EyeOff, ArrowLeft } from "lucide-react"
+import { Eye, EyeOff, ArrowLeft, Loader2 } from "lucide-react"
+import { useAuth } from "@/lib/auth-context"
 
 function AuthPageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const defaultTab = searchParams.get("tab") === "register" ? "register" : "login"
+  const { login, register } = useAuth()
 
   const [activeTab, setActiveTab] = useState(defaultTab)
   const [showPassword, setShowPassword] = useState(false)
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
 
   // Login form state
   const [loginEmail, setLoginEmail] = useState("")
@@ -32,7 +35,7 @@ function AuthPageContent() {
   const [regAgree, setRegAgree] = useState(false)
   const [regError, setRegError] = useState("")
 
-  function handleLogin(e: React.FormEvent) {
+  async function handleLogin(e: React.FormEvent) {
     e.preventDefault()
     setLoginError("")
 
@@ -45,14 +48,22 @@ function AuthPageContent() {
       return
     }
 
-    router.push("/dashboard")
+    setSubmitting(true)
+    try {
+      await login(loginEmail.trim(), loginPassword)
+      router.push("/dashboard")
+    } catch (err) {
+      setLoginError(err instanceof Error ? err.message : "Ошибка входа")
+    } finally {
+      setSubmitting(false)
+    }
   }
 
-  function handleRegister(e: React.FormEvent) {
+  async function handleRegister(e: React.FormEvent) {
     e.preventDefault()
     setRegError("")
 
-    if (!regName.trim() || !regEmail.trim() || !regPassword.trim() || !regConfirm.trim()) {
+    if (!regEmail.trim() || !regPassword.trim() || !regConfirm.trim()) {
       setRegError("Пожалуйста, заполните все поля.")
       return
     }
@@ -73,7 +84,15 @@ function AuthPageContent() {
       return
     }
 
-    router.push("/dashboard")
+    setSubmitting(true)
+    try {
+      await register(regEmail.trim(), regPassword, regName.trim() || undefined)
+      router.push("/dashboard")
+    } catch (err) {
+      setRegError(err instanceof Error ? err.message : "Ошибка регистрации")
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   return (
@@ -165,8 +184,8 @@ function AuthPageContent() {
                     <p className="text-sm text-destructive">{loginError}</p>
                   )}
 
-                  <Button type="submit" className="w-full bg-primary text-primary-foreground hover:bg-primary/90">
-                    Войти
+                  <Button type="submit" disabled={submitting} className="w-full bg-primary text-primary-foreground hover:bg-primary/90">
+                    {submitting ? <Loader2 className="size-4 animate-spin" /> : "Войти"}
                   </Button>
                 </form>
               </TabsContent>
@@ -267,8 +286,8 @@ function AuthPageContent() {
                     <p className="text-sm text-destructive">{regError}</p>
                   )}
 
-                  <Button type="submit" className="w-full bg-primary text-primary-foreground hover:bg-primary/90">
-                    Создать аккаунт
+                  <Button type="submit" disabled={submitting} className="w-full bg-primary text-primary-foreground hover:bg-primary/90">
+                    {submitting ? <Loader2 className="size-4 animate-spin" /> : "Создать аккаунт"}
                   </Button>
                 </form>
               </TabsContent>

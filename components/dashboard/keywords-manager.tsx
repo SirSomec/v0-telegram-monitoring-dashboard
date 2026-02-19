@@ -1,39 +1,69 @@
 "use client"
 
-import { useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
-import { Plus, X, Sparkles, Target } from "lucide-react"
+import { Plus, X, Sparkles, Target, Loader2 } from "lucide-react"
+import { apiBaseUrl, apiJson } from "@/lib/api"
 
-const initialKeywords = [
-  "bitcoin",
-  "крипто биржа",
-  "NFT маркетплейс",
-  "DeFi протокол",
-  "web3 вакансии",
-  "solana",
-  "ethereum",
-]
+type KeywordItem = { id: number; text: string }
 
-export function KeywordsManager() {
-  const [keywords, setKeywords] = useState(initialKeywords)
+export function KeywordsManager({ userId = 1 }: { userId?: number }) {
+  const [keywords, setKeywords] = useState<KeywordItem[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string>("")
   const [newKeyword, setNewKeyword] = useState("")
   const [semanticMode, setSemanticMode] = useState(false)
+  const [adding, setAdding] = useState(false)
 
-  function addKeyword() {
+  const fetchKeywords = useCallback(async () => {
+    setLoading(true)
+    setError("")
+    try {
+      const data = await apiJson<KeywordItem[]>(`${apiBaseUrl()}/api/keywords?userId=${userId}`)
+      setKeywords(data)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Ошибка загрузки")
+    } finally {
+      setLoading(false)
+    }
+  }, [userId])
+
+  useEffect(() => {
+    fetchKeywords()
+  }, [fetchKeywords])
+
+  async function addKeyword() {
     const trimmed = newKeyword.trim()
-    if (trimmed && !keywords.includes(trimmed)) {
-      setKeywords((prev) => [...prev, trimmed])
+    if (!trimmed || keywords.some((k) => k.text === trimmed)) return
+    setAdding(true)
+    setError("")
+    try {
+      await apiJson<KeywordItem>(`${apiBaseUrl()}/api/keywords`, {
+        method: "POST",
+        body: JSON.stringify({ text: trimmed, userId }),
+      })
       setNewKeyword("")
+      await fetchKeywords()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Ошибка добавления")
+    } finally {
+      setAdding(false)
     }
   }
 
-  function removeKeyword(keyword: string) {
-    setKeywords((prev) => prev.filter((k) => k !== keyword))
+  async function removeKeyword(item: KeywordItem) {
+    setError("")
+    try {
+      await apiJson<{ ok: boolean }>(`${apiBaseUrl()}/api/keywords/${item.id}`, { method: "DELETE" })
+      setKeywords((prev) => prev.filter((k) => k.id !== item.id))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Ошибка удаления")
+    }
   }
 
   function handleKeyDown(e: React.KeyboardEvent) {
@@ -78,32 +108,46 @@ export function KeywordsManager() {
             onKeyDown={handleKeyDown}
             className="bg-secondary border-border text-foreground placeholder:text-muted-foreground"
           />
-          <Button onClick={addKeyword} size="sm" className="shrink-0 bg-primary text-primary-foreground hover:bg-primary/90">
-            <Plus className="mr-1 size-4" />
+          <Button
+            onClick={addKeyword}
+            size="sm"
+            disabled={adding || !newKeyword.trim()}
+            className="shrink-0 bg-primary text-primary-foreground hover:bg-primary/90"
+          >
+            {adding ? <Loader2 className="mr-1 size-4 animate-spin" /> : <Plus className="mr-1 size-4" />}
             Добавить
           </Button>
         </div>
 
-        <div className="flex flex-wrap gap-2">
-          {keywords.map((keyword) => (
-            <Badge
-              key={keyword}
-              variant="secondary"
-              className="gap-1.5 bg-secondary text-secondary-foreground border border-border px-3 py-1.5 text-sm"
-            >
-              {keyword}
-              <button
-                onClick={() => removeKeyword(keyword)}
-                className="ml-0.5 rounded-full p-0.5 hover:bg-muted transition-colors"
-                aria-label={`Удалить ${keyword}`}
-              >
-                <X className="size-3" />
-              </button>
-            </Badge>
-          ))}
-        </div>
+        {error && <p className="text-sm text-destructive">{error}</p>}
 
-        {keywords.length === 0 && (
+        {loading ? (
+          <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
+            <Loader2 className="size-4 animate-spin" />
+            Загрузка...
+          </div>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {keywords.map((item) => (
+              <Badge
+                key={item.id}
+                variant="secondary"
+                className="gap-1.5 bg-secondary text-secondary-foreground border border-border px-3 py-1.5 text-sm"
+              >
+                {item.text}
+                <button
+                  onClick={() => removeKeyword(item)}
+                  className="ml-0.5 rounded-full p-0.5 hover:bg-muted transition-colors"
+                  aria-label={`Удалить ${item.text}`}
+                >
+                  <X className="size-3" />
+                </button>
+              </Badge>
+            ))}
+          </div>
+        )}
+
+        {!loading && keywords.length === 0 && (
           <p className="py-4 text-center text-sm text-muted-foreground">
             Ключевые слова не добавлены. Введите слово выше и нажмите Enter для начала мониторинга.
           </p>
