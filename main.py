@@ -665,6 +665,36 @@ def create_chat(body: ChatCreate, user: User = Depends(get_current_user), db: Se
 
     username, tg_chat_id, invite_hash = _parse_chat_identifier(ident)
 
+    # Если канал уже есть среди глобальных (добавлен администратором) — подписываем пользователя вместо создания дубликата
+    existing_global: Chat | None = None
+    if tg_chat_id is not None:
+        existing_global = db.scalar(
+            select(Chat).where(Chat.is_global.is_(True), Chat.tg_chat_id == tg_chat_id)
+        )
+    if existing_global is None and username:
+        existing_global = db.scalar(
+            select(Chat).where(Chat.is_global.is_(True), Chat.username == username)
+        )
+    if existing_global is None and invite_hash:
+        existing_global = db.scalar(
+            select(Chat).where(Chat.is_global.is_(True), Chat.invite_hash == invite_hash)
+        )
+
+    if existing_global is not None:
+        already = db.execute(
+            select(user_chat_subscriptions).where(
+                user_chat_subscriptions.c.user_id == user_id,
+                user_chat_subscriptions.c.chat_id == existing_global.id,
+            )
+        ).first()
+        if not already:
+            db.execute(
+                user_chat_subscriptions.insert().values(user_id=user_id, chat_id=existing_global.id)
+            )
+            db.commit()
+        db.refresh(existing_global)
+        return _chat_to_out(existing_global, is_owner=False)
+
     c = Chat(
         user_id=user_id,
         username=username,

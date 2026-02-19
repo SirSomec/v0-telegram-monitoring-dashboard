@@ -10,6 +10,7 @@ from typing import Callable, Iterable
 import socks  # PySocks
 from dotenv import load_dotenv
 from telethon import TelegramClient, events
+from telethon.errors import UserAlreadyParticipantError
 from telethon.sessions import StringSession
 from telethon.tl.functions.messages import ImportChatInviteRequest
 
@@ -235,17 +236,29 @@ class TelegramScanner:
         await client.run_until_disconnected()
 
     async def _resolve_invite(self, client: TelegramClient, invite_hash: str) -> int | str | None:
-        """По invite-хешу получает entity и возвращает chat_id или username для фильтра."""
+        """
+        Принимает инвайт в канал/группу в Telegram (подписка в TG) и возвращает chat_id или username для фильтра.
+        Сначала вызывается ImportChatInviteRequest — аккаунт реально присоединяется к чату.
+        """
+        link = f"https://t.me/joinchat/{invite_hash}"
+        entity = None
         try:
-            link = f"https://t.me/joinchat/{invite_hash}"
+            # Сначала явно принимаем инвайт в Telegram (подписываемся на канал/группу)
             try:
-                entity = await client.get_entity(link)
-            except Exception:
                 updates = await client(ImportChatInviteRequest(invite_hash))
                 if updates and getattr(updates, "chats", None) and len(updates.chats) > 0:
                     entity = updates.chats[0]
-                else:
-                    return None
+                    title = getattr(entity, "title", None) or getattr(entity, "name", None) or invite_hash[:16]
+                    log_append(f"Парсер: присоединились к чату по инвайту: {title}")
+            except UserAlreadyParticipantError:
+                # Уже в чате — получаем entity по ссылке
+                entity = await client.get_entity(link)
+            except Exception as e:
+                log_exception(e)
+                return None
+
+            if entity is None:
+                return None
             chat_id = getattr(entity, "id", None)
             if chat_id is not None:
                 return int(chat_id)
