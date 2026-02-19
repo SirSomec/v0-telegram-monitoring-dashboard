@@ -7,32 +7,32 @@ const BACKEND =
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ path?: string[] }> }
+  { params }: { params: Promise<{ path: string[] }> }
 ) {
   return proxy(request, params, "GET")
 }
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ path?: string[] }> }
+  { params }: { params: Promise<{ path: string[] }> }
 ) {
   return proxy(request, params, "POST")
 }
 
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: Promise<{ path?: string[] }> }
+  { params }: { params: Promise<{ path: string[] }> }
 ) {
   return proxy(request, params, "PATCH")
 }
 
 async function proxy(
   request: NextRequest,
-  params: Promise<{ path?: string[] }>,
+  params: Promise<{ path: string[] }>,
   method: string
 ) {
-  const { path = [] } = await params
-  const pathStr = path.length ? path.join("/") : ""
+  const { path } = await params
+  const pathStr = path.join("/")
   const url = `${BACKEND}/auth/${pathStr}${request.nextUrl.search}`
   const headers = new Headers()
   request.headers.forEach((value, key) => {
