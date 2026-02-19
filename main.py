@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import csv
 import io
+import os
 from datetime import datetime, timezone
 from typing import Any, Literal
 
@@ -307,8 +308,6 @@ async def on_startup() -> None:
         _ensure_default_user(db)
 
     # Сканер можно включить через ENV AUTO_START_SCANNER=1
-    import os
-
     if os.getenv("AUTO_START_SCANNER", "").strip() in {"1", "true", "True", "yes", "YES"}:
         # По умолчанию мультипользовательский режим (чаты и ключевые слова из БД по всем пользователям).
         # Для одного пользователя задайте MULTI_USER_SCANNER=0 и TG_USER_ID.
@@ -753,6 +752,50 @@ def delete_user(user_id: int, _: User = Depends(get_current_admin), db: Session 
     return {"ok": True}
 
 
+def _parser_status() -> ParserStatusOut:
+    global scanner
+    if scanner is None:
+        return ParserStatusOut(running=False, multiUser=True, userId=None)
+    multi = getattr(scanner, "_multi_user", True)
+    uid = getattr(scanner, "user_id", None)
+    return ParserStatusOut(
+        running=scanner.is_running,
+        multiUser=multi,
+        userId=uid,
+    )
+
+
+@app.get("/api/admin/parser/status", response_model=ParserStatusOut)
+def get_parser_status(_: User = Depends(get_current_admin)) -> ParserStatusOut:
+    return _parser_status()
+
+
+@app.post("/api/admin/parser/start", response_model=ParserStatusOut)
+def start_parser(_: User = Depends(get_current_admin)) -> ParserStatusOut:
+    global scanner
+    if scanner is not None and scanner.is_running:
+        return _parser_status()
+    multi = os.getenv("MULTI_USER_SCANNER", "1").strip() in {"1", "true", "True", "yes", "YES"}
+    if multi:
+        scanner = TelegramScanner(on_mention=lambda payload: _schedule_ws_broadcast(payload))
+    else:
+        scanner = TelegramScanner(
+            user_id=int(os.getenv("TG_USER_ID", "1")),
+            on_mention=lambda payload: _schedule_ws_broadcast(payload),
+        )
+    scanner.start()
+    return _parser_status()
+
+
+@app.post("/api/admin/parser/stop", response_model=ParserStatusOut)
+def stop_parser(_: User = Depends(get_current_admin)) -> ParserStatusOut:
+    global scanner
+    if scanner is not None:
+        scanner.stop()
+        scanner = None
+    return _parser_status()
+
+
 @app.delete("/api/chats/{chat_id}")
 def delete_chat(chat_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
     c = db.scalar(select(Chat).where(Chat.id == chat_id))
@@ -850,6 +893,12 @@ def export_mentions_csv(
 
 class MarkAllReadOut(BaseModel):
     marked: int
+
+
+class ParserStatusOut(BaseModel):
+    running: bool
+    multiUser: bool
+    userId: int | None = None
 
 
 @app.post("/api/mentions/mark-all-read", response_model=MarkAllReadOut)

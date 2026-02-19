@@ -120,6 +120,10 @@ class TelegramScanner:
         self._chat_ids_to_users: dict[int, set[int]] = {}
         self._chat_usernames_to_users: dict[str, set[int]] = {}
 
+    @property
+    def is_running(self) -> bool:
+        return self._thread is not None and self._thread.is_alive()
+
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
             return

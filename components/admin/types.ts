@@ -25,3 +25,9 @@ export type UserAccount = {
   createdAt: string
 }
 
+export type ParserStatus = {
+  running: boolean
+  multiUser: boolean
+  userId: number | null
+}
+
