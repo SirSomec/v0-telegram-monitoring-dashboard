@@ -137,6 +137,13 @@ class MentionOut(BaseModel):
     isLead: bool
     isRead: bool
     createdAt: str
+    messageLink: str | None = None
+
+
+class StatsOut(BaseModel):
+    mentionsToday: int
+    keywordsCount: int
+    leadsCount: int
 
 
 class MentionLeadPatch(BaseModel):
@@ -249,6 +256,14 @@ def get_current_admin(user: User = Depends(get_current_user)) -> User:
     return user
 
 
+def _message_link(chat_id: int | None, message_id: int | None) -> str | None:
+    if chat_id is None or message_id is None:
+        return None
+    cid = abs(chat_id)
+    part = cid % (10**10) if cid >= 10**10 else cid
+    return f"https://t.me/c/{part}/{message_id}"
+
+
 def _mention_to_front(m: Mention) -> MentionOut:
     group_name = (m.chat_name or m.chat_username or "Неизвестный чат").strip()
     user_name = (m.sender_name or "Неизвестный пользователь").strip()
@@ -267,6 +282,7 @@ def _mention_to_front(m: Mention) -> MentionOut:
         isLead=bool(m.is_lead),
         isRead=bool(m.is_read),
         createdAt=created_at.isoformat(),
+        messageLink=_message_link(m.chat_id, m.message_id),
     )
 
 
@@ -347,6 +363,45 @@ def auth_login(body: LoginRequest, db: Session = Depends(get_db)) -> AuthRespons
 @app.get("/auth/me", response_model=UserOut)
 def auth_me(user: User = Depends(get_current_user)) -> UserOut:
     return _user_to_out(user)
+
+
+@app.get("/api/stats", response_model=StatsOut)
+def get_stats(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> StatsOut:
+    _ensure_default_user(db)
+    now = _now_utc()
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    mentions_today = (
+        db.scalar(
+            select(func.count(Mention.id)).where(
+                Mention.user_id == user.id,
+                Mention.created_at >= today_start,
+            )
+        )
+        or 0
+    )
+    keywords_count = (
+        db.scalar(
+            select(func.count(Keyword.id)).where(
+                Keyword.user_id == user.id,
+                Keyword.enabled.is_(True),
+            )
+        )
+        or 0
+    )
+    leads_count = (
+        db.scalar(
+            select(func.count(Mention.id)).where(
+                Mention.user_id == user.id,
+                Mention.is_lead.is_(True),
+            )
+        )
+        or 0
+    )
+    return StatsOut(
+        mentionsToday=mentions_today,
+        keywordsCount=keywords_count,
+        leadsCount=leads_count,
+    )
 
 
 @app.get("/api/keywords", response_model=list[KeywordOut])

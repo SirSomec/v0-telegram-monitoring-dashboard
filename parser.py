@@ -264,6 +264,13 @@ class TelegramScanner:
                 )
                 db.add(mention)
                 db.flush()
+                msg_id = int(msg.id) if getattr(msg, "id", None) is not None else None
+                cid = int(chat_id) if chat_id is not None else None
+                message_link = None
+                if cid is not None and msg_id is not None:
+                    aid = abs(cid)
+                    part = aid % (10**10) if aid >= 10**10 else aid
+                    message_link = f"https://t.me/c/{part}/{msg_id}"
                 payload = {
                     "type": "mention",
                     "data": {
@@ -278,6 +285,7 @@ class TelegramScanner:
                         "isLead": False,
                         "isRead": False,
                         "createdAt": created_at.isoformat(),
+                        "messageLink": message_link,
                     },
                 }
 

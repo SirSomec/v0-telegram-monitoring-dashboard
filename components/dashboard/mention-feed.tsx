@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
-import { ExternalLink, UserPlus, Check, MessageSquare, Loader2 } from "lucide-react"
+import { ExternalLink, UserPlus, Check, MessageSquare, Loader2, CheckCheck } from "lucide-react"
 import { apiBaseUrl, apiJson, wsMentionsUrl } from "@/lib/api"
 import { getStoredToken } from "@/lib/auth-context"
 
@@ -20,6 +20,7 @@ export interface Mention {
   timestamp: string
   isLead: boolean
   isRead?: boolean
+  messageLink?: string | null
 }
 
 function highlightKeyword(text: string, keyword: string) {
@@ -41,6 +42,7 @@ export function MentionFeed({ userId }: { userId?: number }) {
   const [mentions, setMentions] = useState<Mention[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string>("")
+  const [unreadOnly, setUnreadOnly] = useState(false)
   const wsRef = useRef<WebSocket | null>(null)
   const token = typeof window !== "undefined" ? getStoredToken() : null
 
@@ -48,14 +50,16 @@ export function MentionFeed({ userId }: { userId?: number }) {
     setLoading(true)
     setError("")
     try {
-      const data = await apiJson<Mention[]>(`${apiBaseUrl()}/api/mentions?limit=50`)
+      const params = new URLSearchParams({ limit: "50" })
+      if (unreadOnly) params.set("unreadOnly", "true")
+      const data = await apiJson<Mention[]>(`${apiBaseUrl()}/api/mentions?${params}`)
       setMentions(data)
     } catch (e) {
       setError(e instanceof Error ? e.message : "Ошибка загрузки")
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [unreadOnly])
 
   useEffect(() => {
     fetchMentions()
@@ -104,17 +108,43 @@ export function MentionFeed({ userId }: { userId?: number }) {
     }
   }
 
+  async function markRead(id: string, read: boolean) {
+    setError("")
+    try {
+      await apiJson<Mention>(`${apiBaseUrl()}/api/mentions/${id}/read`, {
+        method: "PATCH",
+        body: JSON.stringify({ isRead: read }),
+      })
+      setMentions((prev) =>
+        prev.map((x) => (x.id === id ? { ...x, isRead: read } : x))
+      )
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Ошибка обновления")
+    }
+  }
+
   return (
     <Card className="border-border bg-card">
       <CardHeader className="pb-4">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <CardTitle className="flex items-center gap-2 text-base font-semibold text-card-foreground">
             <MessageSquare className="size-4 text-primary" />
             Лента упоминаний
           </CardTitle>
-          <Badge variant="outline" className="border-primary/30 bg-primary/10 text-primary text-xs font-mono">
-            {mentions.length} результатов
-          </Badge>
+          <div className="flex items-center gap-2">
+            <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+              <input
+                type="checkbox"
+                checked={unreadOnly}
+                onChange={(e) => setUnreadOnly(e.target.checked)}
+                className="rounded border-border"
+              />
+              Только непрочитанные
+            </label>
+            <Badge variant="outline" className="border-primary/30 bg-primary/10 text-primary text-xs font-mono">
+              {mentions.length}
+            </Badge>
+          </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-3 p-4 pt-0">
@@ -160,15 +190,29 @@ export function MentionFeed({ userId }: { userId?: number }) {
                       {mention.keyword}
                     </Badge>
 
-                    <div className="ml-auto flex items-center gap-2">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-7 gap-1.5 text-xs text-muted-foreground hover:text-foreground"
-                      >
-                        <ExternalLink className="size-3" />
-                        К сообщению
-                      </Button>
+                    <div className="ml-auto flex items-center gap-2 flex-wrap">
+                      {mention.messageLink ? (
+                        <a
+                          href={mention.messageLink}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground"
+                        >
+                          <ExternalLink className="size-3" />
+                          К сообщению
+                        </a>
+                      ) : null}
+                      {!mention.isRead ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+                          onClick={() => markRead(mention.id, true)}
+                        >
+                          <CheckCheck className="size-3" />
+                          Прочитано
+                        </Button>
+                      ) : null}
                       <Button
                         variant={mention.isLead ? "default" : "outline"}
                         size="sm"
