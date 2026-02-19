@@ -46,6 +46,9 @@ export function UserChannelsManager() {
   const [description, setDescription] = useState("")
   const [enabled, setEnabled] = useState(true)
 
+  const [subscribeIdentifier, setSubscribeIdentifier] = useState("")
+  const [subscribeError, setSubscribeError] = useState<string>("")
+
   async function refresh() {
     setLoading(true)
     setError("")
@@ -139,13 +142,32 @@ export function UserChannelsManager() {
     }
   }
 
+  async function subscribeByIdentifier() {
+    const ident = subscribeIdentifier.trim()
+    if (!ident) return
+    setSubscribeError("")
+    setLoading(true)
+    try {
+      await apiJson<ChatOut>("/api/chats/subscribe-by-identifier", {
+        method: "POST",
+        body: JSON.stringify({ identifier: ident }),
+      })
+      setSubscribeIdentifier("")
+      await refresh()
+    } catch (e) {
+      setSubscribeError(e instanceof Error ? e.message : "Ошибка подписки")
+    } finally {
+      setLoading(false)
+    }
+  }
+
   return (
     <div className="space-y-6">
       <Card className="border-border bg-card">
         <CardHeader>
           <CardTitle className="text-base font-semibold text-card-foreground">Добавить свой канал</CardTitle>
           <p className="text-sm text-muted-foreground">
-            Введите @username канала или группы в Telegram либо числовой chat_id (например -100xxxxxxxxxx).
+            Вставьте ссылку (t.me/… или приглашение t.me/joinchat/…), @username или числовой chat_id.
           </p>
         </CardHeader>
         <CardContent className="space-y-3">
@@ -153,7 +175,7 @@ export function UserChannelsManager() {
             <Input
               value={identifier}
               onChange={(e) => setIdentifier(e.target.value)}
-              placeholder="@username или chat_id (-100...)"
+              placeholder="Ссылка, @username или chat_id"
               className="bg-secondary border-border"
             />
             <Input
@@ -258,13 +280,40 @@ export function UserChannelsManager() {
       <Card className="border-border bg-card">
         <CardHeader>
           <CardTitle className="text-base font-semibold text-card-foreground">
-            Доступные каналы (добавлены администратором)
+            Подписаться на каналы
           </CardTitle>
           <p className="text-sm text-muted-foreground">
-            Подпишитесь на каналы, которые администратор сделал доступными для всех пользователей.
+            Вставьте ссылку (t.me/… или приглашение), @username или ID канала из доступных и нажмите «Подписаться».
           </p>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-4">
+          <div className="flex flex-wrap items-end gap-2">
+            <div className="min-w-[200px] flex-1">
+              <Input
+                value={subscribeIdentifier}
+                onChange={(e) => {
+                  setSubscribeIdentifier(e.target.value)
+                  setSubscribeError("")
+                }}
+                placeholder="Ссылка, @username или chat_id"
+                className="bg-secondary border-border"
+                onKeyDown={(e) => e.key === "Enter" && subscribeByIdentifier()}
+              />
+            </div>
+            <Button
+              onClick={subscribeByIdentifier}
+              disabled={loading || !subscribeIdentifier.trim()}
+            >
+              <UserPlus className="mr-2 size-4" />
+              Подписаться
+            </Button>
+          </div>
+          {subscribeError && (
+            <p className="text-sm text-destructive">{subscribeError}</p>
+          )}
+
+          <div className="border-t border-border pt-4">
+            <h4 className="text-sm font-medium text-foreground mb-2">Доступные каналы</h4>
           {availableChannels.length === 0 ? (
             <p className="text-sm text-muted-foreground py-4">
               Нет доступных каналов. Администратор может добавить каналы в админ-панели и отметить их как «Доступен всем».
@@ -318,6 +367,7 @@ export function UserChannelsManager() {
               </TableBody>
             </Table>
           )}
+          </div>
         </CardContent>
       </Card>
     </div>

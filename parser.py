@@ -11,6 +11,7 @@ import socks  # PySocks
 from dotenv import load_dotenv
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
+from telethon.tl.functions.messages import ImportChatInviteRequest
 
 from database import db_session
 from models import Chat, Keyword, Mention, User, user_chat_subscriptions
@@ -183,7 +184,17 @@ class TelegramScanner:
                 if not user:
                     db.add(User(id=self.user_id, name="Default"))
 
-        chats_filter = await self._load_chats_filter()
+        # Запускаем клиент до загрузки чатов, чтобы разрешать invite-ссылки через Telethon
+        try:
+            await client.start(bot_token=get_parser_setting_str("TG_BOT_TOKEN") or None)
+        except EOFError:
+            raise RuntimeError(
+                "Интерактивный вход невозможен (нет консоли). "
+                "Задайте TG_SESSION_STRING в настройках парсера: создайте сессию локально через Telethon StringSession, "
+                "войдите в аккаунт один раз и вставьте выданную строку в админке (Парсер → Настройки)."
+            ) from None
+
+        chats_filter = await self._load_chats_filter(client)
 
         @client.on(events.NewMessage(chats=chats_filter or None))
         async def handler(event: events.NewMessage.Event) -> None:
@@ -193,19 +204,32 @@ class TelegramScanner:
                 # чтобы не убить цикл сканера из-за одного сообщения
                 return
 
-        # start(): если нет bot token и нет сохраненной сессии, Telethon попросит интерактивный ввод в консоли.
-        # В контейнере/сервере нет консоли — при EOFError даём понятную ошибку.
-        try:
-            await client.start(bot_token=get_parser_setting_str("TG_BOT_TOKEN") or None)
-        except EOFError:
-            raise RuntimeError(
-                "Интерактивный вход невозможен (нет консоли). "
-                "Задайте TG_SESSION_STRING в настройках парсера: создайте сессию локально через Telethon StringSession, "
-                "войдите в аккаунт один раз и вставьте выданную строку в админке (Парсер → Настройки)."
-            ) from None
         await client.run_until_disconnected()
 
-    async def _load_chats_filter(self) -> list[str | int] | None:
+    async def _resolve_invite(self, client: TelegramClient, invite_hash: str) -> int | str | None:
+        """По invite-хешу получает entity и возвращает chat_id или username для фильтра."""
+        try:
+            link = f"https://t.me/joinchat/{invite_hash}"
+            try:
+                entity = await client.get_entity(link)
+            except Exception:
+                updates = await client(ImportChatInviteRequest(invite_hash))
+                if updates and getattr(updates, "chats", None) and len(updates.chats) > 0:
+                    entity = updates.chats[0]
+                else:
+                    return None
+            chat_id = getattr(entity, "id", None)
+            if chat_id is not None:
+                return int(chat_id)
+            username = getattr(entity, "username", None)
+            if username:
+                return username
+            return None
+        except Exception as e:
+            log_exception(e)
+            return None
+
+    async def _load_chats_filter(self, client: TelegramClient | None = None) -> list[str | int] | None:
         # Мультипользовательский режим: только из БД, без TG_CHATS
         if self._multi_user:
             from sqlalchemy import select
@@ -237,19 +261,24 @@ class TelegramScanner:
                 user_ids = user_ids_by_chat.get(r.id, set())
                 if not user_ids:
                     continue
+                resolved: int | str | None = None
                 if r.tg_chat_id is not None:
-                    cid = int(r.tg_chat_id)
-                    self._chat_ids_to_users.setdefault(cid, set()).update(user_ids)
-                    if cid not in seen:
-                        seen.add(cid)
-                        result.append(cid)
-                if r.username:
-                    uname = (r.username or "").strip()
-                    if uname:
-                        self._chat_usernames_to_users.setdefault(uname, set()).update(user_ids)
-                        if uname not in seen:
-                            seen.add(uname)
-                            result.append(uname)
+                    resolved = int(r.tg_chat_id)
+                elif (r.username or "").strip():
+                    resolved = (r.username or "").strip()
+                elif getattr(r, "invite_hash", None) and client:
+                    resolved = await self._resolve_invite(client, r.invite_hash)
+                if resolved is not None:
+                    if isinstance(resolved, int):
+                        self._chat_ids_to_users.setdefault(resolved, set()).update(user_ids)
+                        if resolved not in seen:
+                            seen.add(resolved)
+                            result.append(resolved)
+                    else:
+                        self._chat_usernames_to_users.setdefault(resolved, set()).update(user_ids)
+                        if resolved not in seen:
+                            seen.add(resolved)
+                            result.append(resolved)
             return result if result else None
 
         # Один пользователь: TG_CHATS или БД
@@ -267,7 +296,6 @@ class TelegramScanner:
         with db_session() as db:
             from sqlalchemy import select
 
-            # Свои каналы + глобальные, на которые подписан пользователь
             sub_chat_ids = set(
                 db.execute(
                     select(user_chat_subscriptions.c.chat_id).where(
@@ -287,17 +315,21 @@ class TelegramScanner:
                 .order_by(Chat.id.asc())
                 .all()
             ) if sub_chat_ids else []
-            seen_id: set[int] = set()
-            parsed2: list[str | int] = []
-            for r in rows_owned + rows_subs:
-                if r.id in seen_id:
-                    continue
-                seen_id.add(r.id)
-                if r.tg_chat_id is not None:
-                    parsed2.append(int(r.tg_chat_id))
-                elif r.username:
-                    parsed2.append(r.username)
-            return parsed2
+        seen_id: set[int] = set()
+        parsed2: list[str | int] = []
+        for r in rows_owned + rows_subs:
+            if r.id in seen_id:
+                continue
+            seen_id.add(r.id)
+            if r.tg_chat_id is not None:
+                parsed2.append(int(r.tg_chat_id))
+            elif (r.username or "").strip():
+                parsed2.append((r.username or "").strip())
+            elif getattr(r, "invite_hash", None) and client:
+                resolved = await self._resolve_invite(client, r.invite_hash)
+                if resolved is not None:
+                    parsed2.append(resolved)
+        return parsed2
 
     async def _handle_message(self, event: events.NewMessage.Event) -> None:
         msg = event.message

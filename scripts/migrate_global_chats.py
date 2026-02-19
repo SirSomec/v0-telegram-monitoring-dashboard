@@ -43,7 +43,20 @@ def migrate() -> None:
         """))
         conn.commit()
 
-    print("Миграция выполнена: is_global в chats, user_chat_subscriptions создана.")
+        # Колонка invite_hash для каналов по ссылке-приглашению
+        try:
+            conn.execute(text("""
+                ALTER TABLE chats
+                ADD COLUMN IF NOT EXISTS invite_hash VARCHAR(128)
+            """))
+            conn.commit()
+        except Exception as e:
+            if "already exists" in str(e).lower() or "duplicate" in str(e).lower():
+                pass
+            else:
+                raise
+
+    print("Миграция выполнена: is_global, invite_hash в chats, user_chat_subscriptions создана.")
 
 
 if __name__ == "__main__":

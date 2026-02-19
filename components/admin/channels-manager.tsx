@@ -144,7 +144,7 @@ export function ChannelsManager({ userId = 1 }: { userId?: number }) {
           <Input
             value={identifier}
             onChange={(e) => setIdentifier(e.target.value)}
-            placeholder="@username или chat_id (-100...)"
+            placeholder="Ссылка (t.me/…), @username или chat_id"
             className="bg-secondary border-border"
           />
           <Input

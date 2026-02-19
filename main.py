@@ -114,6 +114,10 @@ class ChatAvailableOut(BaseModel):
     createdAt: str
 
 
+class SubscribeByIdentifierBody(BaseModel):
+    identifier: str = Field(..., min_length=1, max_length=256, description="@username или числовой chat_id")
+
+
 class ChatGroupCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
     description: str | None = None
@@ -562,8 +566,46 @@ def delete_keyword(keyword_id: int, user: User = Depends(get_current_user), db: 
     return {"ok": True}
 
 
+def _parse_chat_identifier(ident: str) -> tuple[str | None, int | None, str | None]:
+    """
+    Парсит идентификатор: ссылку (t.me/...), @username или chat_id.
+    Возвращает (username, tg_chat_id, invite_hash).
+    """
+    raw = ident.strip()
+    if not raw:
+        return (None, None, None)
+    # Ссылка t.me/...
+    if "t.me/" in raw or "telegram.me/" in raw:
+        s = raw.replace("https://", "").replace("http://", "").strip()
+        for prefix in ("t.me/", "telegram.me/"):
+            if prefix in s:
+                part = s.split(prefix, 1)[-1].split("?")[0].rstrip("/")
+                if not part:
+                    break
+                # t.me/c/1234567890 -> -1001234567890
+                if part.startswith("c/") and part[2:].lstrip("-").isdigit():
+                    return (None, -1000000000000 - int(part[2:]), None)
+                # t.me/joinchat/HASH или t.me/+HASH
+                if part.startswith("joinchat/"):
+                    return (None, None, part[9:].strip())
+                if part.startswith("+"):
+                    return (None, None, part[1:].strip())
+                # t.me/username
+                return (part.strip(), None, None)
+        return (None, None, None)
+    # Числовой chat_id
+    if raw.lstrip("-").isdigit():
+        return (None, int(raw), None)
+    # @username или username
+    return (raw.lstrip("@"), None, None)
+
+
 def _chat_to_out(c: Chat, is_owner: bool) -> ChatOut:
-    identifier = c.username or (str(c.tg_chat_id) if c.tg_chat_id is not None else "")
+    identifier = (
+        (c.username or "")
+        or (str(c.tg_chat_id) if c.tg_chat_id is not None else "")
+        or (f"t.me/joinchat/{c.invite_hash}" if getattr(c, "invite_hash", None) else "")
+    ) or "—"
     created_at = c.created_at
     if created_at.tzinfo is None:
         created_at = created_at.replace(tzinfo=timezone.utc)
@@ -621,17 +663,13 @@ def create_chat(body: ChatCreate, user: User = Depends(get_current_user), db: Se
     if is_global and not user.is_admin:
         raise HTTPException(status_code=403, detail="only admin can create global channels")
 
-    username: str | None = None
-    tg_chat_id: int | None = None
-    if ident.lstrip("-").isdigit():
-        tg_chat_id = int(ident)
-    else:
-        username = ident.lstrip("@")
+    username, tg_chat_id, invite_hash = _parse_chat_identifier(ident)
 
     c = Chat(
         user_id=user_id,
         username=username,
         tg_chat_id=tg_chat_id,
+        invite_hash=invite_hash,
         title=body.title,
         description=body.description,
         enabled=body.enabled,
@@ -974,10 +1012,15 @@ def list_available_chats(user: User = Depends(get_current_user), db: Session = D
         created_at = c.created_at
         if created_at.tzinfo is None:
             created_at = created_at.replace(tzinfo=timezone.utc)
+        ident_display = (
+            (c.username or "")
+            or (str(c.tg_chat_id) if c.tg_chat_id is not None else "")
+            or (f"t.me/joinchat/{c.invite_hash}" if getattr(c, "invite_hash", None) else "")
+        ) or "—"
         out.append(
             ChatAvailableOut(
                 id=c.id,
-                identifier=c.username or (str(c.tg_chat_id) if c.tg_chat_id is not None else ""),
+                identifier=ident_display,
                 title=c.title,
                 description=c.description,
                 enabled=bool(c.enabled),
@@ -986,6 +1029,57 @@ def list_available_chats(user: User = Depends(get_current_user), db: Session = D
             )
         )
     return out
+
+
+@app.post("/api/chats/subscribe-by-identifier", response_model=ChatOut)
+def subscribe_by_identifier(
+    body: SubscribeByIdentifierBody,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ChatOut:
+    """Подписаться на глобальный канал по ссылке, @username или chat_id."""
+    _ensure_default_user(db)
+    username, tg_chat_id, invite_hash = _parse_chat_identifier(body.identifier)
+
+    c = None
+    if tg_chat_id is not None:
+        c = db.scalar(
+            select(Chat).where(
+                Chat.is_global.is_(True),
+                Chat.tg_chat_id == tg_chat_id,
+            )
+        )
+    if c is None and username:
+        c = db.scalar(
+            select(Chat).where(
+                Chat.is_global.is_(True),
+                Chat.username == username,
+            )
+        )
+    if c is None and invite_hash:
+        c = db.scalar(
+            select(Chat).where(
+                Chat.is_global.is_(True),
+                Chat.invite_hash == invite_hash,
+            )
+        )
+    if not c:
+        raise HTTPException(
+            status_code=404,
+            detail="Канал не найден среди доступных. Добавьте свой канал выше или попросите администратора добавить его в список доступных.",
+        )
+    existing = db.execute(
+        select(user_chat_subscriptions).where(
+            user_chat_subscriptions.c.user_id == user.id,
+            user_chat_subscriptions.c.chat_id == c.id,
+        )
+    ).first()
+    if existing:
+        return _chat_to_out(c, is_owner=False)
+    db.execute(user_chat_subscriptions.insert().values(user_id=user.id, chat_id=c.id))
+    db.commit()
+    db.refresh(c)
+    return _chat_to_out(c, is_owner=False)
 
 
 @app.post("/api/chats/{chat_id}/subscribe", response_model=ChatOut)
