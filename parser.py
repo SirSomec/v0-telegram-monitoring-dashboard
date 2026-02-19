@@ -13,7 +13,7 @@ from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 
 from database import db_session
-from models import Chat, Keyword, Mention, User
+from models import Chat, Keyword, Mention, User, user_chat_subscriptions
 from parser_log import append as log_append, append_exception as log_exception
 from parser_config import (
     get_parser_setting_str,
@@ -208,25 +208,45 @@ class TelegramScanner:
     async def _load_chats_filter(self) -> list[str | int] | None:
         # Мультипользовательский режим: только из БД, без TG_CHATS
         if self._multi_user:
+            from sqlalchemy import select
+
             with db_session() as db:
                 rows: list[Chat] = (
                     db.query(Chat).filter(Chat.enabled.is_(True)).order_by(Chat.id.asc()).all()
                 )
+                # Для глобальных каналов — пользователи из подписок; для остальных — владелец
+                user_ids_by_chat: dict[int, set[int]] = {}
+                for r in rows:
+                    if getattr(r, "is_global", False):
+                        sub_ids = set(
+                            db.execute(
+                                select(user_chat_subscriptions.c.user_id).where(
+                                    user_chat_subscriptions.c.chat_id == r.id
+                                )
+                            ).scalars().all()
+                        )
+                        user_ids_by_chat[r.id] = sub_ids
+                    else:
+                        user_ids_by_chat[r.id] = {r.user_id}
+
             self._chat_ids_to_users = {}
             self._chat_usernames_to_users = {}
             seen: set[str | int] = set()
             result: list[str | int] = []
             for r in rows:
+                user_ids = user_ids_by_chat.get(r.id, set())
+                if not user_ids:
+                    continue
                 if r.tg_chat_id is not None:
                     cid = int(r.tg_chat_id)
-                    self._chat_ids_to_users.setdefault(cid, set()).add(r.user_id)
+                    self._chat_ids_to_users.setdefault(cid, set()).update(user_ids)
                     if cid not in seen:
                         seen.add(cid)
                         result.append(cid)
                 if r.username:
                     uname = (r.username or "").strip()
                     if uname:
-                        self._chat_usernames_to_users.setdefault(uname, set()).add(r.user_id)
+                        self._chat_usernames_to_users.setdefault(uname, set()).update(user_ids)
                         if uname not in seen:
                             seen.add(uname)
                             result.append(uname)
@@ -245,14 +265,34 @@ class TelegramScanner:
             return parsed
 
         with db_session() as db:
-            rows = (
+            from sqlalchemy import select
+
+            # Свои каналы + глобальные, на которые подписан пользователь
+            sub_chat_ids = set(
+                db.execute(
+                    select(user_chat_subscriptions.c.chat_id).where(
+                        user_chat_subscriptions.c.user_id == self.user_id
+                    )
+                ).scalars().all()
+            )
+            rows_owned = (
                 db.query(Chat)
                 .filter(Chat.user_id == self.user_id, Chat.enabled.is_(True))
                 .order_by(Chat.id.asc())
                 .all()
             )
+            rows_subs = (
+                db.query(Chat)
+                .filter(Chat.id.in_(sub_chat_ids), Chat.is_global.is_(True), Chat.enabled.is_(True))
+                .order_by(Chat.id.asc())
+                .all()
+            ) if sub_chat_ids else []
+            seen_id: set[int] = set()
             parsed2: list[str | int] = []
-            for r in rows:
+            for r in rows_owned + rows_subs:
+                if r.id in seen_id:
+                    continue
+                seen_id.add(r.id)
                 if r.tg_chat_id is not None:
                     parsed2.append(int(r.tg_chat_id))
                 elif r.username:

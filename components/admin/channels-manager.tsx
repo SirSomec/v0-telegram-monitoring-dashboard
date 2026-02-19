@@ -24,6 +24,7 @@ export function ChannelsManager({ userId = 1 }: { userId?: number }) {
   const [description, setDescription] = useState("")
   const [selectedGroupIds, setSelectedGroupIds] = useState<number[]>([])
   const [enabled, setEnabled] = useState(true)
+  const [isGlobal, setIsGlobal] = useState(false)
 
   async function refresh() {
     setLoading(true)
@@ -65,6 +66,7 @@ export function ChannelsManager({ userId = 1 }: { userId?: number }) {
           description: description.trim() || null,
           groupIds: selectedGroupIds,
           enabled,
+          isGlobal,
         }),
       })
       setIdentifier("")
@@ -72,6 +74,7 @@ export function ChannelsManager({ userId = 1 }: { userId?: number }) {
       setDescription("")
       setSelectedGroupIds([])
       setEnabled(true)
+      setIsGlobal(false)
       await refresh()
     } catch (e) {
       setError(e instanceof Error ? e.message : "Ошибка создания")
@@ -100,6 +103,22 @@ export function ChannelsManager({ userId = 1 }: { userId?: number }) {
       await apiJson<Chat>(`/api/chats/${channel.id}`, {
         method: "PATCH",
         body: JSON.stringify({ enabled: value }),
+      })
+      await refresh()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Ошибка обновления")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function setChannelGlobal(channel: Chat, value: boolean) {
+    setLoading(true)
+    setError("")
+    try {
+      await apiJson<Chat>(`/api/chats/${channel.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ isGlobal: value }),
       })
       await refresh()
     } catch (e) {
@@ -174,6 +193,18 @@ export function ChannelsManager({ userId = 1 }: { userId?: number }) {
             <Switch id="enabled" checked={enabled} onCheckedChange={setEnabled} />
           </div>
 
+          <div className="flex items-center justify-between rounded-lg border border-border bg-secondary/40 px-3 py-2">
+            <Label htmlFor="isGlobal" className="text-sm text-foreground cursor-pointer">
+              Доступен всем пользователям
+            </Label>
+            <Switch
+              id="isGlobal"
+              checked={isGlobal}
+              onCheckedChange={setIsGlobal}
+              title="Канал появится в разделе «Группы» у всех пользователей для подписки"
+            />
+          </div>
+
           <Button onClick={createChannel} disabled={loading || !canCreate} className="w-full">
             <Plus className="mr-2 size-4" />
             Добавить
@@ -202,6 +233,7 @@ export function ChannelsManager({ userId = 1 }: { userId?: number }) {
                 <TableHead>Канал</TableHead>
                 <TableHead>Описание</TableHead>
                 <TableHead>Группы</TableHead>
+                <TableHead>Всем</TableHead>
                 <TableHead>Мониторинг</TableHead>
                 <TableHead className="text-right">Действия</TableHead>
               </TableRow>
@@ -226,6 +258,14 @@ export function ChannelsManager({ userId = 1 }: { userId?: number }) {
                   </TableCell>
                   <TableCell>
                     <Switch
+                      checked={c.isGlobal ?? false}
+                      onCheckedChange={(v) => setChannelGlobal(c, v)}
+                      disabled={loading}
+                      title="Доступен всем для подписки"
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <Switch
                       checked={c.enabled}
                       onCheckedChange={(v) => setChannelEnabled(c, v)}
                       disabled={loading}
@@ -246,7 +286,7 @@ export function ChannelsManager({ userId = 1 }: { userId?: number }) {
               ))}
               {channels.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={5} className="text-center text-sm text-muted-foreground py-8">
+                  <TableCell colSpan={6} className="text-center text-sm text-muted-foreground py-8">
                     Каналы не добавлены
                   </TableCell>
                 </TableRow>

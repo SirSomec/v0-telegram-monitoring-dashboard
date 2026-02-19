@@ -62,6 +62,8 @@ cp .env.example .env
 
 ```bash
 # Таблицы создаются при первом запуске API (init_db).
+# Для существующей БД после обновления (глобальные каналы и подписки):
+python scripts/migrate_global_chats.py
 # Для пересоздания схемы (осторожно, данные удалятся):
 python recreate_tables.py
 ```

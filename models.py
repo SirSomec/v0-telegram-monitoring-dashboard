@@ -26,6 +26,14 @@ chat_group_links = Table(
     Column("group_id", ForeignKey("chat_groups.id", ondelete="CASCADE"), primary_key=True),
 )
 
+# Подписки пользователей на глобальные каналы (добавленные администратором)
+user_chat_subscriptions = Table(
+    "user_chat_subscriptions",
+    Base.metadata,
+    Column("user_id", ForeignKey("users.id", ondelete="CASCADE"), primary_key=True),
+    Column("chat_id", ForeignKey("chats.id", ondelete="CASCADE"), primary_key=True),
+)
+
 
 class User(Base):
     __tablename__ = "users"
@@ -40,6 +48,10 @@ class User(Base):
     keywords: Mapped[list["Keyword"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     mentions: Mapped[list["Mention"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     chats: Mapped[list["Chat"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    subscribed_chats: Mapped[list["Chat"]] = relationship(
+        secondary=user_chat_subscriptions,
+        back_populates="subscriber_users",
+    )
 
 
 class Keyword(Base):
@@ -66,12 +78,17 @@ class Chat(Base):
     title: Mapped[str | None] = mapped_column(String(300), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    is_global: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     user: Mapped["User"] = relationship(back_populates="chats")
     groups: Mapped[list["ChatGroup"]] = relationship(
         secondary=chat_group_links,
         back_populates="chats",
+    )
+    subscriber_users: Mapped[list["User"]] = relationship(
+        secondary=user_chat_subscriptions,
+        back_populates="subscribed_chats",
     )
 
 

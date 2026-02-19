@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from auth_utils import create_token, decode_token, hash_password, verify_password
 from database import get_db, init_db
-from models import Chat, ChatGroup, Keyword, Mention, User
+from models import Chat, ChatGroup, Keyword, Mention, User, user_chat_subscriptions
 from parser import TelegramScanner
 from parser_config import (
     get_all_parser_settings,
@@ -80,6 +80,7 @@ class ChatCreate(BaseModel):
     groupIds: list[int] = Field(default_factory=list)
     enabled: bool = True
     userId: int | None = None
+    isGlobal: bool | None = None  # только для админа: канал доступен всем пользователям
 
 
 class ChatOut(BaseModel):
@@ -90,6 +91,8 @@ class ChatOut(BaseModel):
     groupIds: list[int]
     enabled: bool
     userId: int
+    isGlobal: bool = False
+    isOwner: bool = True  # True = свой канал, False = подписка на глобальный
     createdAt: str
 
 
@@ -98,6 +101,17 @@ class ChatUpdate(BaseModel):
     description: str | None = None
     enabled: bool | None = None
     groupIds: list[int] | None = None
+    isGlobal: bool | None = None  # только для админа при редактировании своего канала
+
+
+class ChatAvailableOut(BaseModel):
+    id: int
+    identifier: str
+    title: str | None
+    description: str | None
+    enabled: bool
+    subscribed: bool  # подписан ли текущий пользователь
+    createdAt: str
 
 
 class ChatGroupCreate(BaseModel):
@@ -548,28 +562,49 @@ def delete_keyword(keyword_id: int, user: User = Depends(get_current_user), db: 
     return {"ok": True}
 
 
+def _chat_to_out(c: Chat, is_owner: bool) -> ChatOut:
+    identifier = c.username or (str(c.tg_chat_id) if c.tg_chat_id is not None else "")
+    created_at = c.created_at
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    return ChatOut(
+        id=c.id,
+        identifier=identifier,
+        title=c.title,
+        description=c.description,
+        groupIds=[g.id for g in (c.groups or [])],
+        enabled=bool(c.enabled),
+        userId=c.user_id,
+        isGlobal=bool(c.is_global),
+        isOwner=is_owner,
+        createdAt=created_at.isoformat(),
+    )
+
+
 @app.get("/api/chats", response_model=list[ChatOut])
 def list_chats(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> list[ChatOut]:
     _ensure_default_user(db)
-    rows = db.scalars(select(Chat).where(Chat.user_id == user.id).order_by(Chat.id.asc())).all()
     out: list[ChatOut] = []
-    for c in rows:
-        identifier = c.username or (str(c.tg_chat_id) if c.tg_chat_id is not None else "")
-        created_at = c.created_at
-        if created_at.tzinfo is None:
-            created_at = created_at.replace(tzinfo=timezone.utc)
-        out.append(
-            ChatOut(
-                id=c.id,
-                identifier=identifier,
-                title=c.title,
-                description=c.description,
-                groupIds=[g.id for g in (c.groups or [])],
-                enabled=bool(c.enabled),
-                userId=c.user_id,
-                createdAt=created_at.isoformat(),
-            )
+    seen_ids: set[int] = set()
+    # Свои каналы (включая глобальные, созданные админом)
+    owned = db.scalars(select(Chat).where(Chat.user_id == user.id).order_by(Chat.id.asc())).all()
+    for c in owned:
+        seen_ids.add(c.id)
+        out.append(_chat_to_out(c, is_owner=True))
+    # Подписки на глобальные каналы
+    sub_rows = (
+        db.execute(
+            select(Chat).join(user_chat_subscriptions).where(
+                user_chat_subscriptions.c.user_id == user.id,
+                Chat.id == user_chat_subscriptions.c.chat_id,
+            ).order_by(Chat.id.asc())
         )
+    ).scalars().all()
+    for c in sub_rows:
+        if c.id not in seen_ids:
+            seen_ids.add(c.id)
+            out.append(_chat_to_out(c, is_owner=False))
+    out.sort(key=lambda x: x.id)
     return out
 
 
@@ -581,6 +616,10 @@ def create_chat(body: ChatCreate, user: User = Depends(get_current_user), db: Se
     ident = body.identifier.strip()
     if not ident:
         raise HTTPException(status_code=400, detail="identifier is required")
+
+    is_global = bool(body.isGlobal) if body.isGlobal is not None else False
+    if is_global and not user.is_admin:
+        raise HTTPException(status_code=403, detail="only admin can create global channels")
 
     username: str | None = None
     tg_chat_id: int | None = None
@@ -596,6 +635,7 @@ def create_chat(body: ChatCreate, user: User = Depends(get_current_user), db: Se
         title=body.title,
         description=body.description,
         enabled=body.enabled,
+        is_global=is_global,
     )
 
     if body.groupIds:
@@ -605,20 +645,7 @@ def create_chat(body: ChatCreate, user: User = Depends(get_current_user), db: Se
     db.commit()
     db.refresh(c)
 
-    identifier = c.username or (str(c.tg_chat_id) if c.tg_chat_id is not None else "")
-    created_at = c.created_at
-    if created_at.tzinfo is None:
-        created_at = created_at.replace(tzinfo=timezone.utc)
-    return ChatOut(
-        id=c.id,
-        identifier=identifier,
-        title=c.title,
-        description=c.description,
-        groupIds=[g.id for g in (c.groups or [])],
-        enabled=bool(c.enabled),
-        userId=c.user_id,
-        createdAt=created_at.isoformat(),
-    )
+    return _chat_to_out(c, is_owner=True)
 
 
 @app.patch("/api/chats/{chat_id}", response_model=ChatOut)
@@ -635,6 +662,8 @@ def update_chat(chat_id: int, body: ChatUpdate, user: User = Depends(get_current
         c.description = body.description
     if body.enabled is not None:
         c.enabled = bool(body.enabled)
+    if body.isGlobal is not None and user.is_admin:
+        c.is_global = bool(body.isGlobal)
 
     if body.groupIds is not None:
         groups = db.scalars(
@@ -646,20 +675,7 @@ def update_chat(chat_id: int, body: ChatUpdate, user: User = Depends(get_current
     db.commit()
     db.refresh(c)
 
-    identifier = c.username or (str(c.tg_chat_id) if c.tg_chat_id is not None else "")
-    created_at = c.created_at
-    if created_at.tzinfo is None:
-        created_at = created_at.replace(tzinfo=timezone.utc)
-    return ChatOut(
-        id=c.id,
-        identifier=identifier,
-        title=c.title,
-        description=c.description,
-        groupIds=[g.id for g in (c.groups or [])],
-        enabled=bool(c.enabled),
-        userId=c.user_id,
-        createdAt=created_at.isoformat(),
-    )
+    return _chat_to_out(c, is_owner=True)
 
 
 @app.get("/api/chat-groups", response_model=list[ChatGroupOut])
@@ -941,12 +957,91 @@ def stop_parser(_: User = Depends(get_current_admin)) -> ParserStatusOut:
     return _parser_status()
 
 
+@app.get("/api/chats/available", response_model=list[ChatAvailableOut])
+def list_available_chats(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> list[ChatAvailableOut]:
+    """Глобальные каналы (добавленные администратором), доступные для подписки."""
+    _ensure_default_user(db)
+    rows = db.scalars(
+        select(Chat).where(Chat.is_global.is_(True)).order_by(Chat.id.asc())
+    ).all()
+    sub_ids = set(
+        db.execute(
+            select(user_chat_subscriptions.c.chat_id).where(user_chat_subscriptions.c.user_id == user.id)
+        ).scalars().all()
+    )
+    out: list[ChatAvailableOut] = []
+    for c in rows:
+        created_at = c.created_at
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        out.append(
+            ChatAvailableOut(
+                id=c.id,
+                identifier=c.username or (str(c.tg_chat_id) if c.tg_chat_id is not None else ""),
+                title=c.title,
+                description=c.description,
+                enabled=bool(c.enabled),
+                subscribed=c.id in sub_ids,
+                createdAt=created_at.isoformat(),
+            )
+        )
+    return out
+
+
+@app.post("/api/chats/{chat_id}/subscribe", response_model=ChatOut)
+def subscribe_chat(chat_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> ChatOut:
+    c = db.scalar(select(Chat).where(Chat.id == chat_id))
+    if not c:
+        raise HTTPException(status_code=404, detail="chat not found")
+    if not c.is_global:
+        raise HTTPException(status_code=400, detail="only global channels can be subscribed to")
+    existing = db.execute(
+        select(user_chat_subscriptions).where(
+            user_chat_subscriptions.c.user_id == user.id,
+            user_chat_subscriptions.c.chat_id == chat_id,
+        )
+    ).first()
+    if existing:
+        return _chat_to_out(c, is_owner=False)
+    db.execute(
+        user_chat_subscriptions.insert().values(user_id=user.id, chat_id=chat_id)
+    )
+    db.commit()
+    db.refresh(c)
+    return _chat_to_out(c, is_owner=False)
+
+
+@app.delete("/api/chats/{chat_id}/unsubscribe")
+def unsubscribe_chat(chat_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+    deleted = db.execute(
+        user_chat_subscriptions.delete().where(
+            user_chat_subscriptions.c.user_id == user.id,
+            user_chat_subscriptions.c.chat_id == chat_id,
+        )
+    )
+    db.commit()
+    if deleted.rowcount == 0:
+        raise HTTPException(status_code=404, detail="subscription not found")
+    return {"ok": True}
+
+
 @app.delete("/api/chats/{chat_id}")
 def delete_chat(chat_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
     c = db.scalar(select(Chat).where(Chat.id == chat_id))
     if not c:
         raise HTTPException(status_code=404, detail="chat not found")
     if c.user_id != user.id:
+        # Пользователь не владелец: если он подписан на глобальный канал — отписать
+        if c.is_global:
+            r = db.execute(
+                user_chat_subscriptions.delete().where(
+                    user_chat_subscriptions.c.user_id == user.id,
+                    user_chat_subscriptions.c.chat_id == chat_id,
+                )
+            )
+            db.commit()
+            if r.rowcount:
+                return {"ok": True}
         raise HTTPException(status_code=403, detail="forbidden")
     db.delete(c)
     db.commit()

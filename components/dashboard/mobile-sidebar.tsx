@@ -20,7 +20,7 @@ import { cn } from "@/lib/utils"
 const allNavItems = [
   { icon: LayoutDashboard, label: "Панель", visible: true },
   { icon: Hash, label: "Ключевые слова", visible: true },
-  { icon: Users, label: "Группы", visible: false },
+  { icon: Users, label: "Группы", visible: true },
   { icon: Bell, label: "Уведомления", visible: false },
   { icon: CreditCard, label: "Оплата", visible: false },
   { icon: Settings, label: "Настройки", visible: true },

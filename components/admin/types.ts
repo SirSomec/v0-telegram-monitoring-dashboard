@@ -14,6 +14,8 @@ export type Chat = {
   groupIds: number[]
   enabled: boolean
   userId: number
+  isGlobal?: boolean
+  isOwner?: boolean
   createdAt: string
 }
 

@@ -9,6 +9,7 @@ import { Header } from "@/components/dashboard/header"
 import { StatsCards } from "@/components/dashboard/stats-cards"
 import { KeywordsManager } from "@/components/dashboard/keywords-manager"
 import { MentionFeed } from "@/components/dashboard/mention-feed"
+import { UserChannelsManager } from "@/components/dashboard/user-channels-manager"
 import { BillingModal } from "@/components/dashboard/billing-modal"
 import { apiBaseUrl } from "@/lib/api"
 import { useAuth } from "@/lib/auth-context"
@@ -98,28 +99,44 @@ export default function DashboardPage() {
         />
 
         <div className="flex-1 space-y-6 p-4 lg:p-6">
-          {/* Page Title */}
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight text-foreground">
-              Панель управления
-            </h1>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Отслеживайте упоминания в Telegram и находите новых лидов.
-            </p>
-          </div>
+          {activeNav === "Группы" ? (
+            <>
+              <div>
+                <h1 className="text-2xl font-bold tracking-tight text-foreground">
+                  Группы и каналы
+                </h1>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Добавляйте свои каналы для мониторинга или выбирайте из доступных, добавленных администратором.
+                </p>
+              </div>
+              <UserChannelsManager />
+            </>
+          ) : (
+            <>
+              {/* Page Title */}
+              <div>
+                <h1 className="text-2xl font-bold tracking-tight text-foreground">
+                  Панель управления
+                </h1>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Отслеживайте упоминания в Telegram и находите новых лидов.
+                </p>
+              </div>
 
-          {/* Stats */}
-          <StatsCards />
+              {/* Stats */}
+              <StatsCards />
 
-          {/* Keywords + Feed */}
-          <div className="grid gap-6 xl:grid-cols-5">
-            <div className="xl:col-span-2">
-              <KeywordsManager userId={user.id} />
-            </div>
-            <div className="xl:col-span-3">
-              <MentionFeed userId={user.id} />
-            </div>
-          </div>
+              {/* Keywords + Feed */}
+              <div className="grid gap-6 xl:grid-cols-5">
+                <div className="xl:col-span-2">
+                  <KeywordsManager userId={user.id} />
+                </div>
+                <div className="xl:col-span-3">
+                  <MentionFeed userId={user.id} />
+                </div>
+              </div>
+            </>
+          )}
         </div>
       </main>
 
