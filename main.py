@@ -23,6 +23,7 @@ from parser_config import (
     get_parser_setting_int,
     save_parser_settings,
 )
+from parser_log import get_lines as get_parser_log_lines
 
 
 def _now_utc() -> datetime:
@@ -363,6 +364,8 @@ async def on_startup() -> None:
 
     # Сканер можно включить через настройки (админ) или ENV AUTO_START_SCANNER=1
     if get_parser_setting_bool("AUTO_START_SCANNER", False):
+        from parser_log import append as parser_log_append
+        parser_log_append("Автозапуск парсера при старте API.")
         multi = get_parser_setting_bool("MULTI_USER_SCANNER", True)
         if multi:
             scanner = TelegramScanner(on_mention=lambda payload: _schedule_ws_broadcast(payload))
@@ -372,6 +375,7 @@ async def on_startup() -> None:
                 on_mention=lambda payload: _schedule_ws_broadcast(payload),
             )
         scanner.start()
+        parser_log_append("Парсер запущен (автостарт).")
 
 
 def _schedule_ws_broadcast(payload: dict[str, Any]) -> None:
@@ -841,6 +845,12 @@ def get_parser_status(_: User = Depends(get_current_admin)) -> ParserStatusOut:
     return _parser_status()
 
 
+@app.get("/api/admin/parser/logs")
+def get_parser_logs(_: User = Depends(get_current_admin)) -> list[str]:
+    """Последние 80 строк лога парсера (ошибки, старт/стоп)."""
+    return get_parser_log_lines()
+
+
 @app.get("/api/admin/parser/settings", response_model=ParserSettingsOut)
 def get_parser_settings(_: User = Depends(get_current_admin)) -> ParserSettingsOut:
     return _parser_settings_to_out()
@@ -859,8 +869,10 @@ def update_parser_settings(
 @app.post("/api/admin/parser/start", response_model=ParserStatusOut)
 def start_parser(_: User = Depends(get_current_admin)) -> ParserStatusOut:
     global scanner
+    from parser_log import append as parser_log_append
     if scanner is not None and scanner.is_running:
         return _parser_status()
+    parser_log_append("Запуск парсера по запросу из админки.")
     multi = get_parser_setting_bool("MULTI_USER_SCANNER", True)
     if multi:
         scanner = TelegramScanner(on_mention=lambda payload: _schedule_ws_broadcast(payload))
@@ -870,15 +882,18 @@ def start_parser(_: User = Depends(get_current_admin)) -> ParserStatusOut:
             on_mention=lambda payload: _schedule_ws_broadcast(payload),
         )
     scanner.start()
+    parser_log_append("Парсер запущен.")
     return _parser_status()
 
 
 @app.post("/api/admin/parser/stop", response_model=ParserStatusOut)
 def stop_parser(_: User = Depends(get_current_admin)) -> ParserStatusOut:
     global scanner
+    from parser_log import append as parser_log_append
     if scanner is not None:
         scanner.stop()
         scanner = None
+        parser_log_append("Парсер остановлен.")
     return _parser_status()
 
 

@@ -14,6 +14,7 @@ from telethon.sessions import StringSession
 
 from database import db_session
 from models import Chat, Keyword, Mention, User
+from parser_log import append as log_append, append_exception as log_exception
 from parser_config import (
     get_parser_setting_str,
     get_parser_setting_bool,
@@ -147,7 +148,13 @@ class TelegramScanner:
                 pass
 
     def _run_thread(self) -> None:
-        asyncio.run(self._run())
+        try:
+            log_append("Поток парсера запущен.")
+            asyncio.run(self._run())
+        except Exception as e:
+            log_exception(e)
+        finally:
+            log_append("Поток парсера завершён.")
 
     async def _run(self) -> None:
         api_id = get_parser_setting_str("TG_API_ID")

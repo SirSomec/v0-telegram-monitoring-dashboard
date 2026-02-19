@@ -13,7 +13,7 @@ import {
   TooltipTrigger,
   TooltipProvider,
 } from "@/components/ui/tooltip"
-import { RefreshCw, Play, Square, RotateCw, HelpCircle, Save } from "lucide-react"
+import { RefreshCw, Play, Square, RotateCw, HelpCircle, Save, FileText } from "lucide-react"
 import { apiJson } from "@/components/admin/api"
 import type {
   ParserStatus,
@@ -105,6 +105,8 @@ export function ParserManager() {
   const [saveLoading, setSaveLoading] = useState(false)
   const [error, setError] = useState<string>("")
   const [saveSuccess, setSaveSuccess] = useState(false)
+  const [parserLogs, setParserLogs] = useState<string[]>([])
+  const [logLoading, setLogLoading] = useState(false)
 
   // Локальное состояние формы настроек (для редактирования)
   const [form, setForm] = useState<ParserSettingsUpdate & { AUTO_START_SCANNER?: boolean; MULTI_USER_SCANNER?: boolean; TG_USER_ID?: number }>({})
@@ -132,9 +134,31 @@ export function ParserManager() {
     }
   }
 
+  async function fetchLogs() {
+    setLogLoading(true)
+    try {
+      const lines = await apiJson<string[]>("/api/admin/parser/logs")
+      setParserLogs(Array.isArray(lines) ? lines : [])
+    } catch {
+      setParserLogs([])
+    } finally {
+      setLogLoading(false)
+    }
+  }
+
   useEffect(() => {
     refresh()
   }, [])
+
+  useEffect(() => {
+    fetchLogs()
+  }, [status?.running])
+
+  useEffect(() => {
+    if (!status?.running) return
+    const interval = setInterval(fetchLogs, 5000)
+    return () => clearInterval(interval)
+  }, [status?.running])
 
   async function startParser() {
     setActionLoading(true)
@@ -312,6 +336,38 @@ export function ParserManager() {
               Перезапустить
             </Button>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <FileText className="size-5" />
+                Лог парсера
+              </CardTitle>
+              <CardDescription>
+                Последние 80 строк: запуск, остановка, ошибки. Обновляется автоматически при работе парсера.
+              </CardDescription>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={fetchLogs}
+              disabled={logLoading}
+            >
+              <RefreshCw className={`mr-2 size-4 ${logLoading ? "animate-spin" : ""}`} />
+              Обновить лог
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <pre className="max-h-[320px] overflow-auto rounded-md border bg-muted/50 p-3 font-mono text-xs whitespace-pre-wrap break-all">
+            {parserLogs.length === 0 && !logLoading
+              ? "Лог пуст. Запустите парсер — здесь появятся сообщения и ошибки."
+              : parserLogs.join("\n")}
+          </pre>
         </CardContent>
       </Card>
 
