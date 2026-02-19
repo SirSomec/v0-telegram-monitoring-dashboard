@@ -1,13 +1,18 @@
 /**
  * Базовый URL бэкенда (FastAPI).
- * В разработке: http://localhost:8000
- * В проде (Nginx проксирует /api на бэкенд): пустая строка = same origin.
+ * В браузере: NEXT_PUBLIC_API_URL, иначе при открытии с порта 3000 — тот же хост:8000 (прямой запрос к бэкенду).
+ * На сервере (SSR/proxy): для Route Handlers.
  */
 function getApiUrl(): string {
   if (typeof window !== "undefined") {
-    return process.env.NEXT_PUBLIC_API_URL ?? ""
+    const env = process.env.NEXT_PUBLIC_API_URL ?? ""
+    if (env) return env
+    // Тот же хост, порт 8000 — типичный деплой (фронт :3000, бэкенд :8000)
+    const { hostname, port, protocol } = window.location
+    if (port === "3000" || port === "") return `${protocol}//${hostname}:8000`
+    return ""
   }
-  return process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000"
+  return process.env.NEXT_PUBLIC_API_URL ?? process.env.API_PROXY_TARGET ?? "http://127.0.0.1:8000"
 }
 
 export function apiBaseUrl(): string {

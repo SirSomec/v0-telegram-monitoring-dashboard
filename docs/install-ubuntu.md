@@ -104,14 +104,22 @@ nano .env
 
 **Для Docker Compose** `DATABASE_URL` можно не менять — в `docker-compose.yml` он переопределён на `postgresql+psycopg2://postgres:postgres@postgres:5432/telegram_monitor`.
 
-**Если фронт и API будут доступны по домену**, добавьте в `.env`:
+**Если открываете приложение по IP** (например `http://IP_СЕРВЕРА:3000`), добавьте в `.env` на сервере:
+
+```env
+CORS_ORIGINS=http://IP_СЕРВЕРА:3000
+```
+
+(Подставьте свой IP или домен. Иначе браузер заблокирует запросы к API на порт 8000 из‑за CORS.)
+
+**Если фронт и API доступны по домену через Nginx**, добавьте в `.env`:
 
 ```env
 CORS_ORIGINS=https://ваш-домен.com
 NEXT_PUBLIC_API_URL=
 ```
 
-(Если Nginx проксирует API с того же домена, `NEXT_PUBLIC_API_URL` оставьте пустым.)
+(Если Nginx проксирует API с того же домена, `NEXT_PUBLIC_API_URL` можно оставить пустым.)
 
 **Опционально:** автозапуск парсера при старте контейнеров:
 
