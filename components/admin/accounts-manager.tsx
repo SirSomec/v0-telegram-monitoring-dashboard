@@ -18,6 +18,7 @@ export function AccountsManager() {
 
   const [email, setEmail] = useState("")
   const [name, setName] = useState("")
+  const [password, setPassword] = useState("")
   const [isAdmin, setIsAdmin] = useState(false)
 
   async function refresh() {
@@ -38,8 +39,10 @@ export function AccountsManager() {
   }, [])
 
   const canCreate = useMemo(() => {
-    return (email.trim().length > 0 || name.trim().length > 0) && !loading
-  }, [email, name, loading])
+    const hasAny = email.trim().length > 0 || name.trim().length > 0 || password.trim().length > 0
+    const validPassword = !password.trim() || password.trim().length >= 8
+    return hasAny && validPassword && !loading
+  }, [email, name, password, loading])
 
   async function createUser() {
     if (!canCreate) return
@@ -51,11 +54,13 @@ export function AccountsManager() {
         body: JSON.stringify({
           email: email.trim() || null,
           name: name.trim() || null,
+          password: password.trim() || null,
           isAdmin,
         }),
       })
       setEmail("")
       setName("")
+      setPassword("")
       setIsAdmin(false)
       await refresh()
     } catch (e) {
@@ -112,6 +117,14 @@ export function AccountsManager() {
             onChange={(e) => setName(e.target.value)}
             placeholder="Имя (опционально)"
             className="bg-secondary border-border"
+          />
+          <Input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="Пароль (мин. 8 символов, опционально)"
+            className="bg-secondary border-border"
+            autoComplete="new-password"
           />
 
           <div className="flex items-center justify-between rounded-lg border border-border bg-secondary/40 px-3 py-2">

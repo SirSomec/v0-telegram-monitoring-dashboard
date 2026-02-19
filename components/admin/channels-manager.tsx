@@ -30,8 +30,8 @@ export function ChannelsManager({ userId = 1 }: { userId?: number }) {
     setError("")
     try {
       const [ch, gr] = await Promise.all([
-        apiJson<Chat[]>(`/api/chats?userId=${userId}`),
-        apiJson<ChatGroup[]>(`/api/chat-groups?userId=${userId}`),
+        apiJson<Chat[]>("/api/chats"),
+        apiJson<ChatGroup[]>("/api/chat-groups"),
       ])
       setChannels(ch)
       setGroups(gr)
@@ -65,7 +65,6 @@ export function ChannelsManager({ userId = 1 }: { userId?: number }) {
           description: description.trim() || null,
           groupIds: selectedGroupIds,
           enabled,
-          userId,
         }),
       })
       setIdentifier("")

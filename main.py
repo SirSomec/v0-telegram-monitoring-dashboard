@@ -107,6 +107,7 @@ class ChatGroupOut(BaseModel):
 class UserCreate(BaseModel):
     email: str | None = None
     name: str | None = None
+    password: str | None = Field(None, min_length=8, description="Пароль для входа (опционально)")
     isAdmin: bool = False
 
 
@@ -349,9 +350,9 @@ def auth_me(user: User = Depends(get_current_user)) -> UserOut:
 
 
 @app.get("/api/keywords", response_model=list[KeywordOut])
-def list_keywords(userId: int = 1, db: Session = Depends(get_db)) -> list[KeywordOut]:
+def list_keywords(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> list[KeywordOut]:
     _ensure_default_user(db)
-    rows = db.scalars(select(Keyword).where(Keyword.user_id == userId).order_by(Keyword.id.asc())).all()
+    rows = db.scalars(select(Keyword).where(Keyword.user_id == user.id).order_by(Keyword.id.asc())).all()
     out: list[KeywordOut] = []
     for k in rows:
         created_at = k.created_at
@@ -369,9 +370,9 @@ def list_keywords(userId: int = 1, db: Session = Depends(get_db)) -> list[Keywor
 
 
 @app.post("/api/keywords", response_model=KeywordOut)
-def create_keyword(body: KeywordCreate, db: Session = Depends(get_db)) -> KeywordOut:
-    user_id = body.userId or 1
+def create_keyword(body: KeywordCreate, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> KeywordOut:
     _ensure_default_user(db)
+    user_id = user.id
 
     text = body.text.strip()
     if not text:
@@ -396,19 +397,21 @@ def create_keyword(body: KeywordCreate, db: Session = Depends(get_db)) -> Keywor
 
 
 @app.delete("/api/keywords/{keyword_id}")
-def delete_keyword(keyword_id: int, db: Session = Depends(get_db)) -> dict[str, Any]:
+def delete_keyword(keyword_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
     k = db.scalar(select(Keyword).where(Keyword.id == keyword_id))
     if not k:
         raise HTTPException(status_code=404, detail="keyword not found")
+    if k.user_id != user.id:
+        raise HTTPException(status_code=403, detail="forbidden")
     db.delete(k)
     db.commit()
     return {"ok": True}
 
 
 @app.get("/api/chats", response_model=list[ChatOut])
-def list_chats(userId: int = 1, db: Session = Depends(get_db)) -> list[ChatOut]:
+def list_chats(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> list[ChatOut]:
     _ensure_default_user(db)
-    rows = db.scalars(select(Chat).where(Chat.user_id == userId).order_by(Chat.id.asc())).all()
+    rows = db.scalars(select(Chat).where(Chat.user_id == user.id).order_by(Chat.id.asc())).all()
     out: list[ChatOut] = []
     for c in rows:
         identifier = c.username or (str(c.tg_chat_id) if c.tg_chat_id is not None else "")
@@ -431,9 +434,9 @@ def list_chats(userId: int = 1, db: Session = Depends(get_db)) -> list[ChatOut]:
 
 
 @app.post("/api/chats", response_model=ChatOut)
-def create_chat(body: ChatCreate, db: Session = Depends(get_db)) -> ChatOut:
-    user_id = body.userId or 1
+def create_chat(body: ChatCreate, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> ChatOut:
     _ensure_default_user(db)
+    user_id = user.id
 
     ident = body.identifier.strip()
     if not ident:
@@ -479,10 +482,12 @@ def create_chat(body: ChatCreate, db: Session = Depends(get_db)) -> ChatOut:
 
 
 @app.patch("/api/chats/{chat_id}", response_model=ChatOut)
-def update_chat(chat_id: int, body: ChatUpdate, db: Session = Depends(get_db)) -> ChatOut:
+def update_chat(chat_id: int, body: ChatUpdate, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> ChatOut:
     c = db.scalar(select(Chat).where(Chat.id == chat_id))
     if not c:
         raise HTTPException(status_code=404, detail="chat not found")
+    if c.user_id != user.id:
+        raise HTTPException(status_code=403, detail="forbidden")
 
     if body.title is not None:
         c.title = body.title
@@ -518,9 +523,9 @@ def update_chat(chat_id: int, body: ChatUpdate, db: Session = Depends(get_db)) -
 
 
 @app.get("/api/chat-groups", response_model=list[ChatGroupOut])
-def list_chat_groups(userId: int = 1, db: Session = Depends(get_db)) -> list[ChatGroupOut]:
+def list_chat_groups(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> list[ChatGroupOut]:
     _ensure_default_user(db)
-    rows = db.scalars(select(ChatGroup).where(ChatGroup.user_id == userId).order_by(ChatGroup.id.asc())).all()
+    rows = db.scalars(select(ChatGroup).where(ChatGroup.user_id == user.id).order_by(ChatGroup.id.asc())).all()
     out: list[ChatGroupOut] = []
     for g in rows:
         created_at = g.created_at
@@ -539,9 +544,9 @@ def list_chat_groups(userId: int = 1, db: Session = Depends(get_db)) -> list[Cha
 
 
 @app.post("/api/chat-groups", response_model=ChatGroupOut)
-def create_chat_group(body: ChatGroupCreate, db: Session = Depends(get_db)) -> ChatGroupOut:
-    user_id = body.userId or 1
+def create_chat_group(body: ChatGroupCreate, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> ChatGroupOut:
     _ensure_default_user(db)
+    user_id = user.id
 
     name = body.name.strip()
     if not name:
@@ -565,10 +570,12 @@ def create_chat_group(body: ChatGroupCreate, db: Session = Depends(get_db)) -> C
 
 
 @app.delete("/api/chat-groups/{group_id}")
-def delete_chat_group(group_id: int, db: Session = Depends(get_db)) -> dict[str, Any]:
+def delete_chat_group(group_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
     g = db.scalar(select(ChatGroup).where(ChatGroup.id == group_id))
     if not g:
         raise HTTPException(status_code=404, detail="group not found")
+    if g.user_id != user.id:
+        raise HTTPException(status_code=403, detail="forbidden")
     db.delete(g)
     db.commit()
     return {"ok": True}
@@ -598,7 +605,12 @@ def list_users(_: User = Depends(get_current_admin), db: Session = Depends(get_d
 @app.post("/api/users", response_model=UserOut)
 def create_user(body: UserCreate, _: User = Depends(get_current_admin), db: Session = Depends(get_db)) -> UserOut:
     _ensure_default_user(db)
-    u = User(email=body.email, name=body.name, is_admin=bool(body.isAdmin))
+    u = User(
+        email=body.email,
+        name=body.name,
+        is_admin=bool(body.isAdmin),
+        password_hash=hash_password(body.password.strip()) if (body.password and body.password.strip()) else None,
+    )
     db.add(u)
     db.commit()
     db.refresh(u)
@@ -657,10 +669,12 @@ def delete_user(user_id: int, _: User = Depends(get_current_admin), db: Session 
 
 
 @app.delete("/api/chats/{chat_id}")
-def delete_chat(chat_id: int, db: Session = Depends(get_db)) -> dict[str, Any]:
+def delete_chat(chat_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
     c = db.scalar(select(Chat).where(Chat.id == chat_id))
     if not c:
         raise HTTPException(status_code=404, detail="chat not found")
+    if c.user_id != user.id:
+        raise HTTPException(status_code=403, detail="forbidden")
     db.delete(c)
     db.commit()
     return {"ok": True}
@@ -668,14 +682,14 @@ def delete_chat(chat_id: int, db: Session = Depends(get_db)) -> dict[str, Any]:
 
 @app.get("/api/mentions", response_model=list[MentionOut])
 def list_mentions(
-    userId: int = 1,
+    user: User = Depends(get_current_user),
     limit: int = 50,
     unreadOnly: bool = False,
     db: Session = Depends(get_db),
 ) -> list[MentionOut]:
     _ensure_default_user(db)
     limit = max(1, min(500, limit))
-    stmt = select(Mention).where(Mention.user_id == userId)
+    stmt = select(Mention).where(Mention.user_id == user.id)
     if unreadOnly:
         stmt = stmt.where(Mention.is_read.is_(False))
     rows = db.scalars(stmt.order_by(desc(Mention.created_at)).limit(limit)).all()
@@ -683,10 +697,12 @@ def list_mentions(
 
 
 @app.patch("/api/mentions/{mention_id}/lead", response_model=MentionOut)
-def set_mention_lead(mention_id: int, body: MentionLeadPatch, db: Session = Depends(get_db)) -> MentionOut:
+def set_mention_lead(mention_id: int, body: MentionLeadPatch, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> MentionOut:
     m = db.scalar(select(Mention).where(Mention.id == mention_id))
     if not m:
         raise HTTPException(status_code=404, detail="mention not found")
+    if m.user_id != user.id:
+        raise HTTPException(status_code=403, detail="forbidden")
     m.is_lead = bool(body.isLead)
     db.add(m)
     db.commit()
@@ -695,10 +711,12 @@ def set_mention_lead(mention_id: int, body: MentionLeadPatch, db: Session = Depe
 
 
 @app.patch("/api/mentions/{mention_id}/read", response_model=MentionOut)
-def set_mention_read(mention_id: int, body: MentionReadPatch, db: Session = Depends(get_db)) -> MentionOut:
+def set_mention_read(mention_id: int, body: MentionReadPatch, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> MentionOut:
     m = db.scalar(select(Mention).where(Mention.id == mention_id))
     if not m:
         raise HTTPException(status_code=404, detail="mention not found")
+    if m.user_id != user.id:
+        raise HTTPException(status_code=403, detail="forbidden")
     m.is_read = bool(body.isRead)
     db.add(m)
     db.commit()
@@ -708,12 +726,17 @@ def set_mention_read(mention_id: int, body: MentionReadPatch, db: Session = Depe
 
 @app.websocket("/ws/mentions")
 async def ws_mentions(ws: WebSocket) -> None:
+    # Токен в query: token=... (WebSocket не передаёт заголовки из браузера)
+    token = (ws.query_params.get("token") or "").strip()
+    user_id = decode_token(token) if token else None
+    if user_id is None:
+        await ws.close(code=4001)
+        return
     await ws_manager.connect(ws)
     try:
         await ws.send_json({"type": "hello", "message": "connected"})
 
         # Отдаем последние упоминания сразу после коннекта (удобно для фронта)
-        user_id = int(ws.query_params.get("userId", "1"))
         from database import SessionLocal
 
         with SessionLocal() as db:

@@ -37,8 +37,10 @@ export async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>
 }
 
-export function wsMentionsUrl(userId: number = 1): string {
+/** URL для WebSocket упоминаний. Требуется токен (передаётся в query). */
+export function wsMentionsUrl(token: string | null): string {
   const base = getApiUrl()
   const wsBase = base.replace(/^http/, "ws")
-  return `${wsBase}/ws/mentions?userId=${userId}`
+  if (!token) return `${wsBase}/ws/mentions`
+  return `${wsBase}/ws/mentions?token=${encodeURIComponent(token)}`
 }

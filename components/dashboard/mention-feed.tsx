@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { ExternalLink, UserPlus, Check, MessageSquare, Loader2 } from "lucide-react"
 import { apiBaseUrl, apiJson, wsMentionsUrl } from "@/lib/api"
+import { getStoredToken } from "@/lib/auth-context"
 
 export interface Mention {
   id: string
@@ -36,31 +37,33 @@ function highlightKeyword(text: string, keyword: string) {
   )
 }
 
-export function MentionFeed({ userId = 1 }: { userId?: number }) {
+export function MentionFeed({ userId }: { userId?: number }) {
   const [mentions, setMentions] = useState<Mention[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string>("")
   const wsRef = useRef<WebSocket | null>(null)
+  const token = typeof window !== "undefined" ? getStoredToken() : null
 
   const fetchMentions = useCallback(async () => {
     setLoading(true)
     setError("")
     try {
-      const data = await apiJson<Mention[]>(`${apiBaseUrl()}/api/mentions?userId=${userId}&limit=50`)
+      const data = await apiJson<Mention[]>(`${apiBaseUrl()}/api/mentions?limit=50`)
       setMentions(data)
     } catch (e) {
       setError(e instanceof Error ? e.message : "Ошибка загрузки")
     } finally {
       setLoading(false)
     }
-  }, [userId])
+  }, [])
 
   useEffect(() => {
     fetchMentions()
   }, [fetchMentions])
 
   useEffect(() => {
-    const url = wsMentionsUrl(userId)
+    if (!token) return
+    const url = wsMentionsUrl(token)
     if (!url.startsWith("ws")) return
     const ws = new WebSocket(url)
     wsRef.current = ws
@@ -82,7 +85,7 @@ export function MentionFeed({ userId = 1 }: { userId?: number }) {
       ws.close()
       wsRef.current = null
     }
-  }, [userId])
+  }, [token])
 
   async function toggleLead(id: string) {
     const m = mentions.find((x) => x.id === id)

@@ -24,14 +24,14 @@ export function KeywordsManager({ userId = 1 }: { userId?: number }) {
     setLoading(true)
     setError("")
     try {
-      const data = await apiJson<KeywordItem[]>(`${apiBaseUrl()}/api/keywords?userId=${userId}`)
+      const data = await apiJson<KeywordItem[]>(`${apiBaseUrl()}/api/keywords`)
       setKeywords(data)
     } catch (e) {
       setError(e instanceof Error ? e.message : "Ошибка загрузки")
     } finally {
       setLoading(false)
     }
-  }, [userId])
+  }, [])
 
   useEffect(() => {
     fetchKeywords()
@@ -45,7 +45,7 @@ export function KeywordsManager({ userId = 1 }: { userId?: number }) {
     try {
       await apiJson<KeywordItem>(`${apiBaseUrl()}/api/keywords`, {
         method: "POST",
-        body: JSON.stringify({ text: trimmed, userId }),
+        body: JSON.stringify({ text: trimmed }),
       })
       setNewKeyword("")
       await fetchKeywords()

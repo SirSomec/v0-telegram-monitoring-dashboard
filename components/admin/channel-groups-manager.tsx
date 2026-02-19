@@ -22,14 +22,14 @@ export function ChannelGroupsManager({ userId = 1 }: { userId?: number }) {
     setLoading(true)
     setError("")
     try {
-      const data = await apiJson<ChatGroup[]>(`/api/chat-groups?userId=${userId}`)
+      const data = await apiJson<ChatGroup[]>("/api/chat-groups")
       setGroups(data)
     } catch (e) {
       setError(e instanceof Error ? e.message : "Ошибка загрузки")
     } finally {
       setLoading(false)
     }
-  }, [userId])
+  }, [])
 
   useEffect(() => {
     refresh()
@@ -47,7 +47,6 @@ export function ChannelGroupsManager({ userId = 1 }: { userId?: number }) {
         body: JSON.stringify({
           name: name.trim(),
           description: description.trim() || null,
-          userId,
         }),
       })
       setName("")

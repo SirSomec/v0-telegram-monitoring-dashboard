@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import { useRouter } from "next/navigation"
 import { cn } from "@/lib/utils"
 import { SidebarNav } from "@/components/dashboard/sidebar-nav"
 import { MobileSidebar } from "@/components/dashboard/mobile-sidebar"
@@ -13,8 +14,8 @@ import { apiBaseUrl } from "@/lib/api"
 import { useAuth } from "@/lib/auth-context"
 
 export default function DashboardPage() {
-  const { user } = useAuth()
-  const userId = user?.id ?? 1
+  const router = useRouter()
+  const { user, loading } = useAuth()
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
@@ -23,6 +24,15 @@ export default function DashboardPage() {
   const [serviceOnline, setServiceOnline] = useState(false)
 
   useEffect(() => {
+    if (loading) return
+    if (!user) {
+      router.replace("/auth")
+      return
+    }
+  }, [loading, user, router])
+
+  useEffect(() => {
+    if (!user) return
     let cancelled = false
     fetch(`${apiBaseUrl()}/health`)
       .then((r) => r.ok)
@@ -35,7 +45,7 @@ export default function DashboardPage() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [user])
 
   function handleNavigate(item: string) {
     if (item === "Оплата") {
@@ -43,6 +53,14 @@ export default function DashboardPage() {
     } else {
       setActiveNav(item)
     }
+  }
+
+  if (loading || !user) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <p className="text-muted-foreground">Загрузка...</p>
+      </div>
+    )
   }
 
   return (
@@ -94,10 +112,10 @@ export default function DashboardPage() {
           {/* Keywords + Feed */}
           <div className="grid gap-6 xl:grid-cols-5">
             <div className="xl:col-span-2">
-              <KeywordsManager userId={userId} />
+              <KeywordsManager userId={user.id} />
             </div>
             <div className="xl:col-span-3">
-              <MentionFeed userId={userId} />
+              <MentionFeed userId={user.id} />
             </div>
           </div>
         </div>
