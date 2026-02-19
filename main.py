@@ -178,6 +178,12 @@ class ChangePasswordRequest(BaseModel):
     newPassword: str = Field(..., min_length=8)
 
 
+class ParserStatusOut(BaseModel):
+    running: bool
+    multiUser: bool
+    userId: int | None = None
+
+
 class ConnectionManager:
     def __init__(self) -> None:
         self._connections: set[WebSocket] = set()
@@ -901,12 +907,6 @@ def export_mentions_csv(
 
 class MarkAllReadOut(BaseModel):
     marked: int
-
-
-class ParserStatusOut(BaseModel):
-    running: bool
-    multiUser: bool
-    userId: int | None = None
 
 
 @app.post("/api/mentions/mark-all-read", response_model=MarkAllReadOut)
