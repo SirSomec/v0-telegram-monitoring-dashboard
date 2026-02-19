@@ -195,14 +195,42 @@ class TelegramScanner:
             ) from None
 
         chats_filter = await self._load_chats_filter(client)
+        state: dict = {"filter": chats_filter, "handler": None}
 
-        @client.on(events.NewMessage(chats=chats_filter or None))
-        async def handler(event: events.NewMessage.Event) -> None:
+        async def on_message(event: events.NewMessage.Event) -> None:
             try:
                 await self._handle_message(event)
             except Exception:
-                # чтобы не убить цикл сканера из-за одного сообщения
                 return
+
+        state["handler"] = client.add_event_handler(
+            on_message,
+            events.NewMessage(chats=chats_filter or None),
+        )
+
+        async def refresh_chats_loop() -> None:
+            """Периодически перезагружаем список каналов из БД, чтобы подхватить новые без перезапуска парсера."""
+            interval = 60
+            while True:
+                await asyncio.sleep(interval)
+                if not client.is_connected():
+                    break
+                try:
+                    new_filter = await self._load_chats_filter(client)
+                    old_set = set(state["filter"] or [])
+                    new_set = set(new_filter or [])
+                    if old_set != new_set:
+                        client.remove_event_handler(state["handler"])
+                        state["filter"] = new_filter
+                        state["handler"] = client.add_event_handler(
+                            on_message,
+                            events.NewMessage(chats=new_filter or None),
+                        )
+                        log_append(f"Парсер: обновлён список каналов (теперь {len(new_set)}).")
+                except Exception as e:
+                    log_exception(e)
+
+        asyncio.create_task(refresh_chats_loop())
 
         await client.run_until_disconnected()
 
