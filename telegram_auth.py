@@ -10,6 +10,7 @@ from telethon import TelegramClient
 from telethon.sessions import StringSession
 
 from parser_config import get_parser_setting_str, set_parser_setting
+from parser_log import append as log_append, append_exception as log_exception
 
 try:
     import socks
@@ -58,13 +59,24 @@ async def request_code(phone: str) -> None:
         raise RuntimeError("TG_API_ID должен быть числом.")
     proxy = _get_proxy()
     client = TelegramClient(StringSession(), api_id_int, api_hash, proxy=proxy)
-    await client.connect()
+    try:
+        await client.connect()
+    except Exception as e:
+        log_exception(e)
+        raise RuntimeError(f"Не удалось подключиться к Telegram: {e}") from e
     if not await client.is_user_authorized():
-        sent = await client.send_code_request(phone)
+        try:
+            sent = await client.send_code_request(phone)
+        except Exception as e:
+            await client.disconnect()
+            log_exception(e)
+            raise RuntimeError(f"Запрос кода не прошёл: {e}") from e
         phone_code_hash = getattr(sent, "phone_code_hash", None)
         if not phone_code_hash:
             await client.disconnect()
+            log_append("Запрос кода: ответ без phone_code_hash.")
             raise RuntimeError("Не удалось отправить код (неверный номер или лимиты Telegram).")
+        log_append(f"Код запрошен на {phone}. Проверьте чат «Telegram» в приложении — код приходит туда, не по SMS.")
         _pending["client"] = client
         _pending["phone"] = phone
         _pending["phone_code_hash"] = phone_code_hash

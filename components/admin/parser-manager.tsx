@@ -480,7 +480,7 @@ export function ParserManager() {
                 <div className="sm:col-span-2 rounded-lg border border-dashed border-muted-foreground/30 bg-muted/20 p-4">
                   <p className="mb-3 text-sm font-medium">Получить сессию через браузер</p>
                   <p className="mb-3 text-muted-foreground text-xs">
-                    Укажите API ID и Hash выше, затем введите номер — код придёт в Telegram. Введите код и при необходимости пароль 2FA. Сессия сохранится в поле выше.
+                    Укажите API ID и Hash выше и сохраните настройки. Введите номер — код придёт в приложение Telegram (откройте чат «Telegram» в списке чатов; SMS для входа Telegram не отправляет). Введите код и при необходимости пароль 2FA.
                   </p>
                   {!authPending ? (
                     <div className="flex flex-wrap items-end gap-2">
@@ -501,6 +501,9 @@ export function ParserManager() {
                     </div>
                   ) : (
                     <div className="space-y-2">
+                      <p className="text-muted-foreground text-xs">
+                        Код приходит в чат «Telegram» в приложении (не по SMS). Если не пришёл — проверьте лог парсера выше на ошибки.
+                      </p>
                       <div>
                         <Label htmlFor="auth-code">Код из Telegram</Label>
                         <Input
