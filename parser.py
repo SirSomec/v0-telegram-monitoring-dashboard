@@ -10,7 +10,7 @@ from typing import Callable, Iterable
 import socks  # PySocks
 from dotenv import load_dotenv
 from telethon import TelegramClient, events
-from telethon.errors import UserAlreadyParticipantError
+from telethon.errors import FloodWaitError, UserAlreadyParticipantError
 from telethon.sessions import StringSession
 from telethon.tl.functions.messages import ImportChatInviteRequest
 
@@ -237,25 +237,43 @@ class TelegramScanner:
 
     async def _resolve_invite(self, client: TelegramClient, invite_hash: str) -> int | str | None:
         """
-        Принимает инвайт в канал/группу в Telegram (подписка в TG) и возвращает chat_id или username для фильтра.
-        Сначала вызывается ImportChatInviteRequest — аккаунт реально присоединяется к чату.
+        Возвращает chat_id или username для фильтра. Если мы ещё не в чате — принимаем инвайт в TG (один раз).
+        При каждом обновлении списка (каждые 60 с) сначала проверяем get_entity: если уже в чате — не дергаем Join.
         """
         link = f"https://t.me/joinchat/{invite_hash}"
         entity = None
         try:
-            # Сначала явно принимаем инвайт в Telegram (подписываемся на канал/группу)
+            # 1) Сначала проверяем: уже в чате? Тогда get_entity по ссылке сработает — не вызываем Join повторно
             try:
-                updates = await client(ImportChatInviteRequest(invite_hash))
-                if updates and getattr(updates, "chats", None) and len(updates.chats) > 0:
-                    entity = updates.chats[0]
-                    title = getattr(entity, "title", None) or getattr(entity, "name", None) or invite_hash[:16]
-                    log_append(f"Парсер: присоединились к чату по инвайту: {title}")
-            except UserAlreadyParticipantError:
-                # Уже в чате — получаем entity по ссылке
                 entity = await client.get_entity(link)
-            except Exception as e:
-                log_exception(e)
-                return None
+            except Exception:
+                pass
+
+            # 2) Не в чате — принимаем инвайт один раз (ImportChatInviteRequest)
+            if entity is None:
+                try:
+                    updates = await client(ImportChatInviteRequest(invite_hash))
+                    if updates and getattr(updates, "chats", None) and len(updates.chats) > 0:
+                        entity = updates.chats[0]
+                        title = getattr(entity, "title", None) or getattr(entity, "name", None) or invite_hash[:16]
+                        log_append(f"Парсер: присоединились к чату по инвайту: {title}")
+                except FloodWaitError as e:
+                    log_append(f"Парсер: ограничение Telegram, ждём {e.seconds} с перед присоединением по инвайту…")
+                    await asyncio.sleep(e.seconds)
+                    try:
+                        updates = await client(ImportChatInviteRequest(invite_hash))
+                        if updates and getattr(updates, "chats", None) and len(updates.chats) > 0:
+                            entity = updates.chats[0]
+                    except UserAlreadyParticipantError:
+                        entity = await client.get_entity(link)
+                    except Exception as retry_e:
+                        log_exception(retry_e)
+                        return None
+                except UserAlreadyParticipantError:
+                    entity = await client.get_entity(link)
+                except Exception as e:
+                    log_exception(e)
+                    return None
 
             if entity is None:
                 return None
