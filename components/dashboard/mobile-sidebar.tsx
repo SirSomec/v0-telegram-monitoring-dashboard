@@ -16,14 +16,16 @@ import {
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
-const navItems = [
-  { icon: LayoutDashboard, label: "Панель" },
-  { icon: Hash, label: "Ключевые слова" },
-  { icon: Users, label: "Группы" },
-  { icon: Bell, label: "Уведомления" },
-  { icon: CreditCard, label: "Оплата" },
-  { icon: Settings, label: "Настройки" },
+// visible: false — скрыто до реализации фич (ROADMAP)
+const allNavItems = [
+  { icon: LayoutDashboard, label: "Панель", visible: true },
+  { icon: Hash, label: "Ключевые слова", visible: true },
+  { icon: Users, label: "Группы", visible: false },
+  { icon: Bell, label: "Уведомления", visible: false },
+  { icon: CreditCard, label: "Оплата", visible: false },
+  { icon: Settings, label: "Настройки", visible: true },
 ]
+const navItems = allNavItems.filter((item) => item.visible)
 
 interface MobileSidebarProps {
   open: boolean

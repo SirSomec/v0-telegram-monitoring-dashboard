@@ -82,6 +82,62 @@ pnpm dev
 
 Откройте [http://localhost:3000](http://localhost:3000). Регистрация и вход — на `/auth`, после входа — дашборд на `/dashboard`. Админ-панель — `/admin` (доступна только пользователям с правами администратора).
 
+## Деплой (Docker Compose)
+
+Для развёртывания на сервере используйте Docker и Docker Compose.
+
+**Установка на чистый Ubuntu:** пошаговая инструкция — [docs/install-ubuntu.md](docs/install-ubuntu.md).
+
+### Требования
+
+- Docker и Docker Compose
+- Файл `.env` в корне проекта (скопируйте из `.env.example` и заполните)
+
+### Обязательные переменные в `.env`
+
+- `JWT_SECRET` — **обязательно смените** на случайную строку в проде
+- `TG_API_ID`, `TG_API_HASH` — данные с my.telegram.org
+- `TG_SESSION_STRING` — сессия Telethon (рекомендуется для сервера без интерактивного входа)
+
+### CORS и URL фронта в проде
+
+Если фронт открывается по своему домену (не localhost), задайте в `.env`:
+
+- `CORS_ORIGINS=https://ваш-домен.com` (или несколько через запятую)
+- `NEXT_PUBLIC_API_URL=https://api.ваш-домен.com` — если API на поддомене; если Nginx проксирует `/api` и `/ws` на бэкенд с того же домена — оставьте пустым
+
+### Запуск
+
+```bash
+docker compose up -d --build
+```
+
+- Фронт: [http://localhost:3000](http://localhost:3000)
+- API: [http://localhost:8000](http://localhost:8000)
+- PostgreSQL: порт 5432 (внутри сети контейнеров — сервис `postgres`)
+
+Таблицы БД создаются при первом запросе к API (init_db). Парсер можно запустить из админки (вкладка «Парсер») или задать `AUTO_START_SCANNER=1` в `.env`.
+
+### Остановка
+
+```bash
+docker compose down
+```
+
+Данные PostgreSQL сохраняются в volume `postgres_data`. Для полного удаления с данными: `docker compose down -v`.
+
+### Автоматический деплой
+
+В каталоге `scripts/` лежат скрипты для автоматизации деплоя:
+
+| Скрипт | Назначение |
+|--------|------------|
+| `scripts/deploy.sh` | Запуск на **сервере**: `docker compose up -d --build` |
+| `scripts/remote-deploy.sh` | Запуск **с локальной машины** (Linux/macOS): синхронизация по rsync и вызов `deploy.sh` по SSH |
+| `scripts/remote-deploy.ps1` | То же с **Windows** (PowerShell): при наличии WSL/Git Bash — rsync, иначе `git pull` на сервере и `deploy.sh` |
+
+Подробнее см. [scripts/README.md](scripts/README.md).
+
 ## Основные сценарии
 
 - **Регистрация** — первый зарегистрированный пользователь получает права администратора.

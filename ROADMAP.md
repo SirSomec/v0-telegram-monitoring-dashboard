@@ -43,6 +43,7 @@
 ### Инфраструктура и документация
 - [x] README: требования, настройка .env, запуск бэкенда и фронта, основные сценарии
 - [x] .env.example с комментариями по переменным
+- [x] Деплой: Dockerfile.backend, Dockerfile.frontend, docker-compose (postgres, backend, frontend), CORS из env (CORS_ORIGINS), раздел «Деплой» в README
 
 ---
 
@@ -83,12 +84,11 @@
 - [ ] Восстановление пароля: «Забыли пароль» → email с ссылкой/токеном → установка нового пароля (email-сервис, хранение токенов сброса)
 
 ### Навигация и разделы
-- [ ] Определиться с «Группы» в сайдбаре: отдельный раздел управления чатами для мониторинга для обычного пользователя или скрыть/убрать
-- [ ] Реализовать или временно скрыть пункты «Уведомления», «Настройки», «Оплата» в зависимости от готовности фич
+- [x] В сайдбаре дашборда временно скрыты пункты «Группы», «Уведомления», «Оплата» (visible: false); видны «Панель», «Ключевые слова», «Настройки». При готовности фич — включить в sidebar-nav и mobile-sidebar.
 
 ### Качество и релиз
 - [ ] Тесты: API (pytest), при необходимости e2e критичных сценариев
-- [ ] Деплой: Docker/Compose, CORS и JWT_SECRET для прода, инструкция в README
+- [x] Деплой: Docker/Compose, CORS из env (CORS_ORIGINS), инструкция в README
 
 ---
 
@@ -101,6 +101,7 @@
 | 2025-02-19 | 3 | Лента: POST /api/mentions/mark-all-read (отметить все прочитанными), кнопка «Всё прочитано». GET /api/mentions — параметры offset, keyword; фильтр по ключевому слову (выпадающий список), пагинация «Загрузить ещё». ROADMAP обновлён. |
 | 2025-02-19 | 4 | Экспорт: GET /api/mentions/export (CSV, фильтры keyword, leadsOnly, dateFrom, dateTo), кнопка «Экспорт CSV» в ленте, downloadMentionsCsv в lib/api. Смена пароля: PATCH /auth/me (currentPassword, newPassword), страница /settings с профилем и формой смены пароля, переход по «Настройки» с дашборда. ROADMAP обновлён. |
 | 2025-02-19 | 5 | Мультипользовательский сканер: TelegramScanner(user_id=None) — чаты и ключевые слова из БД по всем пользователям, упоминания с нужным user_id, в payload добавлен userId. В main.py по умолчанию MULTI_USER_SCANNER=1; при 0 и TG_USER_ID — режим одного пользователя. Фронт: в ленте по WS показывать только упоминания с data.userId === текущий user. ROADMAP и README обновлены. |
+| 2025-02-19 | 6 | Деплой: Dockerfile.backend, Dockerfile.frontend, docker-compose.yml (postgres, backend, frontend), .dockerignore. CORS: разрешённые origins из env (CORS_ORIGINS). next.config: output standalone для фронта. README: раздел «Деплой (Docker Compose)». Навигация: в сайдбаре дашборда скрыты «Группы», «Уведомления», «Оплата» до реализации фич. ROADMAP обновлён. |
 
 ---
 

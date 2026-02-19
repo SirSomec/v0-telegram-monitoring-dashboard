@@ -13,14 +13,16 @@ import {
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 
-const navItems = [
-  { icon: LayoutDashboard, label: "Панель", href: "#", active: true },
-  { icon: Hash, label: "Ключевые слова", href: "#keywords" },
-  { icon: Users, label: "Группы", href: "#sources" },
-  { icon: Bell, label: "Уведомления", href: "#notifications" },
-  { icon: CreditCard, label: "Оплата", href: "#billing" },
-  { icon: Settings, label: "Настройки", href: "#settings" },
+// visible: false — скрыто до реализации фич (ROADMAP: Группы, Уведомления, Оплата)
+const allNavItems = [
+  { icon: LayoutDashboard, label: "Панель", visible: true },
+  { icon: Hash, label: "Ключевые слова", visible: true },
+  { icon: Users, label: "Группы", visible: false },
+  { icon: Bell, label: "Уведомления", visible: false },
+  { icon: CreditCard, label: "Оплата", visible: false },
+  { icon: Settings, label: "Настройки", visible: true },
 ]
+const navItems = allNavItems.filter((item) => item.visible)
 
 interface SidebarNavProps {
   collapsed: boolean
