@@ -10,6 +10,7 @@ import { StatsCards } from "@/components/dashboard/stats-cards"
 import { KeywordsManager } from "@/components/dashboard/keywords-manager"
 import { MentionFeed } from "@/components/dashboard/mention-feed"
 import { UserChannelsManager } from "@/components/dashboard/user-channels-manager"
+import { ChannelGroupsSection } from "@/components/dashboard/channel-groups-section"
 import { BillingModal } from "@/components/dashboard/billing-modal"
 import { apiBaseUrl } from "@/lib/api"
 import { useAuth } from "@/lib/auth-context"
@@ -23,6 +24,7 @@ export default function DashboardPage() {
   const [activeNav, setActiveNav] = useState("Панель")
   const [billingOpen, setBillingOpen] = useState(false)
   const [serviceOnline, setServiceOnline] = useState(false)
+  const [channelsRefreshKey, setChannelsRefreshKey] = useState(0)
 
   useEffect(() => {
     if (loading) return
@@ -106,10 +108,11 @@ export default function DashboardPage() {
                   Группы и каналы
                 </h1>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Добавляйте свои каналы для мониторинга или выбирайте из доступных, добавленных администратором.
+                  Подпишитесь на группы каналов по тематикам или управляйте своими каналами для мониторинга.
                 </p>
               </div>
-              <UserChannelsManager />
+              <ChannelGroupsSection onSubscribedChange={() => setChannelsRefreshKey((k) => k + 1)} />
+              <UserChannelsManager key={channelsRefreshKey} />
             </>
           ) : (
             <>

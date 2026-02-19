@@ -11,7 +11,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Response, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sqlalchemy import desc, func, select, update
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from auth_utils import create_token, decode_token, hash_password, verify_password
 from database import get_db, init_db
@@ -130,6 +130,22 @@ class ChatGroupOut(BaseModel):
     description: str | None
     userId: int
     createdAt: str
+
+
+class ChatGroupChannelOut(BaseModel):
+    id: int
+    identifier: str
+    title: str | None
+
+
+class ChatGroupAvailableOut(BaseModel):
+    """Группа каналов (по тематике), созданная администратором; пользователь может подписаться на всю группу."""
+    id: int
+    name: str
+    description: str | None
+    channelCount: int
+    channels: list[ChatGroupChannelOut]
+    subscribed: bool  # подписан ли текущий пользователь на все каналы группы
 
 
 class UserCreate(BaseModel):
@@ -765,6 +781,102 @@ def list_chat_groups(user: User = Depends(get_current_user), db: Session = Depen
             )
         )
     return out
+
+
+@app.get("/api/chat-groups/available", response_model=list[ChatGroupAvailableOut])
+def list_available_chat_groups(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> list[ChatGroupAvailableOut]:
+    """Группы каналов по тематикам, созданные администраторами. Пользователь может подписаться на всю группу сразу."""
+    _ensure_default_user(db)
+    admin_ids = {u.id for u in db.scalars(select(User).where(User.is_admin.is_(True))).all()}
+    if not admin_ids:
+        return []
+    groups = db.scalars(
+        select(ChatGroup)
+        .where(ChatGroup.user_id.in_(admin_ids))
+        .order_by(ChatGroup.id.asc())
+        .options(selectinload(ChatGroup.chats))
+    ).all()
+    sub_ids = set(
+        db.execute(
+            select(user_chat_subscriptions.c.chat_id).where(user_chat_subscriptions.c.user_id == user.id)
+        ).scalars().all()
+    )
+    out: list[ChatGroupAvailableOut] = []
+    for g in groups:
+        global_chats = [c for c in (g.chats or []) if c.is_global]
+        if not global_chats:
+            continue
+        channel_outs = []
+        for c in global_chats:
+            ident = (
+                (c.username or "")
+                or (str(c.tg_chat_id) if c.tg_chat_id is not None else "")
+                or (f"t.me/joinchat/{c.invite_hash}" if getattr(c, "invite_hash", None) else "")
+            ) or "—"
+            channel_outs.append(ChatGroupChannelOut(id=c.id, identifier=ident, title=c.title))
+        subscribed = all(c.id in sub_ids for c in global_chats)
+        out.append(
+            ChatGroupAvailableOut(
+                id=g.id,
+                name=g.name,
+                description=g.description,
+                channelCount=len(global_chats),
+                channels=channel_outs,
+                subscribed=subscribed,
+            )
+        )
+    return out
+
+
+@app.post("/api/chat-groups/{group_id}/subscribe")
+def subscribe_chat_group(group_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+    """Подписаться на все глобальные каналы в группе (мониторинг всех каналов группы сразу)."""
+    _ensure_default_user(db)
+    g = db.scalar(
+        select(ChatGroup).where(ChatGroup.id == group_id).options(selectinload(ChatGroup.chats))
+    )
+    if not g:
+        raise HTTPException(status_code=404, detail="group not found")
+    admin_ids = {u.id for u in db.scalars(select(User).where(User.is_admin.is_(True))).all()}
+    if g.user_id not in admin_ids:
+        raise HTTPException(status_code=404, detail="group not available")
+    global_chats = [c for c in (g.chats or []) if c.is_global]
+    for c in global_chats:
+        existing = db.execute(
+            select(user_chat_subscriptions).where(
+                user_chat_subscriptions.c.user_id == user.id,
+                user_chat_subscriptions.c.chat_id == c.id,
+            )
+        ).first()
+        if not existing:
+            db.execute(user_chat_subscriptions.insert().values(user_id=user.id, chat_id=c.id))
+    db.commit()
+    return {"ok": True, "subscribedCount": len(global_chats)}
+
+
+@app.post("/api/chat-groups/{group_id}/unsubscribe")
+def unsubscribe_chat_group(group_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+    """Отписаться от всех каналов в группе."""
+    _ensure_default_user(db)
+    g = db.scalar(
+        select(ChatGroup).where(ChatGroup.id == group_id).options(selectinload(ChatGroup.chats))
+    )
+    if not g:
+        raise HTTPException(status_code=404, detail="group not found")
+    admin_ids = {u.id for u in db.scalars(select(User).where(User.is_admin.is_(True))).all()}
+    if g.user_id not in admin_ids:
+        raise HTTPException(status_code=404, detail="group not available")
+    global_chat_ids = [c.id for c in (g.chats or []) if c.is_global]
+    if not global_chat_ids:
+        return {"ok": True, "unsubscribedCount": 0}
+    r = db.execute(
+        user_chat_subscriptions.delete().where(
+            user_chat_subscriptions.c.user_id == user.id,
+            user_chat_subscriptions.c.chat_id.in_(global_chat_ids),
+        )
+    )
+    db.commit()
+    return {"ok": True, "unsubscribedCount": r.rowcount}
 
 
 @app.post("/api/chat-groups", response_model=ChatGroupOut)
