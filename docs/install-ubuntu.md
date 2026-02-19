@@ -102,15 +102,7 @@ nano .env
 | `TG_API_HASH` | Строка с my.telegram.org |
 | `TG_SESSION_STRING` | Сессия Telethon (StringSession), созданная локально |
 
-**Для Docker Compose** `DATABASE_URL` можно не менять — в `docker-compose.yml` он переопределён на `postgresql+psycopg2://postgres:postgres@postgres:5432/telegram_monitor`.
-
-**Если открываете приложение по IP** (например `http://IP_СЕРВЕРА:3000`), добавьте в `.env` на сервере:
-
-```env
-CORS_ORIGINS=http://IP_СЕРВЕРА:3000
-```
-
-(Подставьте свой IP или домен. Иначе браузер заблокирует запросы к API на порт 8000 из‑за CORS.)
+**Для Docker Compose** `DATABASE_URL` можно не менять — в `docker-compose.yml` он переопределён на `postgresql+psycopg2://postgres:postgres@postgres:5432/telegram_monitor`. При одном сервере (фронт :3000, бэкенд :8000) CORS настраивать не нужно — бэкенд по умолчанию разрешает запросы с любого origin.
 
 **Если фронт и API доступны по домену через Nginx**, добавьте в `.env`:
 

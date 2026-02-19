@@ -200,18 +200,22 @@ class ConnectionManager:
             self.disconnect(ws)
 
 
-def _cors_origins() -> list[str]:
+def _cors_config() -> dict:
     raw = os.getenv("CORS_ORIGINS", "").strip()
     if raw:
-        return [x.strip() for x in raw.split(",") if x.strip()]
-    return ["http://localhost:3000", "http://127.0.0.1:3000"]
+        origins = [x.strip() for x in raw.split(",") if x.strip()]
+        return {"allow_origins": origins, "allow_origin_regex": None}
+    # Один сервер (фронт :3000, бэкенд :8000) — разрешаем любой origin, в .env ничего не нужно
+    return {"allow_origins": [], "allow_origin_regex": r"https?://.*"}
 
 
 app = FastAPI(title="Telegram Monitoring Backend", version="0.1.0")
 
+_cors = _cors_config()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_cors_origins(),
+    allow_origins=_cors["allow_origins"],
+    allow_origin_regex=_cors["allow_origin_regex"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
