@@ -36,7 +36,18 @@ export async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
   })
   if (!res.ok) {
     const text = await res.text().catch(() => "")
-    throw new Error(text || `HTTP ${res.status}`)
+    let message = text || `HTTP ${res.status}`
+    try {
+      const json = JSON.parse(text) as { detail?: string | Array<{ msg?: string }> }
+      if (json.detail) {
+        message = typeof json.detail === "string"
+          ? json.detail
+          : (json.detail as Array<{ msg?: string }>).map((d) => d.msg || "").filter(Boolean).join(". ") || message
+      }
+    } catch {
+      /* use raw text */
+    }
+    throw new Error(message)
   }
   return res.json() as Promise<T>
 }
