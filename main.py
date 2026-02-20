@@ -75,6 +75,7 @@ class KeywordOut(BaseModel):
     useSemantic: bool
     userId: int
     createdAt: str
+    enabled: bool = True
 
 
 class ChatCreate(BaseModel):
@@ -975,7 +976,13 @@ def update_notification_settings(
 @app.get("/api/keywords", response_model=list[KeywordOut])
 def list_keywords(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> list[KeywordOut]:
     _ensure_default_user(db)
-    rows = db.scalars(select(Keyword).where(Keyword.user_id == user.id).order_by(Keyword.id.asc())).all()
+    rows = (
+        db.scalars(
+            select(Keyword)
+            .where(Keyword.user_id == user.id)
+            .order_by(Keyword.enabled.desc(), Keyword.id.asc())
+        )
+    ).all()
     out: list[KeywordOut] = []
     for k in rows:
         created_at = k.created_at
@@ -988,6 +995,7 @@ def list_keywords(user: User = Depends(get_current_user), db: Session = Depends(
                 useSemantic=getattr(k, "use_semantic", False),
                 userId=k.user_id,
                 createdAt=created_at.isoformat(),
+                enabled=getattr(k, "enabled", True),
             )
         )
     return out
@@ -1010,9 +1018,19 @@ def create_keyword(body: KeywordCreate, user: User = Depends(get_current_user), 
     if not text:
         raise HTTPException(status_code=400, detail="text is required")
 
-    # Не дублируем по (user_id, text) в рамках простого MVP
+    # Не дублируем по (user_id, text); при наличии отключённого — включаем (восстановление)
     existing = db.scalar(select(Keyword).where(Keyword.user_id == user_id, Keyword.text == text))
     if existing:
+        if not getattr(existing, "enabled", True):
+            _check_limits(
+                db,
+                user,
+                delta_keywords_exact=0 if getattr(existing, "use_semantic", False) else 1,
+                delta_keywords_semantic=1 if getattr(existing, "use_semantic", False) else 0,
+            )
+            existing.enabled = True
+            db.commit()
+            db.refresh(existing)
         created_at = existing.created_at
         if created_at.tzinfo is None:
             created_at = created_at.replace(tzinfo=timezone.utc)
@@ -1022,6 +1040,7 @@ def create_keyword(body: KeywordCreate, user: User = Depends(get_current_user), 
             useSemantic=getattr(existing, "use_semantic", False),
             userId=existing.user_id,
             createdAt=created_at.isoformat(),
+            enabled=getattr(existing, "enabled", True),
         )
 
     use_semantic = getattr(body, "useSemantic", False)
@@ -1038,6 +1057,7 @@ def create_keyword(body: KeywordCreate, user: User = Depends(get_current_user), 
         useSemantic=k.use_semantic,
         userId=k.user_id,
         createdAt=created_at.isoformat(),
+        enabled=True,
     )
 
 
@@ -1048,9 +1068,50 @@ def delete_keyword(keyword_id: int, user: User = Depends(get_current_user), db: 
         raise HTTPException(status_code=404, detail="keyword not found")
     if k.user_id != user.id:
         raise HTTPException(status_code=403, detail="forbidden")
-    db.delete(k)
+    k.enabled = False
     db.commit()
     return {"ok": True}
+
+
+@app.patch("/api/keywords/{keyword_id}/restore", response_model=KeywordOut)
+def restore_keyword(keyword_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> KeywordOut:
+    k = db.scalar(select(Keyword).where(Keyword.id == keyword_id))
+    if not k:
+        raise HTTPException(status_code=404, detail="keyword not found")
+    if k.user_id != user.id:
+        raise HTTPException(status_code=403, detail="forbidden")
+    if getattr(k, "enabled", True):
+        created_at = k.created_at
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        return KeywordOut(
+            id=k.id,
+            text=k.text,
+            useSemantic=getattr(k, "use_semantic", False),
+            userId=k.user_id,
+            createdAt=created_at.isoformat(),
+            enabled=True,
+        )
+    _check_limits(
+        db,
+        user,
+        delta_keywords_exact=0 if getattr(k, "use_semantic", False) else 1,
+        delta_keywords_semantic=1 if getattr(k, "use_semantic", False) else 0,
+    )
+    k.enabled = True
+    db.commit()
+    db.refresh(k)
+    created_at = k.created_at
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    return KeywordOut(
+        id=k.id,
+        text=k.text,
+        useSemantic=k.use_semantic,
+        userId=k.user_id,
+        createdAt=created_at.isoformat(),
+        enabled=True,
+    )
 
 
 def _parse_chat_identifier(ident: str) -> tuple[str | None, int | None, str | None]:

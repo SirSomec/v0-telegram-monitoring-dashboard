@@ -7,10 +7,10 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
-import { Plus, X, Sparkles, Target, Loader2 } from "lucide-react"
+import { Plus, X, Sparkles, Target, Loader2, RotateCcw } from "lucide-react"
 import { apiBaseUrl, apiJson } from "@/lib/api"
 
-type KeywordItem = { id: number; text: string; useSemantic: boolean }
+type KeywordItem = { id: number; text: string; useSemantic: boolean; enabled: boolean }
 
 export function KeywordsManager({ userId = 1, canAddResources = true }: { userId?: number; canAddResources?: boolean }) {
   const [keywords, setKeywords] = useState<KeywordItem[]>([])
@@ -39,7 +39,7 @@ export function KeywordsManager({ userId = 1, canAddResources = true }: { userId
 
   async function addKeyword() {
     const trimmed = newKeyword.trim()
-    if (!trimmed || keywords.some((k) => k.text === trimmed)) return
+    if (!trimmed || keywords.some((k) => k.enabled && k.text === trimmed)) return
     setAdding(true)
     setError("")
     try {
@@ -60,9 +60,19 @@ export function KeywordsManager({ userId = 1, canAddResources = true }: { userId
     setError("")
     try {
       await apiJson<{ ok: boolean }>(`${apiBaseUrl()}/api/keywords/${item.id}`, { method: "DELETE" })
-      setKeywords((prev) => prev.filter((k) => k.id !== item.id))
+      setKeywords((prev) => prev.map((k) => (k.id === item.id ? { ...k, enabled: false } : k)))
     } catch (e) {
       setError(e instanceof Error ? e.message : "Ошибка удаления")
+    }
+  }
+
+  async function restoreKeyword(item: KeywordItem) {
+    setError("")
+    try {
+      const restored = await apiJson<KeywordItem>(`${apiBaseUrl()}/api/keywords/${item.id}/restore`, { method: "PATCH" })
+      setKeywords((prev) => prev.map((k) => (k.id === item.id ? restored : k)))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Ошибка восстановления")
     }
   }
 
@@ -133,32 +143,64 @@ export function KeywordsManager({ userId = 1, canAddResources = true }: { userId
             Загрузка...
           </div>
         ) : (
-          <div className="flex flex-wrap gap-2">
-            {keywords.map((item) => (
-              <Badge
-                key={item.id}
-                variant="secondary"
-                className="gap-1.5 bg-secondary text-secondary-foreground border border-border px-3 py-1.5 text-sm"
-              >
-                {item.useSemantic ? (
-                  <Sparkles className="size-3 shrink-0" aria-label="Семантика" />
-                ) : (
-                  <Target className="size-3 shrink-0" aria-label="Точное" />
-                )}
-                {item.text}
-                <button
-                  onClick={() => removeKeyword(item)}
-                  className="ml-0.5 rounded-full p-0.5 hover:bg-muted transition-colors"
-                  aria-label={`Удалить ${item.text}`}
+          <>
+            <div className="flex flex-wrap gap-2">
+              {keywords.filter((k) => k.enabled).map((item) => (
+                <Badge
+                  key={item.id}
+                  variant="secondary"
+                  className="gap-1.5 bg-secondary text-secondary-foreground border border-border px-3 py-1.5 text-sm"
                 >
-                  <X className="size-3" />
-                </button>
-              </Badge>
-            ))}
-          </div>
+                  {item.useSemantic ? (
+                    <Sparkles className="size-3 shrink-0" aria-label="Семантика" />
+                  ) : (
+                    <Target className="size-3 shrink-0" aria-label="Точное" />
+                  )}
+                  {item.text}
+                  <button
+                    onClick={() => removeKeyword(item)}
+                    className="ml-0.5 rounded-full p-0.5 hover:bg-muted transition-colors"
+                    aria-label={`Удалить ${item.text}`}
+                  >
+                    <X className="size-3" />
+                  </button>
+                </Badge>
+              ))}
+            </div>
+
+            {keywords.some((k) => !k.enabled) && (
+              <div className="space-y-2 pt-4 border-t border-border">
+                <p className="text-xs font-medium text-muted-foreground">Неиспользуемые (можно восстановить)</p>
+                <div className="flex flex-wrap gap-2">
+                  {keywords.filter((k) => !k.enabled).map((item) => (
+                    <Badge
+                      key={item.id}
+                      variant="outline"
+                      className="gap-1.5 border-dashed bg-muted/50 text-muted-foreground px-3 py-1.5 text-sm"
+                    >
+                      {item.useSemantic ? (
+                        <Sparkles className="size-3 shrink-0 opacity-60" aria-label="Семантика" />
+                      ) : (
+                        <Target className="size-3 shrink-0 opacity-60" aria-label="Точное" />
+                      )}
+                      {item.text}
+                      <button
+                        onClick={() => restoreKeyword(item)}
+                        className="ml-0.5 rounded-full p-0.5 hover:bg-muted transition-colors"
+                        aria-label={`Восстановить ${item.text}`}
+                        title="Восстановить"
+                      >
+                        <RotateCcw className="size-3" />
+                      </button>
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+            )}
+          </>
         )}
 
-        {!loading && keywords.length === 0 && (
+        {!loading && keywords.filter((k) => k.enabled).length === 0 && (
           <p className="py-4 text-center text-sm text-muted-foreground">
             Ключевые слова не добавлены. Введите слово выше и нажмите Enter для начала мониторинга.
           </p>
