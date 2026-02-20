@@ -166,12 +166,12 @@ function AuthPageContent() {
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
                       <Label htmlFor="login-password" className="text-card-foreground">Пароль</Label>
-                      <button
-                        type="button"
+                      <Link
+                        href="/auth/forgot-password"
                         className="text-xs text-primary hover:text-primary/80 transition-colors"
                       >
                         Забыли пароль?
-                      </button>
+                      </Link>
                     </div>
                     <div className="relative">
                       <Input

@@ -4,7 +4,8 @@ import asyncio
 import csv
 import io
 import os
-from datetime import datetime, timezone
+import secrets
+from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Response, WebSocket, WebSocketDisconnect
@@ -15,7 +16,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from auth_utils import create_token, decode_token, hash_password, verify_password
 from database import get_db, init_db
-from models import Chat, ChatGroup, Keyword, Mention, User, user_chat_subscriptions
+from models import Chat, ChatGroup, Keyword, Mention, PasswordResetToken, User, user_chat_subscriptions
 from parser import TelegramScanner
 from parser_config import (
     get_all_parser_settings,
@@ -246,6 +247,15 @@ class AuthResponse(BaseModel):
 
 class ChangePasswordRequest(BaseModel):
     currentPassword: str = Field(..., min_length=1)
+    newPassword: str = Field(..., min_length=8)
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: str = Field(..., min_length=1)
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(..., min_length=1)
     newPassword: str = Field(..., min_length=8)
 
 
@@ -535,6 +545,65 @@ def update_me(
     db.commit()
     db.refresh(user)
     return _user_to_out(user)
+
+
+# --- Восстановление пароля ---
+RESET_TOKEN_EXPIRE_HOURS = 1
+FRONTEND_URL = os.getenv("FRONTEND_URL", "").strip()
+
+
+@app.post("/auth/forgot-password")
+def forgot_password(body: ForgotPasswordRequest, db: Session = Depends(get_db)) -> dict[str, Any]:
+    """
+    Запрос на сброс пароля. Всегда возвращает 200, чтобы не раскрывать наличие email в системе.
+    Если пользователь найден — создаётся токен, отправляется письмо (если настроен SMTP).
+    """
+    email = body.email.strip().lower()
+    user = db.scalar(select(User).where(func.lower(User.email) == email))
+    if not user or not user.password_hash:
+        return {"ok": True, "message": "If an account exists, you will receive an email with instructions."}
+
+    # Удаляем старые токены этого пользователя
+    for old in db.scalars(select(PasswordResetToken).where(PasswordResetToken.user_id == user.id)).all():
+        db.delete(old)
+
+    token = secrets.token_urlsafe(32)
+    expires_at = _now_utc() + timedelta(hours=RESET_TOKEN_EXPIRE_HOURS)
+    prt = PasswordResetToken(user_id=user.id, token=token, expires_at=expires_at)
+    db.add(prt)
+    db.commit()
+
+    base = (FRONTEND_URL or "").rstrip("/")
+    reset_link = f"{base}/auth/reset-password?token={token}" if base else f"/auth/reset-password?token={token}"
+
+    from email_sender import send_password_reset_email
+    send_password_reset_email(user.email or email, reset_link)
+
+    return {"ok": True, "message": "If an account exists, you will receive an email with instructions."}
+
+
+@app.post("/auth/reset-password")
+def reset_password(body: ResetPasswordRequest, db: Session = Depends(get_db)) -> dict[str, Any]:
+    """Установка нового пароля по токену из письма. Токен одноразовый и после использования удаляется."""
+    now = _now_utc()
+    prt = db.scalar(
+        select(PasswordResetToken).where(
+            PasswordResetToken.token == body.token.strip(),
+            PasswordResetToken.expires_at > now,
+        )
+    )
+    if not prt:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset link. Request a new one.")
+
+    user = db.scalar(select(User).where(User.id == prt.user_id))
+    if not user:
+        raise HTTPException(status_code=400, detail="User not found.")
+
+    user.password_hash = hash_password(body.newPassword)
+    db.delete(prt)
+    db.add(user)
+    db.commit()
+    return {"ok": True, "message": "Password has been reset. You can now log in."}
 
 
 @app.get("/api/stats", response_model=StatsOut)

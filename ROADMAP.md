@@ -30,6 +30,7 @@
 - [x] Пагинация: offset в API, кнопка «Загрузить ещё» в ленте
 - [x] Экспорт упоминаний в CSV: GET /api/mentions/export (keyword, leadsOnly, dateFrom, dateTo), кнопка «Экспорт CSV» в ленте
 - [x] Смена пароля: PATCH /auth/me (currentPassword, newPassword), страница «Настройки» (/settings) с формой смены пароля
+- [x] Восстановление пароля: «Забыли пароль» → POST /auth/forgot-password (email) → письмо со ссылкой; страница /auth/reset-password?token=... → POST /auth/reset-password (token, newPassword); таблица password_reset_tokens, SMTP (опционально), FRONTEND_URL
 
 ### Админ-панель
 - [x] Управление каналами для мониторинга (добавление по @username или chat_id, включение/выключение)
@@ -83,7 +84,7 @@
 ### Настройки и профиль
 - [x] Страница «Настройки» (/settings): профиль (имя, email), смена пароля (текущий + новый пароль)
 - [x] Эндпоинт смены пароля PATCH /auth/me (currentPassword, newPassword)
-- [ ] Восстановление пароля: «Забыли пароль» → email с ссылкой/токеном → установка нового пароля (email-сервис, хранение токенов сброса)
+- [x] Восстановление пароля: «Забыли пароль» → email с ссылкой/токеном → установка нового пароля (email-сервис, хранение токенов сброса)
 
 ### Навигация и разделы
 - [x] В сайдбаре дашборда временно скрыты пункты «Группы», «Уведомления», «Оплата» (visible: false); видны «Панель», «Ключевые слова», «Настройки». При готовности фич — включить в sidebar-nav и mobile-sidebar.
@@ -106,6 +107,7 @@
 | 2025-02-19 | 6 | Деплой: Dockerfile.backend, Dockerfile.frontend, docker-compose.yml (postgres, backend, frontend), .dockerignore. CORS: разрешённые origins из env (CORS_ORIGINS). next.config: output standalone для фронта. README: раздел «Деплой (Docker Compose)». Навигация: в сайдбаре дашборда скрыты «Группы», «Уведомления», «Оплата» до реализации фич. ROADMAP обновлён. |
 | 2025-02-20 | 7 | Семантический парсинг: модель Keyword.use_semantic, API useSemantic при создании/списке ключевых слов; парсер — режимы точный/семантический, локальная модель (sentence-transformers), кэш эмбеддингов, при недоступности семантики fallback на подстроку; фронт — передача useSemantic, отображение режима у каждого ключа; .env.example и REQUIREMENTS — переменные SEMANTIC_*. |
 | 2025-02-20 | 8 | Семантика в отдельном контейнере: сервис semantic (FastAPI, /embed, /health), SEMANTIC_PROVIDER=http по умолчанию в compose, бэкенд — HTTP-клиент в semantic.py; образ semantic с PyTorch CPU-only (экономия места); Dockerfile.backend — копирование semantic.py; README и REQUIREMENTS — сервис semantic, POSTGRES_PASSWORD, устранение неполадок «password authentication failed». |
+| 2025-02-20 | 9 | Восстановление пароля: модель PasswordResetToken, POST /auth/forgot-password (email), POST /auth/reset-password (token, newPassword); отправка писем через SMTP (email_sender.py), при отсутствии SMTP ссылка логируется; страницы /auth/forgot-password и /auth/reset-password; ссылка «Забыли пароль?» на странице входа. REQUIREMENTS A11, ROADMAP и .env.example обновлены. |
 
 ---
 
