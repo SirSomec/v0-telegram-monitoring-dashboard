@@ -44,7 +44,8 @@ services:
       AUTO_START_SCANNER: ${AUTO_START_SCANNER:-0}
       MULTI_USER_SCANNER: ${MULTI_USER_SCANNER:-1}
       TG_USER_ID: ${TG_USER_ID:-1}
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+      # Пусто — бэкенд разрешает любой origin (https?://.*). Для прода при необходимости задайте в .env: CORS_ORIGINS=https://ваш-домен.com
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
       SEMANTIC_PROVIDER: ${SEMANTIC_PROVIDER:-http}
       SEMANTIC_SERVICE_URL: ${SEMANTIC_SERVICE_URL:-http://semantic:8001}
       SEMANTIC_SIMILARITY_THRESHOLD: ${SEMANTIC_SIMILARITY_THRESHOLD:-0.55}
