@@ -272,14 +272,17 @@ export function AccountsManager() {
                   <TableCell className="whitespace-normal">{u.email || "—"}</TableCell>
                   <TableCell>
                     <span className="text-sm">
-                      {PLAN_LABELS[u.planSlug as keyof typeof PLAN_LABELS] ?? u.planSlug}
-                      {u.plan !== u.planSlug && u.plan === "free" && (
+                      {PLAN_LABELS[(u.planSlug ?? u.plan ?? "free") as keyof typeof PLAN_LABELS] ?? (u.planSlug ?? u.plan ?? "free")}
+                      {(u.plan ?? "free") !== (u.planSlug ?? u.plan ?? "free") && (u.plan ?? "free") === "free" && (
                         <span className="ml-1 text-muted-foreground text-xs">(истёк)</span>
                       )}
                     </span>
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">
-                    {u.planExpiresAt ? new Date(u.planExpiresAt).toLocaleDateString("ru-RU") : "—"}
+                    {u.planExpiresAt ? (() => {
+                      const d = new Date(u.planExpiresAt)
+                      return isNaN(d.getTime()) ? "—" : d.toLocaleDateString("ru-RU")
+                    })() : "—"}
                   </TableCell>
                   <TableCell>
                     <Button

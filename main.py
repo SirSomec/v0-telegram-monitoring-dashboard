@@ -1486,16 +1486,7 @@ def create_user(body: UserCreate, _: User = Depends(get_current_admin), db: Sess
     db.add(u)
     db.commit()
     db.refresh(u)
-    created_at = u.created_at
-    if created_at.tzinfo is None:
-        created_at = created_at.replace(tzinfo=timezone.utc)
-    return UserOut(
-        id=u.id,
-        email=u.email,
-        name=u.name,
-        isAdmin=bool(u.is_admin),
-        createdAt=created_at.isoformat(),
-    )
+    return _user_to_out(u)
 
 
 @app.patch("/api/users/{user_id}", response_model=UserOut)
@@ -1528,16 +1519,7 @@ def update_user(user_id: int, body: UserUpdate, _: User = Depends(get_current_ad
     db.add(u)
     db.commit()
     db.refresh(u)
-    created_at = u.created_at
-    if created_at.tzinfo is None:
-        created_at = created_at.replace(tzinfo=timezone.utc)
-    return UserOut(
-        id=u.id,
-        email=u.email,
-        name=u.name,
-        isAdmin=bool(u.is_admin),
-        createdAt=created_at.isoformat(),
-    )
+    return _user_to_out(u)
 
 
 @app.patch("/api/users/{user_id}/password")
