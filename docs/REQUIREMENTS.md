@@ -83,7 +83,7 @@
 | SP7 | При недоступности сервиса семантики ключи с use_semantic=true временно считаются как точные (подстрока). | ✅ Реализовано |
 | SP8 | Кэш эмбеддингов ключевых слов; один вызов эмбеддинга на сообщение. | ✅ Реализовано |
 
-Переменные: `SEMANTIC_PROVIDER` (local / пусто или none), `SEMANTIC_MODEL_NAME`, `SEMANTIC_SIMILARITY_THRESHOLD`. См. раздел 6.
+Переменные: `SEMANTIC_PROVIDER` (http — отдельный контейнер, или local — модель в бэкенде; пусто/none — отключено), `SEMANTIC_SERVICE_URL` (при http), `SEMANTIC_MODEL_NAME`, `SEMANTIC_SIMILARITY_THRESHOLD`. См. раздел 6.
 
 ### 3.3. Админ-панель
 
@@ -241,8 +241,9 @@
 | `TG_CHATS` | Список чатов через запятую (режим одного пользователя); пусто — из таблицы chats. |
 | `TG_PROXY_HOST`, `TG_PROXY_PORT`, `TG_PROXY_USER`, `TG_PROXY_PASS` | SOCKS5-прокси. |
 | `CORS_ORIGINS` | Разрешённые origins через запятую (для прода). |
-| `SEMANTIC_PROVIDER` | `local` — локальная модель эмбеддингов (sentence-transformers); пусто или `none` — семантика отключена (ключи с use_semantic временно как точные). |
-| `SEMANTIC_MODEL_NAME` | Имя модели (по умолчанию `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`). |
+| `SEMANTIC_PROVIDER` | `http` — запросы к отдельному контейнеру semantic (рекомендуется в проде); `local` — модель в процессе бэкенда; пусто или `none` — семантика отключена (ключи с use_semantic временно как точные). |
+| `SEMANTIC_SERVICE_URL` | URL сервиса эмбеддингов при `SEMANTIC_PROVIDER=http` (в Docker Compose по умолчанию `http://semantic:8001`). |
+| `SEMANTIC_MODEL_NAME` | Имя модели (в контейнере semantic или при local; по умолчанию `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`). |
 | `SEMANTIC_SIMILARITY_THRESHOLD` | Порог косинусного сходства 0.0–1.0 (по умолчанию 0.7). |
 
 ### 6.4. Опциональные (фронт)
@@ -256,7 +257,7 @@
 ## 7. Инфраструктура и деплой
 
 - **Локальная разработка:** `uvicorn main:app --reload --host 0.0.0.0 --port 8000` (бэкенд), `pnpm dev` (фронт). Фронт: http://localhost:3000, API: http://localhost:8000.
-- **Деплой:** Docker Compose (сервисы postgres, backend, frontend). Команда: `docker compose up -d --build`. Данные БД — volume `postgres_data`.
+- **Деплой:** Docker Compose (сервисы postgres, semantic, backend, frontend). Сервис `semantic` — эмбеддинги для семантического поиска; бэкенд обращается к нему по `SEMANTIC_SERVICE_URL`. Команда: `docker compose up -d --build`. Данные БД — volume `postgres_data`.
 - **Таблицы БД:** создаются при первом запросе к API (init_db). Опционально пересоздание: `python recreate_tables.py`.
 - **Документация по установке на Ubuntu:** `docs/install-ubuntu.md`.
 - **Скрипты деплоя:** `scripts/deploy.sh`, `scripts/remote-deploy.sh`, `scripts/remote-deploy.ps1` — см. `scripts/README.md`.

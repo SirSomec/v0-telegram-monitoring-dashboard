@@ -1,11 +1,16 @@
 """
 Провайдер эмбеддингов для семантического сопоставления ключевых слов.
-Локальная модель (sentence-transformers). При недоступности возвращается None — парсер считает семантические ключи как точные.
+- SEMANTIC_PROVIDER=http + SEMANTIC_SERVICE_URL: запросы к отдельному контейнеру (рекомендуется в проде).
+- SEMANTIC_PROVIDER=local: локальная модель sentence-transformers в процессе бэкенда.
+При недоступности возвращается None — парсер считает семантические ключи как точные.
 """
 from __future__ import annotations
 
+import json
 import math
 import os
+import urllib.error
+import urllib.request
 
 _SENTENCE_TRANSFORMER = None
 _THRESHOLD = 0.7
@@ -25,8 +30,38 @@ def _get_threshold() -> float:
     return _THRESHOLD
 
 
+def _service_url() -> str | None:
+    url = (os.getenv("SEMANTIC_SERVICE_URL") or "").strip().rstrip("/")
+    return url or None
+
+
+def _use_http() -> bool:
+    provider = (os.getenv("SEMANTIC_PROVIDER") or "").strip().lower()
+    return provider == "http" or _service_url() is not None
+
+
+def _embed_via_http(texts: list[str]) -> list[list[float]] | None:
+    url = _service_url()
+    if not url or not texts:
+        return None
+    base = url.replace("/embed", "").replace("/health", "")
+    embed_url = f"{base}/embed"
+    req = urllib.request.Request(
+        embed_url,
+        data=json.dumps({"texts": texts}).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            return data.get("vectors")
+    except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError, KeyError):
+        return None
+
+
 def _load_model():
-    """Ленивая загрузка модели. При ошибке импорта или загрузки возвращает None."""
+    """Ленивая загрузка локальной модели. При ошибке возвращает None."""
     global _SENTENCE_TRANSFORMER
     if _SENTENCE_TRANSFORMER is not None:
         return _SENTENCE_TRANSFORMER
@@ -44,7 +79,18 @@ def _load_model():
 
 
 def is_semantic_available() -> bool:
-    """Проверка: доступен ли провайдер эмбеддингов."""
+    """Проверка: доступен ли провайдер эмбеддингов (локальная модель или HTTP-сервис)."""
+    if _use_http():
+        url = _service_url()
+        if not url:
+            return False
+        base = url.replace("/embed", "").replace("/health", "")
+        try:
+            req = urllib.request.Request(f"{base}/health", method="GET")
+            with urllib.request.urlopen(req, timeout=5):
+                return True
+        except (urllib.error.URLError, urllib.error.HTTPError):
+            return False
     return _load_model() is not None
 
 
@@ -52,8 +98,12 @@ def embed(texts: list[str]) -> list[list[float]] | None:
     """
     Возвращает эмбеддинги для списка текстов. При недоступности модели или ошибке — None.
     """
+    if not texts:
+        return None
+    if _use_http():
+        return _embed_via_http(texts)
     model = _load_model()
-    if model is None or not texts:
+    if model is None:
         return None
     try:
         vectors = model.encode(texts, convert_to_numpy=True)

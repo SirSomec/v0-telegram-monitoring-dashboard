@@ -117,6 +117,7 @@ docker compose up -d --build
 - Фронт: [http://localhost:3000](http://localhost:3000)
 - API: [http://localhost:8000](http://localhost:8000)
 - PostgreSQL: порт 5432 (внутри сети контейнеров — сервис `postgres`)
+- Сервис **semantic** (порт 8001 внутри сети): эмбеддинги для ИИ-семантического поиска; бэкенд по умолчанию использует его (`SEMANTIC_PROVIDER=http`, `SEMANTIC_SERVICE_URL=http://semantic:8001`). При первом запросе к эмбеддингам модель скачивается (~500 MB).
 
 Таблицы БД создаются при первом запросе к API (init_db). Парсер можно запустить из админки (вкладка «Парсер») или задать `AUTO_START_SCANNER=1` в `.env`.
 

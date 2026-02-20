@@ -18,6 +18,18 @@ services:
       timeout: 5s
       retries: 5
 
+  semantic:
+    build:
+      context: ./semantic_service
+      dockerfile: Dockerfile
+    environment:
+      SEMANTIC_MODEL_NAME: ${SEMANTIC_MODEL_NAME:-sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2}
+    env_file:
+      - .env
+    # Порт наружу не пробрасываем, доступ только из backend
+    expose:
+      - "8001"
+
   backend:
     build:
       context: .
@@ -33,6 +45,9 @@ services:
       MULTI_USER_SCANNER: ${MULTI_USER_SCANNER:-1}
       TG_USER_ID: ${TG_USER_ID:-1}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+      SEMANTIC_PROVIDER: ${SEMANTIC_PROVIDER:-http}
+      SEMANTIC_SERVICE_URL: ${SEMANTIC_SERVICE_URL:-http://semantic:8001}
+      SEMANTIC_SIMILARITY_THRESHOLD: ${SEMANTIC_SIMILARITY_THRESHOLD:-0.7}
     env_file:
       - .env
     ports:
@@ -40,6 +55,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      semantic:
+        condition: service_started
 
   frontend:
     build:
