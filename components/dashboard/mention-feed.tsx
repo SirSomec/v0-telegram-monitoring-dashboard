@@ -112,11 +112,9 @@ export function MentionFeed({ userId }: { userId?: number }) {
     return p.join("&")
   }, [unreadOnly, keywordFilter, searchQuery])
 
-  const fetchPage = useCallback(async (silent = false) => {
-    if (!silent) {
-      setLoading(true)
-      setError("")
-    }
+  const fetchPage = useCallback(async () => {
+    setLoading(true)
+    setError("")
     try {
       const countQuery = countParams()
       const [data, countRes] = await Promise.all([
@@ -125,19 +123,20 @@ export function MentionFeed({ userId }: { userId?: number }) {
           `${apiBaseUrl()}/api/mentions/count${countQuery ? `?${countQuery}` : ""}`
         ),
       ])
-      setMentions(data)
-      setTotalCount(countRes.total)
+      setMentions(Array.isArray(data) ? data : [])
+      setTotalCount(countRes?.total ?? 0)
     } catch (e) {
-      if (!silent) setError(e instanceof Error ? e.message : "Ошибка загрузки")
+      setError(e instanceof Error ? e.message : "Ошибка загрузки")
+      setMentions([])
     } finally {
-      if (!silent) setLoading(false)
+      setLoading(false)
     }
   }, [buildParams, countParams])
 
-  fetchPageRef.current = () => fetchPage(false)
+  fetchPageRef.current = fetchPage
 
   useEffect(() => {
-    fetchPage(false)
+    fetchPage()
   }, [fetchPage])
 
   useEffect(() => {
@@ -153,44 +152,10 @@ export function MentionFeed({ userId }: { userId?: number }) {
           fetchPageRef.current()
         }
         if (payload.type === "mention" && payload.data) {
-          const data = payload.data as {
-            userId?: number
-            id?: string
-            groupName?: string
-            groupIcon?: string
-            userName?: string
-            userInitials?: string
-            userLink?: string | null
-            message?: string
-            keyword?: string
-            timestamp?: string
-            isLead?: boolean
-            isRead?: boolean
-            createdAt?: string
-            messageLink?: string | null
-            topicMatchPercent?: number | null
-          }
+          const data = payload.data as { userId?: number }
           if (data.userId === undefined || data.userId === userId) {
-            // Мгновенно показываем карточку из WebSocket, затем подтягиваем актуальную ленту с сервера
-            const optimistic: MentionGroup = {
-              id: data.id ?? `ws-${Date.now()}`,
-              groupName: data.groupName ?? "—",
-              groupIcon: data.groupIcon ?? "??",
-              userName: data.userName ?? "—",
-              userInitials: data.userInitials ?? "??",
-              userLink: data.userLink ?? null,
-              message: data.message ?? "",
-              keywords: data.keyword ? [data.keyword] : [],
-              timestamp: data.timestamp ?? "только что",
-              isLead: data.isLead ?? false,
-              isRead: data.isRead ?? false,
-              messageLink: data.messageLink ?? null,
-              createdAt: data.createdAt,
-              topicMatchPercent: data.topicMatchPercent ?? null,
-            }
-            setMentions((prev) => [optimistic, ...prev])
             setTotalCount((c) => c + 1)
-            fetchPage(true) // тихий refetch — подставит сгруппированные данные и уберёт дубли
+            fetchPageRef.current()
           }
         }
       } catch {

@@ -102,12 +102,44 @@ pnpm dev
 - `TG_API_ID`, `TG_API_HASH` — данные с my.telegram.org
 - `TG_SESSION_STRING` — сессия Telethon (рекомендуется для сервера без интерактивного входа)
 
+### Доступ по домену (главная и весь сайт)
+
+**Если по домену не грузится даже главная страница** — нужен Nginx перед приложением.
+
+1. **Установите Nginx** на сервере (если ещё нет):
+   ```bash
+   sudo apt install -y nginx
+   ```
+
+2. **Скопируйте конфиг и подставьте свой домен:**
+   ```bash
+   sudo cp deploy/nginx-domain.conf /etc/nginx/sites-available/telegram-monitor
+   sudo sed -i 's/YOUR_DOMAIN/ваш-домен.com/' /etc/nginx/sites-available/telegram-monitor
+   ```
+   (или откройте файл и замените `YOUR_DOMAIN` вручную)
+
+3. **Включите сайт и перезагрузите Nginx:**
+   ```bash
+   sudo ln -sf /etc/nginx/sites-available/telegram-monitor /etc/nginx/sites-enabled/
+   sudo rm -f /etc/nginx/sites-enabled/default
+   sudo nginx -t && sudo systemctl reload nginx
+   ```
+
+4. **В `.env` не задавайте `NEXT_PUBLIC_API_URL`** (или оставьте пустым) и **пересоберите фронт**, чтобы запросы шли на тот же домен:
+   ```bash
+   docker compose up -d --build frontend
+   ```
+
+5. **HTTPS** (рекомендуется): `sudo apt install certbot python3-certbot-nginx && sudo certbot --nginx -d ваш-домен.com`
+
+В этом конфиге весь трафик идёт на порт 3000 (фронт), Next.js сам проксирует `/api`, `/auth`, `/ws` на бэкенд. CORS можно не настраивать.
+
 ### CORS и URL фронта в проде
 
-Если фронт открывается по своему домену (не localhost), задайте в `.env`:
+Если вы **не** используете Nginx и открываете фронт по домену напрямую (например домен:3000):
 
-- `CORS_ORIGINS=https://ваш-домен.com` (или несколько через запятую)
-- `NEXT_PUBLIC_API_URL=https://api.ваш-домен.com` — если API на поддомене; если Nginx проксирует `/api` и `/ws` на бэкенд с того же домена — оставьте пустым
+- `CORS_ORIGINS` — пусто или добавьте ваш домен
+- `NEXT_PUBLIC_API_URL` — если API на том же домене, оставьте пустым; если на поддомене — укажите URL API
 
 ### Запуск
 
