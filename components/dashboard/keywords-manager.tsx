@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label"
 import { Plus, X, Sparkles, Target, Loader2 } from "lucide-react"
 import { apiBaseUrl, apiJson } from "@/lib/api"
 
-type KeywordItem = { id: number; text: string }
+type KeywordItem = { id: number; text: string; useSemantic: boolean }
 
 export function KeywordsManager({ userId = 1 }: { userId?: number }) {
   const [keywords, setKeywords] = useState<KeywordItem[]>([])
@@ -45,7 +45,7 @@ export function KeywordsManager({ userId = 1 }: { userId?: number }) {
     try {
       await apiJson<KeywordItem>(`${apiBaseUrl()}/api/keywords`, {
         method: "POST",
-        body: JSON.stringify({ text: trimmed }),
+        body: JSON.stringify({ text: trimmed, useSemantic: semanticMode }),
       })
       setNewKeyword("")
       await fetchKeywords()
@@ -134,6 +134,11 @@ export function KeywordsManager({ userId = 1 }: { userId?: number }) {
                 variant="secondary"
                 className="gap-1.5 bg-secondary text-secondary-foreground border border-border px-3 py-1.5 text-sm"
               >
+                {item.useSemantic ? (
+                  <Sparkles className="size-3 shrink-0" aria-label="Семантика" />
+                ) : (
+                  <Target className="size-3 shrink-0" aria-label="Точное" />
+                )}
                 {item.text}
                 <button
                   onClick={() => removeKeyword(item)}

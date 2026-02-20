@@ -39,6 +39,7 @@
 
 ### Сканер Telegram
 - [x] Мультипользовательский сканер: по умолчанию чаты и ключевые слова из БД по всем пользователям, упоминания с user_id, в WS payload — userId
+- [x] Семантический парсинг: ключевые слова с use_semantic, локальная модель эмбеддингов (sentence-transformers), кэш эмбеддингов ключей; при недоступности семантики — fallback на точный поиск (подстрока)
 
 ### Инфраструктура и документация
 - [x] README: требования, настройка .env, запуск бэкенда и фронта, основные сценарии
@@ -102,6 +103,7 @@
 | 2025-02-19 | 4 | Экспорт: GET /api/mentions/export (CSV, фильтры keyword, leadsOnly, dateFrom, dateTo), кнопка «Экспорт CSV» в ленте, downloadMentionsCsv в lib/api. Смена пароля: PATCH /auth/me (currentPassword, newPassword), страница /settings с профилем и формой смены пароля, переход по «Настройки» с дашборда. ROADMAP обновлён. |
 | 2025-02-19 | 5 | Мультипользовательский сканер: TelegramScanner(user_id=None) — чаты и ключевые слова из БД по всем пользователям, упоминания с нужным user_id, в payload добавлен userId. В main.py по умолчанию MULTI_USER_SCANNER=1; при 0 и TG_USER_ID — режим одного пользователя. Фронт: в ленте по WS показывать только упоминания с data.userId === текущий user. ROADMAP и README обновлены. |
 | 2025-02-19 | 6 | Деплой: Dockerfile.backend, Dockerfile.frontend, docker-compose.yml (postgres, backend, frontend), .dockerignore. CORS: разрешённые origins из env (CORS_ORIGINS). next.config: output standalone для фронта. README: раздел «Деплой (Docker Compose)». Навигация: в сайдбаре дашборда скрыты «Группы», «Уведомления», «Оплата» до реализации фич. ROADMAP обновлён. |
+| 2025-02-20 | 7 | Семантический парсинг: модель Keyword.use_semantic, API useSemantic при создании/списке ключевых слов; парсер — режимы точный/семантический, локальная модель (sentence-transformers), кэш эмбеддингов, при недоступности семантики fallback на подстроку; фронт — передача useSemantic, отображение режима у каждого ключа; .env.example и REQUIREMENTS — переменные SEMANTIC_*. |
 
 ---
 

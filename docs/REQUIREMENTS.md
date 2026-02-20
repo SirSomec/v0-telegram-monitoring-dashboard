@@ -70,6 +70,21 @@
 | D13 | Экспорт упоминаний в CSV: GET `/api/mentions/export` с фильтрами (keyword, leadsOnly, dateFrom, dateTo), кнопка «Экспорт CSV» в ленте. | ✅ Реализовано |
 | D14 | Навигация дашборда: Панель, Ключевые слова, Настройки (пункты «Группы», «Уведомления», «Оплата» — скрыты до реализации). | ✅ Реализовано |
 
+### 3.2.1. Семантический парсинг
+
+| ID | Требование | Статус |
+|----|------------|--------|
+| SP1 | Для каждого ключевого слова можно выбрать режим: точное (подстрока) или семантическое (по смыслу). | ✅ Реализовано |
+| SP2 | Упоминания от семантического и точного поиска в ленте/API не различаются по типу. | ✅ Реализовано |
+| SP3 | При семантическом режиме совпадение по косинусному сходству эмбеддингов (порог в конфиге). | ✅ Реализовано |
+| SP4 | Режим задаётся при создании ключевого слова (useSemantic в API). По умолчанию — точный. | ✅ Реализовано |
+| SP5 | Переключатель «Точное»/«ИИ семантика» в дашборде задаёт режим по умолчанию для новых ключевых слов; у каждого ключа отображается сохранённый режим. | ✅ Реализовано |
+| SP6 | Семантический поиск может быть ограничен по тарифу (проверка лимитов — при реализации тарифов). | ❌ Не реализовано |
+| SP7 | При недоступности сервиса семантики ключи с use_semantic=true временно считаются как точные (подстрока). | ✅ Реализовано |
+| SP8 | Кэш эмбеддингов ключевых слов; один вызов эмбеддинга на сообщение. | ✅ Реализовано |
+
+Переменные: `SEMANTIC_PROVIDER` (local / пусто или none), `SEMANTIC_MODEL_NAME`, `SEMANTIC_SIMILARITY_THRESHOLD`. См. раздел 6.
+
 ### 3.3. Админ-панель
 
 | ID | Требование | Статус |
@@ -189,7 +204,7 @@
 ## 5. Модель данных (основные сущности)
 
 - **users** — id, email, name, password_hash, is_admin, created_at.
-- **keywords** — id, user_id, text, enabled, created_at.
+- **keywords** — id, user_id, text, use_semantic, enabled, created_at.
 - **chats** — id, user_id, tg_chat_id, username, title, description, enabled, created_at; связь many-to-many с chat_groups через chat_group_links.
 - **chat_groups** — id, user_id, name, description, created_at.
 - **mentions** — id, user_id, keyword_text, message_text, chat_id, chat_name, chat_username, message_id, sender_id, sender_name, is_read, is_lead, created_at.
@@ -226,6 +241,9 @@
 | `TG_CHATS` | Список чатов через запятую (режим одного пользователя); пусто — из таблицы chats. |
 | `TG_PROXY_HOST`, `TG_PROXY_PORT`, `TG_PROXY_USER`, `TG_PROXY_PASS` | SOCKS5-прокси. |
 | `CORS_ORIGINS` | Разрешённые origins через запятую (для прода). |
+| `SEMANTIC_PROVIDER` | `local` — локальная модель эмбеддингов (sentence-transformers); пусто или `none` — семантика отключена (ключи с use_semantic временно как точные). |
+| `SEMANTIC_MODEL_NAME` | Имя модели (по умолчанию `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`). |
+| `SEMANTIC_SIMILARITY_THRESHOLD` | Порог косинусного сходства 0.0–1.0 (по умолчанию 0.7). |
 
 ### 6.4. Опциональные (фронт)
 

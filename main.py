@@ -63,12 +63,14 @@ def _humanize_ru(dt: datetime) -> str:
 
 class KeywordCreate(BaseModel):
     text: str = Field(..., min_length=1, max_length=400)
+    useSemantic: bool = False
     userId: int | None = None
 
 
 class KeywordOut(BaseModel):
     id: int
     text: str
+    useSemantic: bool
     userId: int
     createdAt: str
 
@@ -536,6 +538,7 @@ def list_keywords(user: User = Depends(get_current_user), db: Session = Depends(
             KeywordOut(
                 id=k.id,
                 text=k.text,
+                useSemantic=getattr(k, "use_semantic", False),
                 userId=k.user_id,
                 createdAt=created_at.isoformat(),
             )
@@ -558,16 +561,29 @@ def create_keyword(body: KeywordCreate, user: User = Depends(get_current_user), 
         created_at = existing.created_at
         if created_at.tzinfo is None:
             created_at = created_at.replace(tzinfo=timezone.utc)
-        return KeywordOut(id=existing.id, text=existing.text, userId=existing.user_id, createdAt=created_at.isoformat())
+        return KeywordOut(
+            id=existing.id,
+            text=existing.text,
+            useSemantic=getattr(existing, "use_semantic", False),
+            userId=existing.user_id,
+            createdAt=created_at.isoformat(),
+        )
 
-    k = Keyword(user_id=user_id, text=text, enabled=True)
+    use_semantic = getattr(body, "useSemantic", False)
+    k = Keyword(user_id=user_id, text=text, use_semantic=use_semantic, enabled=True)
     db.add(k)
     db.commit()
     db.refresh(k)
     created_at = k.created_at
     if created_at.tzinfo is None:
         created_at = created_at.replace(tzinfo=timezone.utc)
-    return KeywordOut(id=k.id, text=k.text, userId=k.user_id, createdAt=created_at.isoformat())
+    return KeywordOut(
+        id=k.id,
+        text=k.text,
+        useSemantic=k.use_semantic,
+        userId=k.user_id,
+        createdAt=created_at.isoformat(),
+    )
 
 
 @app.delete("/api/keywords/{keyword_id}")

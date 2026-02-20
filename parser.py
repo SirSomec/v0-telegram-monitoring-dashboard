@@ -24,6 +24,14 @@ from parser_config import (
     get_parser_setting,
 )
 
+try:
+    from semantic import embed, cosine_similarity, similarity_threshold, KeywordEmbeddingCache
+except ImportError:
+    embed = None
+    cosine_similarity = None
+    similarity_threshold = None
+    KeywordEmbeddingCache = None
+
 load_dotenv()
 
 
@@ -62,6 +70,13 @@ def _humanize_ru(dt: datetime) -> str:
 
 def _truthy(v: str | None) -> bool:
     return (v or "").strip() in {"1", "true", "True", "yes", "YES", "on", "ON"}
+
+
+@dataclass(frozen=True)
+class KeywordItem:
+    """Ключевое слово с флагом режима поиска."""
+    text: str
+    use_semantic: bool
 
 
 @dataclass(frozen=True)
@@ -128,6 +143,9 @@ class TelegramScanner:
         self._client: TelegramClient | None = None
         self._chat_ids_to_users: dict[int, set[int]] = {}
         self._chat_usernames_to_users: dict[str, set[int]] = {}
+        self._embedding_cache: KeywordEmbeddingCache | None = (
+            KeywordEmbeddingCache() if KeywordEmbeddingCache else None
+        )
 
     @property
     def is_running(self) -> bool:
@@ -428,8 +446,8 @@ class TelegramScanner:
             msg_id = int(msg.id) if getattr(msg, "id", None) is not None else None
             cid = int(chat_id) if chat_id is not None else None
             for uid in user_ids:
-                keywords = keywords_by_user.get(uid, [])
-                matches = [kw for kw in keywords if kw.casefold() in text_cf]
+                items = keywords_by_user.get(uid, [])
+                matches = self._match_keywords(items, text, text_cf)
                 for kw in matches:
                     with db_session() as db:
                         mention = Mention(
@@ -475,10 +493,10 @@ class TelegramScanner:
                         self.on_mention(payload)
             return
 
-        keywords = self._load_keywords()
-        if not keywords:
+        items = self._load_keywords()
+        if not items:
             return
-        matches = [kw for kw in keywords if kw.casefold() in text_cf]
+        matches = self._match_keywords(items, text, text_cf)
         if not matches:
             return
 
@@ -529,7 +547,7 @@ class TelegramScanner:
             if self.on_mention:
                 self.on_mention(payload)
 
-    def _load_keywords(self) -> list[str]:
+    def _load_keywords(self) -> list[KeywordItem]:
         with db_session() as db:
             rows = (
                 db.query(Keyword)
@@ -537,9 +555,15 @@ class TelegramScanner:
                 .order_by(Keyword.id.asc())
                 .all()
             )
-            return [r.text for r in rows if (r.text or "").strip()]
+            out: list[KeywordItem] = []
+            for r in rows:
+                t = (r.text or "").strip()
+                if t:
+                    use_sem = getattr(r, "use_semantic", False)
+                    out.append(KeywordItem(text=t, use_semantic=use_sem))
+            return out
 
-    def _load_keywords_multi(self) -> dict[int, list[str]]:
+    def _load_keywords_multi(self) -> dict[int, list[KeywordItem]]:
         with db_session() as db:
             rows = (
                 db.query(Keyword)
@@ -547,10 +571,47 @@ class TelegramScanner:
                 .order_by(Keyword.user_id, Keyword.id.asc())
                 .all()
             )
-            out: dict[int, list[str]] = {}
+            out: dict[int, list[KeywordItem]] = {}
             for r in rows:
                 t = (r.text or "").strip()
                 if t:
-                    out.setdefault(r.user_id, []).append(t)
+                    use_sem = getattr(r, "use_semantic", False)
+                    out.setdefault(r.user_id, []).append(KeywordItem(text=t, use_semantic=use_sem))
             return out
+
+    def _match_keywords(self, items: list[KeywordItem], text: str, text_cf: str) -> list[str]:
+        """Возвращает список текстов ключевых слов, совпавших с сообщением (точное и/или семантическое)."""
+        exact_items = [kw for kw in items if not kw.use_semantic]
+        semantic_items = [kw for kw in items if kw.use_semantic]
+        matches: list[str] = [kw.text for kw in exact_items if kw.text.casefold() in text_cf]
+        if not semantic_items:
+            return matches
+        cache = self._embedding_cache
+        if cache is None or embed is None or cosine_similarity is None or similarity_threshold is None:
+            for kw in semantic_items:
+                if kw.text.casefold() in text_cf:
+                    matches.append(kw.text)
+            return matches
+        cache.update([kw.text for kw in semantic_items])
+        if not cache.is_available():
+            for kw in semantic_items:
+                if kw.text.casefold() in text_cf:
+                    matches.append(kw.text)
+            return matches
+        msg_vectors = embed([text])
+        if not msg_vectors:
+            for kw in semantic_items:
+                if kw.text.casefold() in text_cf:
+                    matches.append(kw.text)
+            return matches
+        msg_vec = msg_vectors[0]
+        thresh = similarity_threshold()
+        for kw in semantic_items:
+            kw_vec = cache.get(kw.text)
+            if kw_vec is not None and cosine_similarity(msg_vec, kw_vec) >= thresh:
+                matches.append(kw.text)
+            elif kw_vec is None:
+                if kw.text.casefold() in text_cf:
+                    matches.append(kw.text)
+        return matches
 

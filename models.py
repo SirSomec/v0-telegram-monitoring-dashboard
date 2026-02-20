@@ -61,6 +61,7 @@ class Keyword(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
 
     text: Mapped[str] = mapped_column(String(400), nullable=False, index=True)
+    use_semantic: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
