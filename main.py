@@ -367,6 +367,11 @@ class ParserSettingsOut(BaseModel):
     MAX_BASE_URL: str = ""
     MAX_POLL_INTERVAL_SEC: str = ""
     AUTO_START_MAX_SCANNER: str = ""
+    # Семантический анализ
+    SEMANTIC_PROVIDER: str = ""
+    SEMANTIC_SERVICE_URL: str = ""
+    SEMANTIC_MODEL_NAME: str = ""
+    SEMANTIC_SIMILARITY_THRESHOLD: str = ""
 
 
 class ParserSettingsUpdate(BaseModel):
@@ -389,6 +394,11 @@ class ParserSettingsUpdate(BaseModel):
     MAX_BASE_URL: str | None = None
     MAX_POLL_INTERVAL_SEC: int | None = None
     AUTO_START_MAX_SCANNER: bool | None = None
+    # Семантический анализ
+    SEMANTIC_PROVIDER: str | None = None
+    SEMANTIC_SERVICE_URL: str | None = None
+    SEMANTIC_MODEL_NAME: str | None = None
+    SEMANTIC_SIMILARITY_THRESHOLD: str | None = None
 
 
 class ConnectionManager:
@@ -1724,6 +1734,10 @@ def _parser_settings_to_out() -> ParserSettingsOut:
         MAX_BASE_URL=raw.get("MAX_BASE_URL", ""),
         MAX_POLL_INTERVAL_SEC=raw.get("MAX_POLL_INTERVAL_SEC", ""),
         AUTO_START_MAX_SCANNER=raw.get("AUTO_START_MAX_SCANNER", ""),
+        SEMANTIC_PROVIDER=raw.get("SEMANTIC_PROVIDER", ""),
+        SEMANTIC_SERVICE_URL=raw.get("SEMANTIC_SERVICE_URL", ""),
+        SEMANTIC_MODEL_NAME=raw.get("SEMANTIC_MODEL_NAME", ""),
+        SEMANTIC_SIMILARITY_THRESHOLD=raw.get("SEMANTIC_SIMILARITY_THRESHOLD", ""),
     )
 
 

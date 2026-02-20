@@ -17,7 +17,7 @@ def _get_model():
     global _MODEL
     if _MODEL is not None:
         return _MODEL
-    model_name = os.getenv("SEMANTIC_MODEL_NAME", "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
+    model_name = os.getenv("SEMANTIC_MODEL_NAME", "sentence-transformers/paraphrase-multilingual-mpnet-base-v2")
     from sentence_transformers import SentenceTransformer
     _MODEL = SentenceTransformer(model_name)
     return _MODEL

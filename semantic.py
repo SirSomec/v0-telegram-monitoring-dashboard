@@ -1,7 +1,8 @@
 """
-Провайдер эмбеддингов для семантического сопоставления ключевых слов.
+Провайдер эмбеддингов для семантического сопоставления ключевых слов (общая тема сообщения, мультиязычность).
 - SEMANTIC_PROVIDER=http + SEMANTIC_SERVICE_URL: запросы к отдельному контейнеру (рекомендуется в проде).
 - SEMANTIC_PROVIDER=local: локальная модель sentence-transformers в процессе бэкенда.
+Настройки берутся из parser_settings (админка) или из env.
 При недоступности возвращается None — парсер считает семантические ключи как точные.
 """
 from __future__ import annotations
@@ -13,30 +14,61 @@ import urllib.error
 import urllib.request
 
 _SENTENCE_TRANSFORMER = None
-_THRESHOLD = 0.7
+_THRESHOLD = 0.55  # порог по умолчанию для лучшего охвата темы
+
+# Модель по умолчанию: понимание общей темы, EN+RU и др. (сильнее MiniLM)
+_DEFAULT_MODEL = "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
+
+
+def _config_str(key: str, env_fallback: str = "") -> str:
+    """Значение настройки: из БД (parser_settings), иначе из env, иначе env_fallback."""
+    try:
+        from parser_config import get_parser_setting_str
+        v = get_parser_setting_str(key, "")
+        if (v or "").strip():
+            return v.strip()
+    except ImportError:
+        pass
+    return (os.getenv(key) or env_fallback).strip()
+
+
+def _config_float(key: str, default: float) -> float:
+    """Число с плавающей точкой: из БД или env. Для SEMANTIC_SIMILARITY_THRESHOLD допустим только 0–1."""
+    try:
+        from parser_config import get_parser_setting_float
+        v = get_parser_setting_float(key, default)
+        if key == "SEMANTIC_SIMILARITY_THRESHOLD" and (v < 0 or v > 1):
+            return default
+        return v
+    except ImportError:
+        pass
+    raw = os.getenv(key, "").strip()
+    if not raw:
+        return default
+    try:
+        t = float(raw)
+        if key == "SEMANTIC_SIMILARITY_THRESHOLD":
+            return t if 0 <= t <= 1 else default
+        return t
+    except ValueError:
+        pass
+    return default
 
 
 def _get_threshold() -> float:
     global _THRESHOLD
-    v = os.getenv("SEMANTIC_SIMILARITY_THRESHOLD", "").strip()
-    if not v:
-        return _THRESHOLD
-    try:
-        t = float(v)
-        if 0 <= t <= 1:
-            _THRESHOLD = t
-    except ValueError:
-        pass
+    t = _config_float("SEMANTIC_SIMILARITY_THRESHOLD", 0.55)
+    _THRESHOLD = t
     return _THRESHOLD
 
 
 def _service_url() -> str | None:
-    url = (os.getenv("SEMANTIC_SERVICE_URL") or "").strip().rstrip("/")
+    url = _config_str("SEMANTIC_SERVICE_URL").rstrip("/")
     return url or None
 
 
 def _use_http() -> bool:
-    provider = (os.getenv("SEMANTIC_PROVIDER") or "").strip().lower()
+    provider = _config_str("SEMANTIC_PROVIDER").lower()
     return provider == "http" or _service_url() is not None
 
 
@@ -65,13 +97,13 @@ def _load_model():
     global _SENTENCE_TRANSFORMER
     if _SENTENCE_TRANSFORMER is not None:
         return _SENTENCE_TRANSFORMER
-    provider = (os.getenv("SEMANTIC_PROVIDER") or "").strip().lower()
+    provider = _config_str("SEMANTIC_PROVIDER").lower()
     if provider != "local":
         return None
     try:
         from sentence_transformers import SentenceTransformer
 
-        model_name = os.getenv("SEMANTIC_MODEL_NAME", "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
+        model_name = _config_str("SEMANTIC_MODEL_NAME", _DEFAULT_MODEL) or _DEFAULT_MODEL
         _SENTENCE_TRANSFORMER = SentenceTransformer(model_name)
         return _SENTENCE_TRANSFORMER
     except Exception:

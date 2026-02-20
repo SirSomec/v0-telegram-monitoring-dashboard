@@ -45,6 +45,17 @@ def get_parser_setting_int(key: str, default: int = 0) -> int:
         return default
 
 
+def get_parser_setting_float(key: str, default: float = 0.0) -> float:
+    """Числовая настройка (float)."""
+    v = get_parser_setting(key)
+    if v is None or not v.strip():
+        return default
+    try:
+        return float(v.strip())
+    except ValueError:
+        return default
+
+
 def set_parser_setting(key: str, value: str | None) -> None:
     """Записать настройку в БД. value=None или пустая строка — удалить (будет использоваться env)."""
     with db_session() as db:
@@ -81,6 +92,11 @@ def get_all_parser_settings() -> dict[str, str]:
         "MAX_BASE_URL",
         "MAX_POLL_INTERVAL_SEC",
         "AUTO_START_MAX_SCANNER",
+        # Семантический анализ (ИИ)
+        "SEMANTIC_PROVIDER",
+        "SEMANTIC_SERVICE_URL",
+        "SEMANTIC_MODEL_NAME",
+        "SEMANTIC_SIMILARITY_THRESHOLD",
     ]
     with db_session() as db:
         out: dict[str, str] = {}

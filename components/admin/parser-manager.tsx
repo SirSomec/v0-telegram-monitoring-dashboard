@@ -54,6 +54,15 @@ const PARSER_HINTS: Record<string, string> = {
     "Интервал опроса чатов MAX в секундах (15–600). Чем меньше — чаще проверка новых сообщений; учтите лимит API (около 30 запросов/сек). Рекомендуется 30–60.",
   AUTO_START_MAX_SCANNER:
     "При запуске API автоматически запускать парсер MAX (Long Polling). Иначе запуск только вручную кнопкой «Запустить» в блоке «Парсер MAX».",
+  // Семантический анализ
+  SEMANTIC_PROVIDER:
+    "http — запросы к отдельному контейнеру semantic (рекомендуется). local — модель в процессе бэкенда. Пусто — семантика отключена.",
+  SEMANTIC_SERVICE_URL:
+    "URL сервиса эмбеддингов при провайдере http. В Docker: http://semantic:8001. Порог и модель задаются здесь; смена модели в контейнере требует перезапуска сервиса semantic с нужной переменной окружения.",
+  SEMANTIC_MODEL_NAME:
+    "Имя модели sentence-transformers. По умолчанию paraphrase-multilingual-mpnet-base-v2 (тема сообщения, EN+RU). Для смены модели в контейнере перезапустите сервис semantic с этим значением в env.",
+  SEMANTIC_SIMILARITY_THRESHOLD:
+    "Порог косинусного сходства 0.0–1.0. Ниже — больше срабатываний (например 0.5–0.55). Выше — строже совпадение (0.65–0.75).",
 }
 
 function SettingRow({
@@ -348,6 +357,10 @@ export function ParserManager() {
         MAX_BASE_URL: (form.MAX_BASE_URL ?? settings.MAX_BASE_URL) ?? "",
         MAX_POLL_INTERVAL_SEC: form.MAX_POLL_INTERVAL_SEC ?? (settings.MAX_POLL_INTERVAL_SEC ? parseInt(settings.MAX_POLL_INTERVAL_SEC, 10) : undefined),
         AUTO_START_MAX_SCANNER: form.AUTO_START_MAX_SCANNER,
+        SEMANTIC_PROVIDER: (form.SEMANTIC_PROVIDER ?? settings.SEMANTIC_PROVIDER) ?? "",
+        SEMANTIC_SERVICE_URL: (form.SEMANTIC_SERVICE_URL ?? settings.SEMANTIC_SERVICE_URL) ?? "",
+        SEMANTIC_MODEL_NAME: (form.SEMANTIC_MODEL_NAME ?? settings.SEMANTIC_MODEL_NAME) ?? "",
+        SEMANTIC_SIMILARITY_THRESHOLD: (form.SEMANTIC_SIMILARITY_THRESHOLD ?? settings.SEMANTIC_SIMILARITY_THRESHOLD) ?? "",
       }
       const data = await apiJson<ParserSettings>("/api/admin/parser/settings", {
         method: "PATCH",
@@ -767,6 +780,65 @@ export function ParserManager() {
                         </TooltipContent>
                       </Tooltip>
                     </TooltipProvider>
+                  </div>
+                </div>
+              </div>
+
+              <div className="border-t pt-4">
+                <h4 className="mb-3 text-sm font-medium text-muted-foreground">Семантический анализ (ИИ)</h4>
+                <p className="mb-3 text-muted-foreground text-xs">
+                  Понимание общей темы сообщения и ключевых слов (в т.ч. на английском). Порог и URL применяются сразу; смена модели в контейнере требует перезапуска сервиса semantic.
+                </p>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <SettingRow
+                    id="SEMANTIC_PROVIDER"
+                    label="Провайдер"
+                    value={form.SEMANTIC_PROVIDER ?? settings.SEMANTIC_PROVIDER ?? ""}
+                    onChange={(v) => updateForm("SEMANTIC_PROVIDER", v)}
+                    placeholder="http"
+                    hint={PARSER_HINTS.SEMANTIC_PROVIDER}
+                  />
+                  <SettingRow
+                    id="SEMANTIC_SERVICE_URL"
+                    label="URL сервиса эмбеддингов"
+                    value={form.SEMANTIC_SERVICE_URL ?? settings.SEMANTIC_SERVICE_URL ?? ""}
+                    onChange={(v) => updateForm("SEMANTIC_SERVICE_URL", v)}
+                    placeholder="http://semantic:8001"
+                    hint={PARSER_HINTS.SEMANTIC_SERVICE_URL}
+                  />
+                  <SettingRow
+                    id="SEMANTIC_MODEL_NAME"
+                    label="Модель"
+                    value={form.SEMANTIC_MODEL_NAME ?? settings.SEMANTIC_MODEL_NAME ?? ""}
+                    onChange={(v) => updateForm("SEMANTIC_MODEL_NAME", v)}
+                    placeholder="sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
+                    hint={PARSER_HINTS.SEMANTIC_MODEL_NAME}
+                  />
+                  <div className="grid gap-2">
+                    <div className="flex items-center gap-2">
+                      <Label htmlFor="SEMANTIC_SIMILARITY_THRESHOLD">Порог сходства (0.0–1.0)</Label>
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button type="button" className="inline-flex text-muted-foreground hover:text-foreground" aria-label="Подсказка">
+                              <HelpCircle className="size-4" />
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent side="right" className="max-w-xs">
+                            {PARSER_HINTS.SEMANTIC_SIMILARITY_THRESHOLD}
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    </div>
+                    <Input
+                      id="SEMANTIC_SIMILARITY_THRESHOLD"
+                      type="text"
+                      inputMode="decimal"
+                      value={form.SEMANTIC_SIMILARITY_THRESHOLD ?? settings.SEMANTIC_SIMILARITY_THRESHOLD ?? ""}
+                      onChange={(e) => updateForm("SEMANTIC_SIMILARITY_THRESHOLD", e.target.value)}
+                      placeholder="0.55"
+                      className="font-mono text-sm w-24"
+                    />
                   </div>
                 </div>
               </div>

@@ -55,6 +55,10 @@ export type ParserSettings = {
   MAX_BASE_URL: string
   MAX_POLL_INTERVAL_SEC: string
   AUTO_START_MAX_SCANNER: string
+  SEMANTIC_PROVIDER: string
+  SEMANTIC_SERVICE_URL: string
+  SEMANTIC_MODEL_NAME: string
+  SEMANTIC_SIMILARITY_THRESHOLD: string
 }
 
 export type ParserSettingsUpdate = Partial<{
@@ -75,5 +79,9 @@ export type ParserSettingsUpdate = Partial<{
   MAX_BASE_URL: string
   MAX_POLL_INTERVAL_SEC: number
   AUTO_START_MAX_SCANNER: boolean
+  SEMANTIC_PROVIDER: string
+  SEMANTIC_SERVICE_URL: string
+  SEMANTIC_MODEL_NAME: string
+  SEMANTIC_SIMILARITY_THRESHOLD: string
 }>
 

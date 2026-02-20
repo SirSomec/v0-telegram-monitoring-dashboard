@@ -14,7 +14,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY main.py .
 
-ENV SEMANTIC_MODEL_NAME=sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+# Модель: общая тема сообщения, EN+RU и др. (paraphrase-multilingual-mpnet-base-v2)
+ENV SEMANTIC_MODEL_NAME=sentence-transformers/paraphrase-multilingual-mpnet-base-v2
 EXPOSE 8001
 
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001"]
