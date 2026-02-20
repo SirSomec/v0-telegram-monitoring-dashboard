@@ -6,6 +6,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
+# Сначала ставим PyTorch только для CPU (~200 MB вместо ~2 GB с CUDA) — иначе не хватает места на диске
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
