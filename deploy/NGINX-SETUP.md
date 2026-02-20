@@ -16,15 +16,19 @@ sudo apt update
 sudo apt install -y nginx certbot python3-certbot-nginx
 ```
 
-### 2. Скопировать конфиг из репозитория
+### 2. Создать конфиг Nginx на сервере
 
-Из корня проекта на сервере (например `/opt/telegram-monitor/v0-telegram-monitoring-dashboard`):
-
+**Вариант А:** на сервере есть клон репозитория с папкой `deploy`:
 ```bash
+cd /path/to/v0-telegram-monitoring-dashboard
 sudo cp deploy/nginx-integration-wa.ru.conf /etc/nginx/sites-available/telegram-monitor
 ```
 
-Либо создать файл вручную: `sudo nano /etc/nginx/sites-available/telegram-monitor` и вставить содержимое из `deploy/nginx-integration-wa.ru.conf`.
+**Вариант Б:** папки `deploy` на сервере нет — создайте файл вручную:
+```bash
+sudo nano /etc/nginx/sites-available/telegram-monitor
+```
+Скопируйте в редактор **полный конфиг** из раздела «Конфиг для копирования» в конце этого файла. Сохраните: Ctrl+O, Enter, Ctrl+X.
 
 ### 3. Включить сайт и убрать дефолтный сайт Nginx (опционально)
 
@@ -87,3 +91,65 @@ Certbot сам добавит блок `listen 443 ssl` и сертификат�
 | Убрать default        | `sudo rm -f /etc/nginx/sites-enabled/default` |
 | Проверка и перезагрузка | `sudo nginx -t && sudo systemctl reload nginx` |
 | HTTPS                 | `sudo certbot --nginx -d integration-wa.ru` |
+
+---
+
+## Конфиг для копирования (если на сервере нет deploy)
+
+Если на сервере нет файла `deploy/nginx-integration-wa.ru.conf`, создайте `/etc/nginx/sites-available/telegram-monitor` и вставьте целиком:
+
+```nginx
+# Nginx: фронтенд по IP и по домену integration-wa.ru
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name integration-wa.ru www.integration-wa.ru;
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /api {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /auth {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /ws {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+
+    location /docs {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+    }
+
+    location /openapi.json {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+    }
+}
+```
