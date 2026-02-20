@@ -1,13 +1,18 @@
-# Backend (FastAPI + Telethon)
+# Backend (FastAPI + Telethon + MAX)
 FROM python:3.11-slim
 
 WORKDIR /app
 
+# Зависимости: устанавливаются при сборке образа (каждый новый билд)
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY main.py parser.py parser_config.py parser_log.py telegram_auth.py database.py models.py auth_utils.py semantic.py plans.py .
+COPY main.py parser.py parser_max.py parser_config.py parser_log.py telegram_auth.py database.py models.py auth_utils.py semantic.py plans.py .
+COPY email_sender.py notify_telegram.py .
 COPY scripts/ scripts/
 
+# Миграции БД запускаются при каждом старте контейнера (деплой)
+RUN chmod +x scripts/backend-entrypoint.sh
+ENTRYPOINT ["/app/scripts/backend-entrypoint.sh"]
 EXPOSE 8000
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

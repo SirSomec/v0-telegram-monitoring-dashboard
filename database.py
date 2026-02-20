@@ -74,6 +74,37 @@ def _migrate_users_plan() -> None:
         conn.commit()
 
 
+def _migrate_chats_source_and_max_chat_id() -> None:
+    """Добавить колонки source и max_chat_id в chats для поддержки MAX."""
+    with engine.connect() as conn:
+        r = conn.execute(
+            text(
+                "SELECT 1 FROM information_schema.columns "
+                "WHERE table_name = 'chats' AND column_name = 'source'"
+            )
+        )
+        if r.scalar() is not None:
+            return
+        conn.execute(text("ALTER TABLE chats ADD COLUMN source VARCHAR(32) NOT NULL DEFAULT 'telegram'"))
+        conn.execute(text("ALTER TABLE chats ADD COLUMN max_chat_id VARCHAR(128)"))
+        conn.commit()
+
+
+def _migrate_mentions_source() -> None:
+    """Добавить колонку source в mentions."""
+    with engine.connect() as conn:
+        r = conn.execute(
+            text(
+                "SELECT 1 FROM information_schema.columns "
+                "WHERE table_name = 'mentions' AND column_name = 'source'"
+            )
+        )
+        if r.scalar() is not None:
+            return
+        conn.execute(text("ALTER TABLE mentions ADD COLUMN source VARCHAR(32) NOT NULL DEFAULT 'telegram'"))
+        conn.commit()
+
+
 def _migrate_plan_limits() -> None:
     """Заполнить plan_limits значениями по умолчанию из plans.LIMITS, если таблица пуста."""
     from sqlalchemy import func, select
@@ -107,6 +138,8 @@ def init_db() -> None:
     _migrate_keywords_use_semantic()
     _migrate_mentions_sender_username()
     _migrate_users_plan()
+    _migrate_chats_source_and_max_chat_id()
+    _migrate_mentions_source()
     _migrate_plan_limits()
 
 

@@ -71,13 +71,20 @@ class Keyword(Base):
     user: Mapped["User"] = relationship(back_populates="keywords")
 
 
+# Источник чата/упоминания: telegram | max
+CHAT_SOURCE_TELEGRAM = "telegram"
+CHAT_SOURCE_MAX = "max"
+
+
 class Chat(Base):
     __tablename__ = "chats"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
 
+    source: Mapped[str] = mapped_column(String(32), nullable=False, default=CHAT_SOURCE_TELEGRAM, server_default="'telegram'", index=True)
     tg_chat_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
+    max_chat_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     username: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     title: Mapped[str | None] = mapped_column(String(300), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -161,6 +168,7 @@ class Mention(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
 
+    source: Mapped[str] = mapped_column(String(32), nullable=False, default=CHAT_SOURCE_TELEGRAM, server_default="'telegram'", index=True)
     keyword_text: Mapped[str] = mapped_column(String(400), nullable=False, index=True)
     message_text: Mapped[str] = mapped_column(Text, nullable=False)
 

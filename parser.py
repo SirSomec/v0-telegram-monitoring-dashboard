@@ -16,7 +16,7 @@ from telethon.sessions import StringSession
 from telethon.tl.functions.messages import ImportChatInviteRequest
 
 from database import db_session
-from models import Chat, Keyword, Mention, User, user_chat_subscriptions
+from models import Chat, Keyword, Mention, User, user_chat_subscriptions, CHAT_SOURCE_TELEGRAM
 from parser_log import append as log_append, append_exception as log_exception
 from plans import can_track, get_effective_plan
 from parser_config import (
@@ -358,7 +358,7 @@ class TelegramScanner:
                 users = db.query(User).all()
                 allowed_user_ids = {u.id for u in users if can_track(get_effective_plan(u), db)}
                 rows: list[Chat] = (
-                    db.query(Chat).filter(Chat.enabled.is_(True)).order_by(Chat.id.asc()).all()
+                    db.query(Chat).filter(Chat.enabled.is_(True), Chat.source == CHAT_SOURCE_TELEGRAM).order_by(Chat.id.asc()).all()
                 )
                 # Для глобальных каналов — пользователи из подписок; для остальных — владелец. Только пользователи с платным тарифом.
                 user_ids_by_chat: dict[int, set[int]] = {}
@@ -431,13 +431,13 @@ class TelegramScanner:
             )
             rows_owned = (
                 db.query(Chat)
-                .filter(Chat.user_id == self.user_id, Chat.enabled.is_(True))
+                .filter(Chat.user_id == self.user_id, Chat.enabled.is_(True), Chat.source == CHAT_SOURCE_TELEGRAM)
                 .order_by(Chat.id.asc())
                 .all()
             )
             rows_subs = (
                 db.query(Chat)
-                .filter(Chat.id.in_(sub_chat_ids), Chat.is_global.is_(True), Chat.enabled.is_(True))
+                .filter(Chat.id.in_(sub_chat_ids), Chat.is_global.is_(True), Chat.enabled.is_(True), Chat.source == CHAT_SOURCE_TELEGRAM)
                 .order_by(Chat.id.asc())
                 .all()
             ) if sub_chat_ids else []

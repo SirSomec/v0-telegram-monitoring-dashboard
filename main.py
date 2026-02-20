@@ -16,8 +16,9 @@ from sqlalchemy.orm import Session, selectinload
 
 from auth_utils import create_token, decode_token, hash_password, verify_password
 from database import get_db, init_db
-from models import Chat, ChatGroup, Keyword, Mention, NotificationSettings, PasswordResetToken, User, user_chat_subscriptions, PlanLimit
+from models import Chat, ChatGroup, Keyword, Mention, NotificationSettings, PasswordResetToken, User, user_chat_subscriptions, PlanLimit, CHAT_SOURCE_TELEGRAM, CHAT_SOURCE_MAX
 from parser import TelegramScanner
+from parser_max import MaxScanner
 from plans import PLAN_FREE, PLAN_ORDER, get_effective_plan, get_limits
 from parser_config import (
     get_all_parser_settings,
@@ -79,13 +80,14 @@ class KeywordOut(BaseModel):
 
 
 class ChatCreate(BaseModel):
-    identifier: str = Field(..., min_length=1, max_length=256, description="username (@name) или числовой chat_id")
+    identifier: str = Field(..., min_length=1, max_length=256, description="username (@name), chat_id или ID чата MAX")
     title: str | None = None
     description: str | None = None
     groupIds: list[int] = Field(default_factory=list)
     enabled: bool = True
     userId: int | None = None
     isGlobal: bool | None = None  # только для админа: канал доступен всем пользователям
+    source: Literal["telegram", "max"] = "telegram"
 
 
 class ChatOut(BaseModel):
@@ -98,6 +100,7 @@ class ChatOut(BaseModel):
     userId: int
     isGlobal: bool = False
     isOwner: bool = True  # True = свой канал, False = подписка на глобальный
+    source: str = "telegram"
     createdAt: str
 
 
@@ -221,6 +224,7 @@ class MentionOut(BaseModel):
     createdAt: str
     messageLink: str | None = None
     groupLink: str | None = None  # ссылка на группу/канал t.me/chat_username
+    source: str = "telegram"
 
 
 class MentionGroupOut(BaseModel):
@@ -239,6 +243,7 @@ class MentionGroupOut(BaseModel):
     createdAt: str
     groupLink: str | None = None
     messageLink: str | None = None
+    source: str = "telegram"
 
 
 class StatsOut(BaseModel):
@@ -337,6 +342,7 @@ class ParserStatusOut(BaseModel):
     running: bool
     multiUser: bool
     userId: int | None = None
+    maxRunning: bool = False
 
 
 class ParserSettingsOut(BaseModel):
@@ -354,6 +360,11 @@ class ParserSettingsOut(BaseModel):
     AUTO_START_SCANNER: str = ""
     MULTI_USER_SCANNER: str = ""
     TG_USER_ID: str = ""
+    # MAX messenger
+    MAX_ACCESS_TOKEN: str = ""
+    MAX_BASE_URL: str = ""
+    MAX_POLL_INTERVAL_SEC: str = ""
+    AUTO_START_MAX_SCANNER: str = ""
 
 
 class ParserSettingsUpdate(BaseModel):
@@ -371,6 +382,11 @@ class ParserSettingsUpdate(BaseModel):
     AUTO_START_SCANNER: bool | None = None
     MULTI_USER_SCANNER: bool | None = None
     TG_USER_ID: int | None = None
+    # MAX messenger
+    MAX_ACCESS_TOKEN: str | None = None
+    MAX_BASE_URL: str | None = None
+    MAX_POLL_INTERVAL_SEC: int | None = None
+    AUTO_START_MAX_SCANNER: bool | None = None
 
 
 class ConnectionManager:
@@ -418,6 +434,7 @@ app.add_middleware(
 
 ws_manager = ConnectionManager()
 scanner: TelegramScanner | None = None
+max_scanner: MaxScanner | None = None
 main_loop: asyncio.AbstractEventLoop | None = None
 
 
@@ -606,6 +623,7 @@ def _mention_to_front(m: Mention) -> MentionOut:
     created_at = m.created_at
     if created_at.tzinfo is None:
         created_at = created_at.replace(tzinfo=timezone.utc)
+    source = getattr(m, "source", None) or CHAT_SOURCE_TELEGRAM
     return MentionOut(
         id=str(m.id),
         groupName=group_name,
@@ -621,12 +639,13 @@ def _mention_to_front(m: Mention) -> MentionOut:
         createdAt=created_at.isoformat(),
         messageLink=_message_link(m.chat_id, m.message_id, m.chat_username),
         groupLink=_group_link(m.chat_username),
+        source=source,
     )
 
 
 @app.on_event("startup")
 async def on_startup() -> None:
-    global scanner, main_loop
+    global scanner, max_scanner, main_loop
     main_loop = asyncio.get_running_loop()
     init_db()
 
@@ -638,6 +657,7 @@ async def on_startup() -> None:
         _ensure_default_user(db)
 
     # Сканер можно включить через настройки (админ) или ENV AUTO_START_SCANNER=1
+    global max_scanner
     if get_parser_setting_bool("AUTO_START_SCANNER", False):
         from parser_log import append as parser_log_append
         parser_log_append("Автозапуск парсера при старте API.")
@@ -651,6 +671,13 @@ async def on_startup() -> None:
             )
         scanner.start()
         parser_log_append("Парсер запущен (автостарт).")
+
+    if get_parser_setting_bool("AUTO_START_MAX_SCANNER", False):
+        from parser_log import append as parser_log_append
+        parser_log_append("[MAX] Автозапуск парсера MAX при старте API.")
+        max_scanner = MaxScanner(on_mention=_on_mention_callback)
+        max_scanner.start()
+        parser_log_append("[MAX] Парсер MAX запущен (автостарт).")
 
 
 def _schedule_ws_broadcast(payload: dict[str, Any]) -> None:
@@ -1164,11 +1191,15 @@ def _parse_chat_identifier(ident: str) -> tuple[str | None, int | None, str | No
 
 
 def _chat_to_out(c: Chat, is_owner: bool) -> ChatOut:
-    identifier = (
-        (c.username or "")
-        or (str(c.tg_chat_id) if c.tg_chat_id is not None else "")
-        or (f"t.me/joinchat/{c.invite_hash}" if getattr(c, "invite_hash", None) else "")
-    ) or "—"
+    source = getattr(c, "source", None) or CHAT_SOURCE_TELEGRAM
+    if source == CHAT_SOURCE_MAX:
+        identifier = (getattr(c, "max_chat_id", None) or "") or (c.title or "—")
+    else:
+        identifier = (
+            (c.username or "")
+            or (str(c.tg_chat_id) if c.tg_chat_id is not None else "")
+            or (f"t.me/joinchat/{c.invite_hash}" if getattr(c, "invite_hash", None) else "")
+        ) or "—"
     created_at = c.created_at
     if created_at.tzinfo is None:
         created_at = created_at.replace(tzinfo=timezone.utc)
@@ -1182,6 +1213,7 @@ def _chat_to_out(c: Chat, is_owner: bool) -> ChatOut:
         userId=c.user_id,
         isGlobal=bool(c.is_global),
         isOwner=is_owner,
+        source=source,
         createdAt=created_at.isoformat(),
     )
 
@@ -1227,22 +1259,36 @@ def create_chat(body: ChatCreate, user: User = Depends(get_current_user), db: Se
     if is_global and not user.is_admin:
         raise HTTPException(status_code=403, detail="only admin can create global channels")
 
-    username, tg_chat_id, invite_hash = _parse_chat_identifier(ident)
+    source = (body.source or "telegram").strip().lower()
+    if source not in ("telegram", "max"):
+        source = CHAT_SOURCE_TELEGRAM
 
-    # Если канал уже есть среди глобальных (добавлен администратором) — подписываем пользователя вместо создания дубликата
-    existing_global: Chat | None = None
-    if tg_chat_id is not None:
+    if source == CHAT_SOURCE_MAX:
+        username, tg_chat_id, invite_hash = None, None, None
+        max_chat_id = ident
         existing_global = db.scalar(
-            select(Chat).where(Chat.is_global.is_(True), Chat.tg_chat_id == tg_chat_id)
+            select(Chat).where(
+                Chat.is_global.is_(True),
+                Chat.source == CHAT_SOURCE_MAX,
+                Chat.max_chat_id == max_chat_id,
+            )
         )
-    if existing_global is None and username:
-        existing_global = db.scalar(
-            select(Chat).where(Chat.is_global.is_(True), Chat.username == username)
-        )
-    if existing_global is None and invite_hash:
-        existing_global = db.scalar(
-            select(Chat).where(Chat.is_global.is_(True), Chat.invite_hash == invite_hash)
-        )
+    else:
+        username, tg_chat_id, invite_hash = _parse_chat_identifier(ident)
+        max_chat_id = None
+        existing_global = None
+        if tg_chat_id is not None:
+            existing_global = db.scalar(
+                select(Chat).where(Chat.is_global.is_(True), Chat.source == CHAT_SOURCE_TELEGRAM, Chat.tg_chat_id == tg_chat_id)
+            )
+        if existing_global is None and username:
+            existing_global = db.scalar(
+                select(Chat).where(Chat.is_global.is_(True), Chat.source == CHAT_SOURCE_TELEGRAM, Chat.username == username)
+            )
+        if existing_global is None and invite_hash:
+            existing_global = db.scalar(
+                select(Chat).where(Chat.is_global.is_(True), Chat.source == CHAT_SOURCE_TELEGRAM, Chat.invite_hash == invite_hash)
+            )
 
     if existing_global is not None:
         already = db.execute(
@@ -1263,8 +1309,10 @@ def create_chat(body: ChatCreate, user: User = Depends(get_current_user), db: Se
     _check_limits(db, user, delta_channels=1, delta_own_channels=1)
     c = Chat(
         user_id=user_id,
+        source=source,
         username=username,
         tg_chat_id=tg_chat_id,
+        max_chat_id=max_chat_id,
         invite_hash=invite_hash,
         title=body.title,
         description=body.description,
@@ -1634,15 +1682,20 @@ def update_admin_plan_limit(
 
 
 def _parser_status() -> ParserStatusOut:
-    global scanner
-    if scanner is None:
-        return ParserStatusOut(running=False, multiUser=True, userId=None)
-    multi = getattr(scanner, "_multi_user", True)
-    uid = getattr(scanner, "user_id", None)
+    global scanner, max_scanner
+    tg_running = False
+    multi = True
+    uid = None
+    if scanner is not None:
+        tg_running = scanner.is_running
+        multi = getattr(scanner, "_multi_user", True)
+        uid = getattr(scanner, "user_id", None)
+    max_running = max_scanner is not None and max_scanner.is_running
     return ParserStatusOut(
-        running=scanner.is_running,
+        running=tg_running,
         multiUser=multi,
         userId=uid,
+        maxRunning=max_running,
     )
 
 
@@ -1662,6 +1715,10 @@ def _parser_settings_to_out() -> ParserSettingsOut:
         AUTO_START_SCANNER=raw.get("AUTO_START_SCANNER", ""),
         MULTI_USER_SCANNER=raw.get("MULTI_USER_SCANNER", ""),
         TG_USER_ID=raw.get("TG_USER_ID", ""),
+        MAX_ACCESS_TOKEN=raw.get("MAX_ACCESS_TOKEN", ""),
+        MAX_BASE_URL=raw.get("MAX_BASE_URL", ""),
+        MAX_POLL_INTERVAL_SEC=raw.get("MAX_POLL_INTERVAL_SEC", ""),
+        AUTO_START_MAX_SCANNER=raw.get("AUTO_START_MAX_SCANNER", ""),
     )
 
 
@@ -1766,6 +1823,32 @@ def stop_parser(_: User = Depends(get_current_admin)) -> ParserStatusOut:
     return _parser_status()
 
 
+@app.post("/api/admin/parser/max/start", response_model=ParserStatusOut)
+def start_max_parser(_: User = Depends(get_current_admin)) -> ParserStatusOut:
+    """Запустить парсер MAX (Long Polling)."""
+    global max_scanner
+    from parser_log import append as parser_log_append
+    if max_scanner is not None and max_scanner.is_running:
+        return _parser_status()
+    parser_log_append("[MAX] Запуск парсера MAX по запросу из админки.")
+    max_scanner = MaxScanner(on_mention=_on_mention_callback)
+    max_scanner.start()
+    parser_log_append("[MAX] Парсер MAX запущен.")
+    return _parser_status()
+
+
+@app.post("/api/admin/parser/max/stop", response_model=ParserStatusOut)
+def stop_max_parser(_: User = Depends(get_current_admin)) -> ParserStatusOut:
+    """Остановить парсер MAX."""
+    global max_scanner
+    from parser_log import append as parser_log_append
+    if max_scanner is not None:
+        max_scanner.stop()
+        max_scanner = None
+        parser_log_append("[MAX] Парсер MAX остановлен.")
+    return _parser_status()
+
+
 @app.get("/api/chats/available", response_model=list[ChatAvailableOut])
 def list_available_chats(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> list[ChatAvailableOut]:
     """Глобальные каналы (добавленные администратором), доступные для подписки."""
@@ -1833,6 +1916,15 @@ def subscribe_by_identifier(
             select(Chat).where(
                 Chat.is_global.is_(True),
                 Chat.invite_hash == invite_hash,
+            )
+        )
+    if c is None:
+        ident_stripped = body.identifier.strip()
+        c = db.scalar(
+            select(Chat).where(
+                Chat.is_global.is_(True),
+                Chat.source == CHAT_SOURCE_MAX,
+                Chat.max_chat_id == ident_stripped,
             )
         )
     if not c:
@@ -1921,7 +2013,7 @@ class MentionsCountOut(BaseModel):
     total: int
 
 
-def _mentions_filter_stmt(stmt, user_id: int, unreadOnly: bool, keyword: str | None, search: str | None):
+def _mentions_filter_stmt(stmt, user_id: int, unreadOnly: bool, keyword: str | None, search: str | None, source: str | None = None):
     stmt = stmt.where(Mention.user_id == user_id)
     if unreadOnly:
         stmt = stmt.where(Mention.is_read.is_(False))
@@ -1929,6 +2021,8 @@ def _mentions_filter_stmt(stmt, user_id: int, unreadOnly: bool, keyword: str | N
         stmt = stmt.where(Mention.keyword_text == keyword.strip())
     if search is not None and search.strip():
         stmt = stmt.where(Mention.message_text.ilike(f"%{search.strip()}%"))
+    if source is not None and source.strip() and source.strip() in ("telegram", "max"):
+        stmt = stmt.where(Mention.source == source.strip())
     return stmt
 
 
@@ -1944,6 +2038,7 @@ def _group_keys():
         Mention.sender_id,
         Mention.sender_name,
         Mention.sender_username,
+        Mention.source,
     ]
 
 
@@ -1960,6 +2055,7 @@ def _row_to_group_out(row) -> MentionGroupOut:
     elif getattr(row, "sender_id", None) is not None:
         user_link = f"tg://user?id={row.sender_id}"
     keywords = list(row.keywords) if row.keywords else []
+    src = getattr(row, "source", None) or CHAT_SOURCE_TELEGRAM
     return MentionGroupOut(
         id=str(row.id),
         groupName=group_name,
@@ -1975,6 +2071,7 @@ def _row_to_group_out(row) -> MentionGroupOut:
         createdAt=created_at.isoformat(),
         groupLink=_group_link(row.chat_username),
         messageLink=_message_link(row.chat_id, row.message_id, row.chat_username),
+        source=src,
     )
 
 
@@ -1984,6 +2081,7 @@ def count_mentions(
     unreadOnly: bool = False,
     keyword: str | None = None,
     search: str | None = None,
+    source: str | None = None,
     grouped: bool = False,
     db: Session = Depends(get_db),
 ) -> MentionsCountOut:
@@ -1993,12 +2091,12 @@ def count_mentions(
             select(*_group_keys())
             .where(Mention.user_id == user.id)
         )
-        stmt = _mentions_filter_stmt(stmt, user.id, unreadOnly, keyword, search)
+        stmt = _mentions_filter_stmt(stmt, user.id, unreadOnly, keyword, search, source)
         subq = stmt.group_by(*_group_keys()).subquery()
         total = db.scalar(select(func.count()).select_from(subq)) or 0
     else:
         stmt = select(func.count(Mention.id))
-        stmt = _mentions_filter_stmt(stmt, user.id, unreadOnly, keyword, search)
+        stmt = _mentions_filter_stmt(stmt, user.id, unreadOnly, keyword, search, source)
         total = db.scalar(stmt) or 0
     return MentionsCountOut(total=total)
 
@@ -2011,6 +2109,7 @@ def list_mentions(
     unreadOnly: bool = False,
     keyword: str | None = None,
     search: str | None = None,
+    source: str | None = None,
     sortOrder: Literal["desc", "asc"] = "desc",
     grouped: bool = False,
     db: Session = Depends(get_db),
@@ -2031,18 +2130,19 @@ def list_mentions(
             Mention.sender_id,
             Mention.sender_name,
             Mention.sender_username,
+            Mention.source,
             func.array_agg(Mention.keyword_text).label("keywords"),
             func.bool_or(Mention.is_lead).label("is_lead"),
             func.bool_and(Mention.is_read).label("is_read"),
         )
-        stmt = _mentions_filter_stmt(stmt, user.id, unreadOnly, keyword, search)
+        stmt = _mentions_filter_stmt(stmt, user.id, unreadOnly, keyword, search, source)
         stmt = stmt.group_by(*_group_keys())
         order = desc(Mention.created_at) if sortOrder == "desc" else Mention.created_at
         stmt = stmt.order_by(order).offset(offset).limit(limit)
         rows = db.execute(stmt).all()
         return [_row_to_group_out(row) for row in rows]
     stmt = select(Mention)
-    stmt = _mentions_filter_stmt(stmt, user.id, unreadOnly, keyword, search)
+    stmt = _mentions_filter_stmt(stmt, user.id, unreadOnly, keyword, search, source)
     order = desc(Mention.created_at) if sortOrder == "desc" else Mention.created_at
     rows = (
         db.scalars(
@@ -2059,6 +2159,7 @@ _EXPORT_MAX = 10_000
 def export_mentions_csv(
     user: User = Depends(get_current_user),
     keyword: str | None = None,
+    source: str | None = None,
     leadsOnly: bool = False,
     dateFrom: str | None = None,
     dateTo: str | None = None,
@@ -2068,6 +2169,8 @@ def export_mentions_csv(
     stmt = select(Mention).where(Mention.user_id == user.id)
     if keyword is not None and keyword.strip():
         stmt = stmt.where(Mention.keyword_text == keyword.strip())
+    if source is not None and source.strip() and source.strip() in ("telegram", "max"):
+        stmt = stmt.where(Mention.source == source.strip())
     if leadsOnly:
         stmt = stmt.where(Mention.is_lead.is_(True))
     if dateFrom:
@@ -2092,15 +2195,16 @@ def export_mentions_csv(
     out = io.StringIO()
     writer = csv.writer(out)
     writer.writerow(
-        ["id", "created_at", "chat", "sender", "message", "keyword", "is_lead", "is_read", "user_link"]
+        ["id", "created_at", "source", "chat", "sender", "message", "keyword", "is_lead", "is_read", "user_link"]
     )
     for m in rows:
         created = m.created_at.isoformat() if m.created_at else ""
+        src = getattr(m, "source", None) or "telegram"
         chat = (m.chat_name or m.chat_username or "").strip()
         sender = (m.sender_name or "").strip()
         user_link = _user_profile_link(m) or ""
         writer.writerow(
-            [str(m.id), created, chat, sender, (m.message_text or ""), m.keyword_text, m.is_lead, m.is_read, user_link]
+            [str(m.id), created, src, chat, sender, (m.message_text or ""), m.keyword_text, m.is_lead, m.is_read, user_link]
         )
     body = out.getvalue().encode("utf-8-sig")
     return Response(

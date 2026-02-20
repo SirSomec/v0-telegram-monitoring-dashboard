@@ -76,6 +76,11 @@ def get_all_parser_settings() -> dict[str, str]:
         "AUTO_START_SCANNER",
         "MULTI_USER_SCANNER",
         "TG_USER_ID",
+        # MAX messenger
+        "MAX_ACCESS_TOKEN",
+        "MAX_BASE_URL",
+        "MAX_POLL_INTERVAL_SEC",
+        "AUTO_START_MAX_SCANNER",
     ]
     with db_session() as db:
         out: dict[str, str] = {}
