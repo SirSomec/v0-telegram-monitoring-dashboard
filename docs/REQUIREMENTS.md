@@ -83,7 +83,7 @@
 | SP7 | При недоступности сервиса семантики ключи с use_semantic=true временно считаются как точные (подстрока). | ✅ Реализовано |
 | SP8 | Кэш эмбеддингов ключевых слов; один вызов эмбеддинга на сообщение. | ✅ Реализовано |
 
-Переменные: `SEMANTIC_PROVIDER` (http — отдельный контейнер, или local — модель в бэкенде; пусто/none — отключено), `SEMANTIC_SERVICE_URL` (при http), `SEMANTIC_MODEL_NAME`, `SEMANTIC_SIMILARITY_THRESHOLD`. См. раздел 6.
+Реализация: по умолчанию в Docker Compose сервис **semantic** — отдельный контейнер (FastAPI, эндпоинты `/embed`, `/health`); образ собирается с PyTorch только для CPU, чтобы уменьшить размер (~500 MB модели при первом запросе). Бэкенд содержит модуль `semantic.py` и обращается к сервису по HTTP при `SEMANTIC_PROVIDER=http`. Переменные: `SEMANTIC_PROVIDER`, `SEMANTIC_SERVICE_URL`, `SEMANTIC_MODEL_NAME`, `SEMANTIC_SIMILARITY_THRESHOLD`. См. раздел 6.
 
 ### 3.3. Админ-панель
 
@@ -257,8 +257,9 @@
 ## 7. Инфраструктура и деплой
 
 - **Локальная разработка:** `uvicorn main:app --reload --host 0.0.0.0 --port 8000` (бэкенд), `pnpm dev` (фронт). Фронт: http://localhost:3000, API: http://localhost:8000.
-- **Деплой:** Docker Compose (сервисы postgres, semantic, backend, frontend). Сервис `semantic` — эмбеддинги для семантического поиска; бэкенд обращается к нему по `SEMANTIC_SERVICE_URL`. Команда: `docker compose up -d --build`. Данные БД — volume `postgres_data`.
-- **Таблицы БД:** создаются при первом запросе к API (init_db). Опционально пересоздание: `python recreate_tables.py`.
+- **Деплой:** Docker Compose (сервисы postgres, semantic, backend, frontend). Сервис `semantic` — эмбеддинги для семантического поиска (образ с PyTorch CPU-only); бэкенд обращается к нему по `SEMANTIC_SERVICE_URL`. Команда: `docker compose up -d --build`. Данные БД — volume `postgres_data`.
+- **Таблицы БД:** создаются при первом запросе к API (init_db). Миграция колонки `keywords.use_semantic` выполняется автоматически в init_db. Пересоздание схемы: `python recreate_tables.py` (данные теряются).
+- **Пароль PostgreSQL:** в `.env` должна быть переменная `POSTGRES_PASSWORD`; в compose она подставляется и в контейнер postgres, и в `DATABASE_URL` бэкенда. Если бэкенд падает с ошибкой «password authentication failed», пароль в БД не совпадает с тем, что в `.env` — либо задать в `.env` тот же пароль, с которым создавался том postgres, либо пересоздать том: `docker compose down -v`, затем задать `POSTGRES_PASSWORD` в `.env` и снова `docker compose up -d`.
 - **Документация по установке на Ubuntu:** `docs/install-ubuntu.md`.
 - **Скрипты деплоя:** `scripts/deploy.sh`, `scripts/remote-deploy.sh`, `scripts/remote-deploy.ps1` — см. `scripts/README.md`.
 
@@ -278,10 +279,11 @@
 **Уже реализовано и должно сохраняться:**
 - Вся авторизация (кроме восстановления пароля), защита API и WebSocket, редиректы.
 - Дашборд: ключевые слова, лента в реальном времени, фильтры, пагинация, экспорт CSV, статистика, прочитано/лиды, ссылка на сообщение.
+- Семантический парсинг: режим на ключевом слове (use_semantic), сервис эмбеддингов в отдельном контейнере (semantic), fallback на точный поиск при недоступности.
 - Настройки: профиль, смена пароля.
 - Админка: каналы, группы каналов, пользователи, управление парсером.
 - Мультипользовательский сканер, режим одного пользователя, переменные окружения.
-- Деплой: Docker Compose, документация, скрипты.
+- Деплой: Docker Compose (postgres, semantic, backend, frontend), документация, скрипты, устранение неполадок (пароль БД).
 
 **Требуется реализовать для полного продукта (по приоритету):**
 1. **Уведомления:** раздел «Уведомления», настройки каналов (email/Telegram), отправка при новом упоминании/лиде.

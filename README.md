@@ -98,6 +98,7 @@ pnpm dev
 ### Обязательные переменные в `.env`
 
 - `JWT_SECRET` — **обязательно смените** на случайную строку в проде
+- `POSTGRES_PASSWORD` — пароль пользователя PostgreSQL (один и тот же подставляется в контейнер postgres и в `DATABASE_URL` бэкенда). При первом запуске задайте любой пароль; если том БД уже был создан с другим паролем, либо укажите тот же в `.env`, либо пересоздайте том: `docker compose down -v`, затем заново `docker compose up -d`
 - `TG_API_ID`, `TG_API_HASH` — данные с my.telegram.org
 - `TG_SESSION_STRING` — сессия Telethon (рекомендуется для сервера без интерактивного входа)
 
@@ -117,9 +118,18 @@ docker compose up -d --build
 - Фронт: [http://localhost:3000](http://localhost:3000)
 - API: [http://localhost:8000](http://localhost:8000)
 - PostgreSQL: порт 5432 (внутри сети контейнеров — сервис `postgres`)
-- Сервис **semantic** (порт 8001 внутри сети): эмбеддинги для ИИ-семантического поиска; бэкенд по умолчанию использует его (`SEMANTIC_PROVIDER=http`, `SEMANTIC_SERVICE_URL=http://semantic:8001`). При первом запросе к эмбеддингам модель скачивается (~500 MB).
+- Сервис **semantic** (порт 8001 внутри сети): эмбеддинги для ИИ-семантического поиска; образ собирается с PyTorch только для CPU (меньше места на диске). Бэкенд по умолчанию использует его (`SEMANTIC_PROVIDER=http`, `SEMANTIC_SERVICE_URL=http://semantic:8001`). При первом запросе к эмбеддингам модель скачивается (~500 MB).
 
 Таблицы БД создаются при первом запросе к API (init_db). Парсер можно запустить из админки (вкладка «Парсер») или задать `AUTO_START_SCANNER=1` в `.env`.
+
+### Если бэкенд падает при старте
+
+Ошибка `password authentication failed for user "postgres"` означает, что пароль в `DATABASE_URL` не совпадает с паролем, под которым запущен PostgreSQL (пароль задаётся при первом создании тома). Варианты:
+
+1. **Задать в `.env` тот же пароль**, с которым когда-то создавался том postgres, и перезапустить backend: `docker compose up -d --force-recreate backend`.
+2. **Пересоздать БД** (все данные удалятся): `docker compose down -v`, в `.env` задать `POSTGRES_PASSWORD=нужный_пароль`, затем `docker compose up -d`.
+
+Подробнее см. [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md) (раздел 7, пункт про пароль PostgreSQL).
 
 ### Остановка
 

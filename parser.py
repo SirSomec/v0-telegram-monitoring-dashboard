@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import threading
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Callable, Iterable
@@ -146,6 +147,9 @@ class TelegramScanner:
         self._embedding_cache: KeywordEmbeddingCache | None = (
             KeywordEmbeddingCache() if KeywordEmbeddingCache else None
         )
+        # Кэш разрешённых инвайтов (invite_hash -> (chat_id|username, expiry)), чтобы не дергать CheckChatInvite/Join каждые 60 с
+        self._invite_cache: dict[str, tuple[int | str, float]] = {}
+        self._invite_cache_ttl = 3600.0  # 1 час
 
     @property
     def is_running(self) -> bool:
@@ -253,17 +257,42 @@ class TelegramScanner:
 
         await client.run_until_disconnected()
 
+    def _resolve_invite_cached_result(self, invite_hash: str) -> int | str | None:
+        """Возвращает закэшированный chat_id/username по инвайту, если кэш валиден."""
+        entry = self._invite_cache.get(invite_hash)
+        if entry is None:
+            return None
+        value, expiry = entry
+        if time.monotonic() > expiry:
+            del self._invite_cache[invite_hash]
+            return None
+        return value
+
+    def _resolve_invite_cache_put(self, invite_hash: str, value: int | str) -> None:
+        self._invite_cache[invite_hash] = (value, time.monotonic() + self._invite_cache_ttl)
+
     async def _resolve_invite(self, client: TelegramClient, invite_hash: str) -> int | str | None:
         """
         Возвращает chat_id или username для фильтра. Если мы ещё не в чате — принимаем инвайт в TG (один раз).
-        При каждом обновлении списка (каждые 60 с) сначала проверяем get_entity: если уже в чате — не дергаем Join.
+        Результат кэшируется на 1 час, чтобы не вызывать CheckChatInvite/Join при каждом обновлении списка (60 с).
         """
+        cached = self._resolve_invite_cached_result(invite_hash)
+        if cached is not None:
+            return cached
+
         link = f"https://t.me/joinchat/{invite_hash}"
         entity = None
         try:
-            # 1) Сначала проверяем: уже в чате? Тогда get_entity по ссылке сработает — не вызываем Join повторно
+            # 1) Уже в чате? get_entity по ссылке сработает — не вызываем Join
             try:
                 entity = await client.get_entity(link)
+            except FloodWaitError as e:
+                log_append(f"Парсер: ограничение Telegram по инвайту, ждём {e.seconds} с…")
+                await asyncio.sleep(e.seconds)
+                try:
+                    entity = await client.get_entity(link)
+                except Exception:
+                    return None
             except Exception:
                 pass
 
@@ -283,12 +312,22 @@ class TelegramScanner:
                         if updates and getattr(updates, "chats", None) and len(updates.chats) > 0:
                             entity = updates.chats[0]
                     except UserAlreadyParticipantError:
-                        entity = await client.get_entity(link)
+                        # Уже в чате — один раз получаем entity (get_entity дергает CheckChatInvite, может дать FloodWait)
+                        try:
+                            entity = await client.get_entity(link)
+                        except FloodWaitError as ew:
+                            await asyncio.sleep(ew.seconds)
+                            entity = await client.get_entity(link)
                     except Exception as retry_e:
                         log_exception(retry_e)
                         return None
                 except UserAlreadyParticipantError:
-                    entity = await client.get_entity(link)
+                    # Уже в чате — не вызываем Join снова; один раз get_entity, при FloodWait — ждём и повторяем
+                    try:
+                        entity = await client.get_entity(link)
+                    except FloodWaitError as e:
+                        await asyncio.sleep(e.seconds)
+                        entity = await client.get_entity(link)
                 except Exception as e:
                     log_exception(e)
                     return None
@@ -297,9 +336,12 @@ class TelegramScanner:
                 return None
             chat_id = getattr(entity, "id", None)
             if chat_id is not None:
-                return int(chat_id)
+                result: int | str = int(chat_id)
+                self._resolve_invite_cache_put(invite_hash, result)
+                return result
             username = getattr(entity, "username", None)
             if username:
+                self._resolve_invite_cache_put(invite_hash, username)
                 return username
             return None
         except Exception as e:

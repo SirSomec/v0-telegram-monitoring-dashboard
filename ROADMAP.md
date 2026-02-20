@@ -39,12 +39,13 @@
 
 ### Сканер Telegram
 - [x] Мультипользовательский сканер: по умолчанию чаты и ключевые слова из БД по всем пользователям, упоминания с user_id, в WS payload — userId
-- [x] Семантический парсинг: ключевые слова с use_semantic, локальная модель эмбеддингов (sentence-transformers), кэш эмбеддингов ключей; при недоступности семантики — fallback на точный поиск (подстрока)
+- [x] Семантический парсинг: ключевые слова с use_semantic; эмбеддинги через отдельный сервис (контейнер `semantic`) по умолчанию (SEMANTIC_PROVIDER=http) или локально (local); кэш эмбеддингов ключей; при недоступности семантики — fallback на точный поиск (подстрока)
+- [x] Сервис semantic: отдельный контейнер (FastAPI, sentence-transformers), образ с PyTorch CPU-only для экономии места; бэкенд копирует semantic.py и обращается к сервису по HTTP
 
 ### Инфраструктура и документация
-- [x] README: требования, настройка .env, запуск бэкенда и фронта, основные сценарии
-- [x] .env.example с комментариями по переменным
-- [x] Деплой: Dockerfile.backend, Dockerfile.frontend, docker-compose (postgres, backend, frontend), CORS из env (CORS_ORIGINS), раздел «Деплой» в README
+- [x] README: требования, настройка .env, запуск бэкенда и фронта, основные сценарии, устранение неполадок (пароль БД)
+- [x] .env.example с комментариями по переменным (в т.ч. SEMANTIC_*, POSTGRES_PASSWORD)
+- [x] Деплой: Dockerfile.backend (включая semantic.py), Dockerfile.frontend, docker-compose (postgres, semantic, backend, frontend), CORS из env (CORS_ORIGINS), раздел «Деплой» в README
 
 ---
 
@@ -104,6 +105,7 @@
 | 2025-02-19 | 5 | Мультипользовательский сканер: TelegramScanner(user_id=None) — чаты и ключевые слова из БД по всем пользователям, упоминания с нужным user_id, в payload добавлен userId. В main.py по умолчанию MULTI_USER_SCANNER=1; при 0 и TG_USER_ID — режим одного пользователя. Фронт: в ленте по WS показывать только упоминания с data.userId === текущий user. ROADMAP и README обновлены. |
 | 2025-02-19 | 6 | Деплой: Dockerfile.backend, Dockerfile.frontend, docker-compose.yml (postgres, backend, frontend), .dockerignore. CORS: разрешённые origins из env (CORS_ORIGINS). next.config: output standalone для фронта. README: раздел «Деплой (Docker Compose)». Навигация: в сайдбаре дашборда скрыты «Группы», «Уведомления», «Оплата» до реализации фич. ROADMAP обновлён. |
 | 2025-02-20 | 7 | Семантический парсинг: модель Keyword.use_semantic, API useSemantic при создании/списке ключевых слов; парсер — режимы точный/семантический, локальная модель (sentence-transformers), кэш эмбеддингов, при недоступности семантики fallback на подстроку; фронт — передача useSemantic, отображение режима у каждого ключа; .env.example и REQUIREMENTS — переменные SEMANTIC_*. |
+| 2025-02-20 | 8 | Семантика в отдельном контейнере: сервис semantic (FastAPI, /embed, /health), SEMANTIC_PROVIDER=http по умолчанию в compose, бэкенд — HTTP-клиент в semantic.py; образ semantic с PyTorch CPU-only (экономия места); Dockerfile.backend — копирование semantic.py; README и REQUIREMENTS — сервис semantic, POSTGRES_PASSWORD, устранение неполадок «password authentication failed». |
 
 ---
 
