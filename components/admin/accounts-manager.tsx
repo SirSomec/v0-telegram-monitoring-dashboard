@@ -134,7 +134,7 @@ export function AccountsManager() {
 
   function openPlanDialog(user: UserAccount) {
     setPlanDialogUser(user)
-    setPlanSlug(user.plan ?? "free")
+    setPlanSlug(user.planSlug ?? user.plan ?? "free")
     setPlanExpiresAt(user.planExpiresAt ? user.planExpiresAt.slice(0, 16) : "")
   }
 
@@ -271,7 +271,12 @@ export function AccountsManager() {
                   <TableCell className="whitespace-normal">{u.name || "—"}</TableCell>
                   <TableCell className="whitespace-normal">{u.email || "—"}</TableCell>
                   <TableCell>
-                    <span className="text-sm">{PLAN_LABELS[u.plan as keyof typeof PLAN_LABELS] ?? u.plan}</span>
+                    <span className="text-sm">
+                      {PLAN_LABELS[u.planSlug as keyof typeof PLAN_LABELS] ?? u.planSlug}
+                      {u.plan !== u.planSlug && u.plan === "free" && (
+                        <span className="ml-1 text-muted-foreground text-xs">(истёк)</span>
+                      )}
+                    </span>
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">
                     {u.planExpiresAt ? new Date(u.planExpiresAt).toLocaleDateString("ru-RU") : "—"}

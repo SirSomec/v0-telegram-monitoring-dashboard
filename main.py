@@ -165,7 +165,8 @@ class UserOut(BaseModel):
     name: str | None
     isAdmin: bool
     createdAt: str
-    plan: str = "free"
+    plan: str = "free"  # эффективный план (при истечении срока — free)
+    planSlug: str = "free"  # назначенный тариф в БД (для отображения в админке)
     planExpiresAt: str | None = None
 
 
@@ -444,6 +445,7 @@ def _user_to_out(u: User) -> UserOut:
     if created_at.tzinfo is None:
         created_at = created_at.replace(tzinfo=timezone.utc)
     plan = get_effective_plan(u)
+    plan_slug = getattr(u, "plan_slug", None) or "free"
     return UserOut(
         id=u.id,
         email=u.email,
@@ -451,6 +453,7 @@ def _user_to_out(u: User) -> UserOut:
         isAdmin=bool(u.is_admin),
         createdAt=created_at.isoformat(),
         plan=plan,
+        planSlug=plan_slug,
         planExpiresAt=_user_plan_expires_iso(u),
     )
 
@@ -1407,21 +1410,7 @@ def delete_chat_group(group_id: int, user: User = Depends(get_current_user), db:
 def list_users(_: User = Depends(get_current_admin), db: Session = Depends(get_db)) -> list[UserOut]:
     _ensure_default_user(db)
     rows = db.scalars(select(User).order_by(User.id.asc())).all()
-    out: list[UserOut] = []
-    for u in rows:
-        created_at = u.created_at
-        if created_at.tzinfo is None:
-            created_at = created_at.replace(tzinfo=timezone.utc)
-        out.append(
-            UserOut(
-                id=u.id,
-                email=u.email,
-                name=u.name,
-                isAdmin=bool(u.is_admin),
-                createdAt=created_at.isoformat(),
-            )
-        )
-    return out
+    return [_user_to_out(u) for u in rows]
 
 
 @app.post("/api/users", response_model=UserOut)

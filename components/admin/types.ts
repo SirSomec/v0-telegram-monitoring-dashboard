@@ -26,6 +26,7 @@ export type UserAccount = {
   isAdmin: boolean
   createdAt: string
   plan: string
+  planSlug: string
   planExpiresAt: string | null
 }
 

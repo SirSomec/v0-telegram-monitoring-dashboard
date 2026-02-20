@@ -30,6 +30,7 @@ export type UserMe = {
   isAdmin: boolean
   createdAt: string
   plan: string
+  planSlug?: string
   planExpiresAt: string | null
 }
 
