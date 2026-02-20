@@ -7,7 +7,15 @@ import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Trash2, Plus, RefreshCw } from "lucide-react"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { Trash2, Plus, RefreshCw, KeyRound } from "lucide-react"
 import { apiJson } from "@/components/admin/api"
 import type { UserAccount } from "@/components/admin/types"
 
@@ -20,6 +28,12 @@ export function AccountsManager() {
   const [name, setName] = useState("")
   const [password, setPassword] = useState("")
   const [isAdmin, setIsAdmin] = useState(false)
+
+  const [passwordDialogUser, setPasswordDialogUser] = useState<UserAccount | null>(null)
+  const [newPassword, setNewPassword] = useState("")
+  const [newPasswordConfirm, setNewPasswordConfirm] = useState("")
+  const [passwordDialogError, setPasswordDialogError] = useState("")
+  const [passwordDialogSubmitting, setPasswordDialogSubmitting] = useState(false)
 
   async function refresh() {
     setLoading(true)
@@ -96,6 +110,45 @@ export function AccountsManager() {
       setError(e instanceof Error ? e.message : "Ошибка удаления")
     } finally {
       setLoading(false)
+    }
+  }
+
+  function openPasswordDialog(user: UserAccount) {
+    setPasswordDialogUser(user)
+    setNewPassword("")
+    setNewPasswordConfirm("")
+    setPasswordDialogError("")
+  }
+
+  function closePasswordDialog() {
+    setPasswordDialogUser(null)
+    setNewPassword("")
+    setNewPasswordConfirm("")
+    setPasswordDialogError("")
+  }
+
+  async function submitSetPassword() {
+    if (!passwordDialogUser) return
+    setPasswordDialogError("")
+    if (newPassword.length < 8) {
+      setPasswordDialogError("Пароль должен быть не менее 8 символов")
+      return
+    }
+    if (newPassword !== newPasswordConfirm) {
+      setPasswordDialogError("Пароли не совпадают")
+      return
+    }
+    setPasswordDialogSubmitting(true)
+    try {
+      await apiJson<{ ok: boolean }>(`/api/users/${passwordDialogUser.id}/password`, {
+        method: "PATCH",
+        body: JSON.stringify({ newPassword }),
+      })
+      closePasswordDialog()
+    } catch (e) {
+      setPasswordDialogError(e instanceof Error ? e.message : "Ошибка смены пароля")
+    } finally {
+      setPasswordDialogSubmitting(false)
     }
   }
 
@@ -186,6 +239,16 @@ export function AccountsManager() {
                     <Button
                       size="sm"
                       variant="ghost"
+                      onClick={() => openPasswordDialog(u)}
+                      disabled={loading}
+                      className="text-muted-foreground hover:text-foreground"
+                      title="Сменить пароль"
+                    >
+                      <KeyRound className="size-4" />
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
                       onClick={() => deleteUser(u.id)}
                       disabled={loading || u.id === 1}
                       className="text-destructive hover:text-destructive"
@@ -207,6 +270,56 @@ export function AccountsManager() {
           </Table>
         </CardContent>
       </Card>
+
+      <Dialog open={!!passwordDialogUser} onOpenChange={(open) => !open && closePasswordDialog()}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Сменить пароль</DialogTitle>
+            <DialogDescription>
+              {passwordDialogUser && (
+                <>Новый пароль для пользователя {passwordDialogUser.email || passwordDialogUser.name || `#${passwordDialogUser.id}`} (мин. 8 символов).</>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          {passwordDialogUser && (
+            <div className="grid gap-4 py-2">
+              <div className="space-y-2">
+                <Label htmlFor="admin-new-password">Новый пароль</Label>
+                <Input
+                  id="admin-new-password"
+                  type="password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  placeholder="Минимум 8 символов"
+                  className="bg-secondary border-border"
+                  autoComplete="new-password"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="admin-new-password-confirm">Подтверждение</Label>
+                <Input
+                  id="admin-new-password-confirm"
+                  type="password"
+                  value={newPasswordConfirm}
+                  onChange={(e) => setNewPasswordConfirm(e.target.value)}
+                  placeholder="Повторите пароль"
+                  className="bg-secondary border-border"
+                  autoComplete="new-password"
+                />
+              </div>
+              {passwordDialogError && <p className="text-sm text-destructive">{passwordDialogError}</p>}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={closePasswordDialog} disabled={passwordDialogSubmitting}>
+              Отмена
+            </Button>
+            <Button onClick={submitSetPassword} disabled={passwordDialogSubmitting || !newPassword.trim() || newPassword.length < 8}>
+              {passwordDialogSubmitting ? "Сохранение…" : "Сохранить пароль"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

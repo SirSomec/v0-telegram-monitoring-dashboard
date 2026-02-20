@@ -172,6 +172,11 @@ class UserUpdate(BaseModel):
     isAdmin: bool | None = None
 
 
+class AdminSetPasswordRequest(BaseModel):
+    """Установка пароля учётной записи администратором."""
+    newPassword: str = Field(..., min_length=8)
+
+
 def _group_link(chat_username: str | None) -> str | None:
     """Ссылка на группу/канал в Telegram (если есть username)."""
     if not chat_username or not str(chat_username).strip():
@@ -1125,6 +1130,24 @@ def update_user(user_id: int, body: UserUpdate, _: User = Depends(get_current_ad
         isAdmin=bool(u.is_admin),
         createdAt=created_at.isoformat(),
     )
+
+
+@app.patch("/api/users/{user_id}/password")
+def admin_set_user_password(
+    user_id: int,
+    body: AdminSetPasswordRequest,
+    _: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Установить новый пароль для любой учётной записи (только администратор)."""
+    _ensure_default_user(db)
+    u = db.scalar(select(User).where(User.id == user_id))
+    if not u:
+        raise HTTPException(status_code=404, detail="user not found")
+    u.password_hash = hash_password(body.newPassword)
+    db.add(u)
+    db.commit()
+    return {"ok": True}
 
 
 @app.delete("/api/users/{user_id}")

@@ -185,6 +185,7 @@
 | GET | `/api/users` | Список пользователей. |
 | POST | `/api/users` | Создать пользователя (email?, name?, password?, isAdmin). |
 | PATCH | `/api/users/{user_id}` | Обновить пользователя (email, name, isAdmin). |
+| PATCH | `/api/users/{user_id}/password` | Установить новый пароль учётной записи (body: newPassword, только админ). |
 | DELETE | `/api/users/{user_id}` | Удалить пользователя. |
 
 ### 4.6. Админ: парсер (только isAdmin)
