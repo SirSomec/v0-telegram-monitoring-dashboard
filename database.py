@@ -59,7 +59,7 @@ def _migrate_mentions_sender_username() -> None:
 
 
 def init_db() -> None:
-    from models import Chat, ChatGroup, Keyword, Mention, ParserSetting, User, PasswordResetToken  # noqa: F401
+    from models import Chat, ChatGroup, Keyword, Mention, NotificationSettings, ParserSetting, User, PasswordResetToken  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
     _migrate_keywords_use_semantic()
@@ -68,7 +68,7 @@ def init_db() -> None:
 
 def drop_all_tables() -> None:
     """Удаляет все таблицы (для пересоздания схемы). Все данные будут потеряны."""
-    from models import Chat, ChatGroup, Keyword, Mention, ParserSetting, User, PasswordResetToken  # noqa: F401
+    from models import Chat, ChatGroup, Keyword, Mention, NotificationSettings, ParserSetting, User, PasswordResetToken  # noqa: F401
 
     Base.metadata.drop_all(bind=engine)
 

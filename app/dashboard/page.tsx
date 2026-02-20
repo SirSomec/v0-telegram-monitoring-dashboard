@@ -11,6 +11,7 @@ import { KeywordsManager } from "@/components/dashboard/keywords-manager"
 import { MentionFeed } from "@/components/dashboard/mention-feed"
 import { UserChannelsManager } from "@/components/dashboard/user-channels-manager"
 import { ChannelGroupsSection } from "@/components/dashboard/channel-groups-section"
+import { NotificationsSettings } from "@/components/dashboard/notifications-settings"
 import { BillingModal } from "@/components/dashboard/billing-modal"
 import { apiBaseUrl } from "@/lib/api"
 import { useAuth } from "@/lib/auth-context"
@@ -113,6 +114,18 @@ export default function DashboardPage() {
               </div>
               <ChannelGroupsSection onSubscribedChange={() => setChannelsRefreshKey((k) => k + 1)} />
               <UserChannelsManager key={channelsRefreshKey} />
+            </>
+          ) : activeNav === "Уведомления" ? (
+            <>
+              <div>
+                <h1 className="text-2xl font-bold tracking-tight text-foreground">
+                  Уведомления
+                </h1>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Настройте каналы и условия отправки уведомлений о новых упоминаниях.
+                </p>
+              </div>
+              <NotificationsSettings />
             </>
           ) : (
             <>

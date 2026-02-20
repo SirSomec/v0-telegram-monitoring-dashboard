@@ -127,6 +127,17 @@ class PasswordResetToken(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class NotificationSettings(Base):
+    """Настройки уведомлений пользователя: каналы и что отправлять."""
+    __tablename__ = "notification_settings"
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    notify_email: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    notify_telegram: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    notify_mode: Mapped[str] = mapped_column(String(32), nullable=False, default="all", server_default="'all'")
+    telegram_chat_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+
 class Mention(Base):
     __tablename__ = "mentions"
 

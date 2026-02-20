@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from auth_utils import create_token, decode_token, hash_password, verify_password
 from database import get_db, init_db
-from models import Chat, ChatGroup, Keyword, Mention, PasswordResetToken, User, user_chat_subscriptions
+from models import Chat, ChatGroup, Keyword, Mention, NotificationSettings, PasswordResetToken, User, user_chat_subscriptions
 from parser import TelegramScanner
 from parser_config import (
     get_all_parser_settings,
@@ -175,6 +175,20 @@ class UserUpdate(BaseModel):
 class AdminSetPasswordRequest(BaseModel):
     """Установка пароля учётной записи администратором."""
     newPassword: str = Field(..., min_length=8)
+
+
+class NotificationSettingsOut(BaseModel):
+    notifyEmail: bool
+    notifyTelegram: bool
+    notifyMode: str  # all | leads_only | digest
+    telegramChatId: str | None = None
+
+
+class NotificationSettingsUpdate(BaseModel):
+    notifyEmail: bool | None = None
+    notifyTelegram: bool | None = None
+    notifyMode: str | None = None  # all | leads_only | digest
+    telegramChatId: str | None = None
 
 
 def _group_link(chat_username: str | None) -> str | None:
@@ -470,11 +484,11 @@ async def on_startup() -> None:
         parser_log_append("Автозапуск парсера при старте API.")
         multi = get_parser_setting_bool("MULTI_USER_SCANNER", True)
         if multi:
-            scanner = TelegramScanner(on_mention=lambda payload: _schedule_ws_broadcast(payload))
+            scanner = TelegramScanner(on_mention=_on_mention_callback)
         else:
             scanner = TelegramScanner(
                 user_id=get_parser_setting_int("TG_USER_ID", 1),
-                on_mention=lambda payload: _schedule_ws_broadcast(payload),
+                on_mention=_on_mention_callback,
             )
         scanner.start()
         parser_log_append("Парсер запущен (автостарт).")
@@ -491,6 +505,72 @@ def _schedule_ws_broadcast(payload: dict[str, Any]) -> None:
             asyncio.run(ws_manager.broadcast(payload))
         except Exception:
             pass
+
+
+def _do_notify_mention_sync(payload: dict[str, Any]) -> None:
+    """Отправить уведомления о упоминании (email/Telegram) по настройкам пользователя. Вызывается из executor."""
+    try:
+        data = payload.get("data") or {}
+        user_id = data.get("userId")
+        if user_id is None:
+            return
+        from database import SessionLocal
+        from email_sender import send_mention_notification_email
+        from notify_telegram import send_mention_notification as send_telegram_mention
+
+        with SessionLocal() as db:
+            settings = db.scalar(select(NotificationSettings).where(NotificationSettings.user_id == user_id))
+            if not settings:
+                return
+            notify_mode = (settings.notify_mode or "all").strip()
+            is_lead = data.get("isLead") is True
+            if notify_mode == "leads_only" and not is_lead:
+                return
+            # digest пока не реализован — не шлём мгновенные уведомления
+            if notify_mode == "digest":
+                return
+
+            keyword = (data.get("keyword") or "").strip()
+            message = (data.get("message") or "").strip()
+            message_link = data.get("messageLink") or None
+
+            if settings.notify_email:
+                user = db.scalar(select(User).where(User.id == user_id))
+                if user and user.email and user.email.strip():
+                    send_mention_notification_email(
+                        user.email.strip(),
+                        keyword or "—",
+                        message,
+                        message_link,
+                    )
+            if settings.notify_telegram and settings.telegram_chat_id and settings.telegram_chat_id.strip():
+                send_telegram_mention(
+                    settings.telegram_chat_id.strip(),
+                    keyword or "—",
+                    message,
+                    message_link,
+                )
+    except Exception:  # не ломаем парсер из-за уведомлений
+        import logging
+        logging.getLogger(__name__).exception("Ошибка отправки уведомления об упоминании")
+
+
+def _schedule_notify_mention(payload: dict[str, Any]) -> None:
+    """Запустить отправку уведомлений в пуле потоков (не блокируя парсер)."""
+    loop = main_loop
+    if loop and loop.is_running():
+        loop.run_in_executor(None, _do_notify_mention_sync, payload)
+    else:
+        try:
+            _do_notify_mention_sync(payload)
+        except Exception:
+            pass
+
+
+def _on_mention_callback(payload: dict[str, Any]) -> None:
+    """Единый callback при новом упоминании: WebSocket + уведомления."""
+    _schedule_ws_broadcast(payload)
+    _schedule_notify_mention(payload)
 
 
 @app.get("/health")
@@ -647,6 +727,62 @@ def get_stats(user: User = Depends(get_current_user), db: Session = Depends(get_
         mentionsToday=mentions_today,
         keywordsCount=keywords_count,
         leadsCount=leads_count,
+    )
+
+
+def _get_or_create_notification_settings(db: Session, user_id: int) -> NotificationSettings:
+    settings = db.scalar(select(NotificationSettings).where(NotificationSettings.user_id == user_id))
+    if settings:
+        return settings
+    settings = NotificationSettings(
+        user_id=user_id,
+        notify_email=True,
+        notify_telegram=False,
+        notify_mode="all",
+        telegram_chat_id=None,
+    )
+    db.add(settings)
+    db.commit()
+    db.refresh(settings)
+    return settings
+
+
+@app.get("/api/notifications/settings", response_model=NotificationSettingsOut)
+def get_notification_settings(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> NotificationSettingsOut:
+    _ensure_default_user(db)
+    s = _get_or_create_notification_settings(db, user.id)
+    return NotificationSettingsOut(
+        notifyEmail=bool(s.notify_email),
+        notifyTelegram=bool(s.notify_telegram),
+        notifyMode=(s.notify_mode or "all"),
+        telegramChatId=s.telegram_chat_id,
+    )
+
+
+@app.patch("/api/notifications/settings", response_model=NotificationSettingsOut)
+def update_notification_settings(
+    body: NotificationSettingsUpdate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> NotificationSettingsOut:
+    _ensure_default_user(db)
+    s = _get_or_create_notification_settings(db, user.id)
+    if body.notifyEmail is not None:
+        s.notify_email = bool(body.notifyEmail)
+    if body.notifyTelegram is not None:
+        s.notify_telegram = bool(body.notifyTelegram)
+    if body.notifyMode is not None and body.notifyMode.strip() in ("all", "leads_only", "digest"):
+        s.notify_mode = body.notifyMode.strip()
+    if body.telegramChatId is not None:
+        s.telegram_chat_id = (body.telegramChatId.strip() or None)
+    db.add(s)
+    db.commit()
+    db.refresh(s)
+    return NotificationSettingsOut(
+        notifyEmail=bool(s.notify_email),
+        notifyTelegram=bool(s.notify_telegram),
+        notifyMode=(s.notify_mode or "all"),
+        telegramChatId=s.telegram_chat_id,
     )
 
 
@@ -1274,11 +1410,11 @@ def start_parser(_: User = Depends(get_current_admin)) -> ParserStatusOut:
     parser_log_append("Запуск парсера по запросу из админки.")
     multi = get_parser_setting_bool("MULTI_USER_SCANNER", True)
     if multi:
-        scanner = TelegramScanner(on_mention=lambda payload: _schedule_ws_broadcast(payload))
+        scanner = TelegramScanner(on_mention=_on_mention_callback)
     else:
         scanner = TelegramScanner(
             user_id=get_parser_setting_int("TG_USER_ID", 1),
-            on_mention=lambda payload: _schedule_ws_broadcast(payload),
+            on_mention=_on_mention_callback,
         )
     scanner.start()
     parser_log_append("Парсер запущен.")
@@ -1676,6 +1812,18 @@ def set_mention_lead(mention_id: int, body: MentionLeadPatch, user: User = Depen
     db.execute(update(Mention).where(*where_clauses).values(is_lead=bool(body.isLead)))
     db.commit()
     db.refresh(m)
+    if body.isLead:
+        payload = {
+            "type": "mention",
+            "data": {
+                "userId": m.user_id,
+                "keyword": m.keyword_text,
+                "message": m.message_text or "",
+                "messageLink": _message_link(m.chat_id, m.message_id, m.chat_username),
+                "isLead": True,
+            },
+        }
+        _schedule_notify_mention(payload)
     return _mention_to_front(m)
 
 

@@ -73,3 +73,45 @@ def send_password_reset_email(to_email: str, reset_link: str) -> bool:
     except Exception as e:
         logger.exception("Ошибка отправки email для сброса пароля: %s", e)
         return False
+
+
+def send_mention_notification_email(to_email: str, keyword: str, message: str, message_link: str | None) -> bool:
+    """Отправить уведомление о новом упоминании на email."""
+    subject = f"TeleScope — новое упоминание: {keyword[:50]}"
+    body_plain = (
+        f"Ключевое слово: {keyword}\n\n"
+        f"Сообщение: {message[:500]}{'...' if len(message) > 500 else ''}\n\n"
+    )
+    if message_link:
+        body_plain += f"Ссылка на сообщение: {message_link}\n\n"
+    body_plain += "— TeleScope"
+    body_html = (
+        f"<p><strong>Ключевое слово:</strong> {keyword}</p>"
+        f"<p>{message[:500].replace(chr(10), '<br>')}{'...' if len(message) > 500 else ''}</p>"
+    )
+    if message_link:
+        body_html += f'<p><a href="{message_link}">Открыть сообщение в Telegram</a></p>'
+    body_html += "<p>— TeleScope</p>"
+
+    if not is_configured():
+        logger.debug("SMTP не настроен, пропуск email-уведомления об упоминании")
+        return False
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = SMTP_FROM
+    msg["To"] = to_email
+    msg.attach(MIMEText(body_plain, "plain", "utf-8"))
+    msg.attach(MIMEText(body_html, "html", "utf-8"))
+
+    try:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as server:
+            if SMTP_USE_TLS:
+                server.starttls()
+            server.login(SMTP_USER, SMTP_PASSWORD)
+            server.sendmail(SMTP_FROM, to_email, msg.as_string())
+        logger.info("Уведомление об упоминании отправлено на %s", to_email)
+        return True
+    except Exception as e:
+        logger.exception("Ошибка отправки email-уведомления об упоминании: %s", e)
+        return False
