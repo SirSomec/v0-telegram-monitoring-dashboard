@@ -29,6 +29,8 @@ export type UserMe = {
   name: string | null
   isAdmin: boolean
   createdAt: string
+  plan: string
+  planExpiresAt: string | null
 }
 
 type AuthContextValue = {

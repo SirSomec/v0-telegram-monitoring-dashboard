@@ -112,8 +112,8 @@ export default function DashboardPage() {
                   Подпишитесь на группы каналов по тематикам или управляйте своими каналами для мониторинга.
                 </p>
               </div>
-              <ChannelGroupsSection onSubscribedChange={() => setChannelsRefreshKey((k) => k + 1)} />
-              <UserChannelsManager key={channelsRefreshKey} />
+              <ChannelGroupsSection onSubscribedChange={() => setChannelsRefreshKey((k) => k + 1)} canAddResources={user.plan !== "free"} />
+              <UserChannelsManager key={channelsRefreshKey} canAddResources={user.plan !== "free"} />
             </>
           ) : activeNav === "Уведомления" ? (
             <>
@@ -145,7 +145,7 @@ export default function DashboardPage() {
               {/* Keywords + Feed */}
               <div className="grid gap-6 xl:grid-cols-5">
                 <div className="xl:col-span-2">
-                  <KeywordsManager userId={user.id} />
+                  <KeywordsManager userId={user.id} canAddResources={user.plan !== "free"} />
                 </div>
                 <div className="xl:col-span-3">
                   <MentionFeed userId={user.id} />

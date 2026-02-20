@@ -16,8 +16,9 @@ from sqlalchemy.orm import Session, selectinload
 
 from auth_utils import create_token, decode_token, hash_password, verify_password
 from database import get_db, init_db
-from models import Chat, ChatGroup, Keyword, Mention, NotificationSettings, PasswordResetToken, User, user_chat_subscriptions
+from models import Chat, ChatGroup, Keyword, Mention, NotificationSettings, PasswordResetToken, User, user_chat_subscriptions, PlanLimit
 from parser import TelegramScanner
+from plans import PLAN_FREE, PLAN_ORDER, get_effective_plan, get_limits
 from parser_config import (
     get_all_parser_settings,
     get_parser_setting_bool,
@@ -164,12 +165,16 @@ class UserOut(BaseModel):
     name: str | None
     isAdmin: bool
     createdAt: str
+    plan: str = "free"
+    planExpiresAt: str | None = None
 
 
 class UserUpdate(BaseModel):
     email: str | None = None
     name: str | None = None
     isAdmin: bool | None = None
+    plan: str | None = None  # free | basic | pro | business (только админ)
+    planExpiresAt: str | None = None  # ISO datetime или null — снять срок (только админ)
 
 
 class AdminSetPasswordRequest(BaseModel):
@@ -238,6 +243,54 @@ class StatsOut(BaseModel):
     mentionsToday: int
     keywordsCount: int
     leadsCount: int
+
+
+class PlanLimitsOut(BaseModel):
+    maxGroups: int
+    maxChannels: int
+    maxKeywordsExact: int
+    maxKeywordsSemantic: int
+    maxOwnChannels: int
+    label: str
+
+
+class PlanUsageOut(BaseModel):
+    groups: int
+    channels: int
+    keywordsExact: int
+    keywordsSemantic: int
+    ownChannels: int
+
+
+class PlanOut(BaseModel):
+    plan: str
+    planExpiresAt: str | None
+    limits: PlanLimitsOut
+    usage: PlanUsageOut
+
+
+class AdminPlanLimitOut(BaseModel):
+    """Лимиты одного тарифа (для админки)."""
+    planSlug: str
+    label: str
+    maxGroups: int
+    maxChannels: int
+    maxKeywordsExact: int
+    maxKeywordsSemantic: int
+    maxOwnChannels: int
+    canTrack: bool
+
+
+class AdminPlanLimitUpdate(BaseModel):
+    """Обновление лимитов одного тарифа (админ)."""
+    planSlug: str = Field(..., pattern="^(free|basic|pro|business)$")
+    label: str = Field(..., min_length=1, max_length=64)
+    maxGroups: int = Field(..., ge=0)
+    maxChannels: int = Field(..., ge=0)
+    maxKeywordsExact: int = Field(..., ge=0)
+    maxKeywordsSemantic: int = Field(..., ge=0)
+    maxOwnChannels: int = Field(..., ge=0)
+    canTrack: bool = True
 
 
 class MentionLeadPatch(BaseModel):
@@ -377,17 +430,119 @@ def _ensure_default_user(db: Session) -> User:
     return user
 
 
+def _user_plan_expires_iso(u: User) -> str | None:
+    expires = getattr(u, "plan_expires_at", None)
+    if expires is None:
+        return None
+    if expires.tzinfo is None:
+        expires = expires.replace(tzinfo=timezone.utc)
+    return expires.isoformat()
+
+
 def _user_to_out(u: User) -> UserOut:
     created_at = u.created_at
     if created_at.tzinfo is None:
         created_at = created_at.replace(tzinfo=timezone.utc)
+    plan = get_effective_plan(u)
     return UserOut(
         id=u.id,
         email=u.email,
         name=u.name,
         isAdmin=bool(u.is_admin),
         createdAt=created_at.isoformat(),
+        plan=plan,
+        planExpiresAt=_user_plan_expires_iso(u),
     )
+
+
+def _usage_counts(db: Session, user_id: int) -> dict[str, int]:
+    """Текущее использование: groups, channels (всего), keywords_exact, keywords_semantic, own_channels."""
+    groups = db.scalar(select(func.count(ChatGroup.id)).where(ChatGroup.user_id == user_id)) or 0
+    own_chats = db.scalar(select(func.count(Chat.id)).where(Chat.user_id == user_id)) or 0
+    sub_count = db.scalar(
+        select(func.count()).select_from(user_chat_subscriptions).where(
+            user_chat_subscriptions.c.user_id == user_id
+        )
+    ) or 0
+    channels_total = own_chats + sub_count
+    keywords_exact = (
+        db.scalar(
+            select(func.count(Keyword.id)).where(
+                Keyword.user_id == user_id,
+                Keyword.enabled.is_(True),
+                Keyword.use_semantic.is_(False),
+            )
+        )
+        or 0
+    )
+    keywords_semantic = (
+        db.scalar(
+            select(func.count(Keyword.id)).where(
+                Keyword.user_id == user_id,
+                Keyword.enabled.is_(True),
+                Keyword.use_semantic.is_(True),
+            )
+        )
+        or 0
+    )
+    return {
+        "groups": groups,
+        "channels": channels_total,
+        "keywords_exact": keywords_exact,
+        "keywords_semantic": keywords_semantic,
+        "own_channels": own_chats,
+    }
+
+
+def _check_plan_can_track(user: User) -> None:
+    """Поднимает HTTPException 403, если эффективный план не позволяет добавлять ресурсы (free)."""
+    plan = get_effective_plan(user)
+    if plan == PLAN_FREE:
+        raise HTTPException(
+            status_code=403,
+            detail="Тариф «Без оплаты» позволяет только просмотр и выгрузку ранее сохранённых упоминаний. Выберите платный тариф для мониторинга.",
+        )
+
+
+def _check_limits(
+    db: Session,
+    user: User,
+    *,
+    delta_groups: int = 0,
+    delta_channels: int = 0,
+    delta_keywords_exact: int = 0,
+    delta_keywords_semantic: int = 0,
+    delta_own_channels: int = 0,
+) -> None:
+    """Проверяет, не превысят ли текущие значения + дельта лимиты плана. Поднимает HTTPException 403."""
+    plan = get_effective_plan(user)
+    limits = get_limits(plan, db)
+    usage = _usage_counts(db, user.id)
+    if usage["groups"] + delta_groups > limits["max_groups"]:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Лимит групп каналов по тарифу: {limits['max_groups']}. Сейчас: {usage['groups']}.",
+        )
+    if usage["channels"] + delta_channels > limits["max_channels"]:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Лимит отслеживаемых каналов по тарифу: {limits['max_channels']}. Сейчас: {usage['channels']}.",
+        )
+    if usage["keywords_exact"] + delta_keywords_exact > limits["max_keywords_exact"]:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Лимит ключевых слов (точное совпадение): {limits['max_keywords_exact']}. Сейчас: {usage['keywords_exact']}.",
+        )
+    if usage["keywords_semantic"] + delta_keywords_semantic > limits["max_keywords_semantic"]:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Лимит ключевых слов (семантика): {limits['max_keywords_semantic']}. Сейчас: {usage['keywords_semantic']}.",
+        )
+    if usage["own_channels"] + delta_own_channels > limits["max_own_channels"]:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Лимит самостоятельно добавляемых каналов: {limits['max_own_channels']}. Сейчас: {usage['own_channels']}.",
+        )
 
 
 def get_current_user(
@@ -730,6 +885,34 @@ def get_stats(user: User = Depends(get_current_user), db: Session = Depends(get_
     )
 
 
+@app.get("/api/plan", response_model=PlanOut)
+def get_plan(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> PlanOut:
+    """Текущий тариф пользователя, лимиты и использование."""
+    _ensure_default_user(db)
+    plan = get_effective_plan(user)
+    limits_dict = get_limits(plan, db)
+    usage = _usage_counts(db, user.id)
+    return PlanOut(
+        plan=plan,
+        planExpiresAt=_user_plan_expires_iso(user),
+        limits=PlanLimitsOut(
+            maxGroups=limits_dict["max_groups"],
+            maxChannels=limits_dict["max_channels"],
+            maxKeywordsExact=limits_dict["max_keywords_exact"],
+            maxKeywordsSemantic=limits_dict["max_keywords_semantic"],
+            maxOwnChannels=limits_dict["max_own_channels"],
+            label=limits_dict.get("label", plan),
+        ),
+        usage=PlanUsageOut(
+            groups=usage["groups"],
+            channels=usage["channels"],
+            keywordsExact=usage["keywords_exact"],
+            keywordsSemantic=usage["keywords_semantic"],
+            ownChannels=usage["own_channels"],
+        ),
+    )
+
+
 def _get_or_create_notification_settings(db: Session, user_id: int) -> NotificationSettings:
     settings = db.scalar(select(NotificationSettings).where(NotificationSettings.user_id == user_id))
     if settings:
@@ -811,6 +994,14 @@ def list_keywords(user: User = Depends(get_current_user), db: Session = Depends(
 def create_keyword(body: KeywordCreate, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> KeywordOut:
     _ensure_default_user(db)
     user_id = user.id
+    _check_plan_can_track(user)
+    use_semantic = getattr(body, "useSemantic", False)
+    _check_limits(
+        db,
+        user,
+        delta_keywords_exact=0 if use_semantic else 1,
+        delta_keywords_semantic=1 if use_semantic else 0,
+    )
 
     text = body.text.strip()
     if not text:
@@ -947,6 +1138,7 @@ def list_chats(user: User = Depends(get_current_user), db: Session = Depends(get
 def create_chat(body: ChatCreate, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> ChatOut:
     _ensure_default_user(db)
     user_id = user.id
+    _check_plan_can_track(user)
 
     ident = body.identifier.strip()
     if not ident:
@@ -981,6 +1173,7 @@ def create_chat(body: ChatCreate, user: User = Depends(get_current_user), db: Se
             )
         ).first()
         if not already:
+            _check_limits(db, user, delta_channels=1)
             db.execute(
                 user_chat_subscriptions.insert().values(user_id=user_id, chat_id=existing_global.id)
             )
@@ -988,6 +1181,7 @@ def create_chat(body: ChatCreate, user: User = Depends(get_current_user), db: Se
         db.refresh(existing_global)
         return _chat_to_out(existing_global, is_owner=False)
 
+    _check_limits(db, user, delta_channels=1, delta_own_channels=1)
     c = Chat(
         user_id=user_id,
         username=username,
@@ -1109,6 +1303,7 @@ def list_available_chat_groups(user: User = Depends(get_current_user), db: Sessi
 def subscribe_chat_group(group_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
     """Подписаться на все глобальные каналы в группе (мониторинг всех каналов группы сразу)."""
     _ensure_default_user(db)
+    _check_plan_can_track(user)
     g = db.scalar(
         select(ChatGroup).where(ChatGroup.id == group_id).options(selectinload(ChatGroup.chats))
     )
@@ -1118,6 +1313,18 @@ def subscribe_chat_group(group_id: int, user: User = Depends(get_current_user), 
     if g.user_id not in admin_ids:
         raise HTTPException(status_code=404, detail="group not available")
     global_chats = [c for c in (g.chats or []) if c.is_global]
+    new_subs = sum(
+        1
+        for c in global_chats
+        if not db.execute(
+            select(user_chat_subscriptions).where(
+                user_chat_subscriptions.c.user_id == user.id,
+                user_chat_subscriptions.c.chat_id == c.id,
+            )
+        ).first()
+    )
+    if new_subs > 0:
+        _check_limits(db, user, delta_channels=new_subs)
     for c in global_chats:
         existing = db.execute(
             select(user_chat_subscriptions).where(
@@ -1160,6 +1367,8 @@ def unsubscribe_chat_group(group_id: int, user: User = Depends(get_current_user)
 def create_chat_group(body: ChatGroupCreate, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> ChatGroupOut:
     _ensure_default_user(db)
     user_id = user.id
+    _check_plan_can_track(user)
+    _check_limits(db, user, delta_groups=1)
 
     name = body.name.strip()
     if not name:
@@ -1252,6 +1461,19 @@ def update_user(user_id: int, body: UserUpdate, _: User = Depends(get_current_ad
         u.name = body.name
     if body.isAdmin is not None:
         u.is_admin = bool(body.isAdmin)
+    if body.plan is not None and body.plan.strip() in ("free", "basic", "pro", "business"):
+        u.plan_slug = body.plan.strip()
+    if body.planExpiresAt is not None:
+        if body.planExpiresAt.strip() == "":
+            u.plan_expires_at = None
+        else:
+            try:
+                dt = datetime.fromisoformat(body.planExpiresAt.replace("Z", "+00:00"))
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                u.plan_expires_at = dt
+            except ValueError:
+                pass
 
     db.add(u)
     db.commit()
@@ -1297,6 +1519,71 @@ def delete_user(user_id: int, _: User = Depends(get_current_admin), db: Session 
     db.delete(u)
     db.commit()
     return {"ok": True}
+
+
+@app.get("/api/admin/plan-limits", response_model=list[AdminPlanLimitOut])
+def get_admin_plan_limits(_: User = Depends(get_current_admin), db: Session = Depends(get_db)) -> list[AdminPlanLimitOut]:
+    """Список лимитов всех тарифов (из БД или значения по умолчанию)."""
+    _ensure_default_user(db)
+    out: list[AdminPlanLimitOut] = []
+    for slug in PLAN_ORDER:
+        limits = get_limits(slug, db)
+        out.append(
+            AdminPlanLimitOut(
+                planSlug=slug,
+                label=limits.get("label", slug),
+                maxGroups=limits["max_groups"],
+                maxChannels=limits["max_channels"],
+                maxKeywordsExact=limits["max_keywords_exact"],
+                maxKeywordsSemantic=limits["max_keywords_semantic"],
+                maxOwnChannels=limits["max_own_channels"],
+                canTrack=limits.get("can_track", False),
+            )
+        )
+    return out
+
+
+@app.patch("/api/admin/plan-limits", response_model=AdminPlanLimitOut)
+def update_admin_plan_limit(
+    body: AdminPlanLimitUpdate,
+    _: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+) -> AdminPlanLimitOut:
+    """Обновить лимиты тарифа. Создаёт или обновляет строку в plan_limits."""
+    _ensure_default_user(db)
+    row = db.get(PlanLimit, body.planSlug)
+    if row is None:
+        row = PlanLimit(
+            plan_slug=body.planSlug,
+            max_groups=body.maxGroups,
+            max_channels=body.maxChannels,
+            max_keywords_exact=body.maxKeywordsExact,
+            max_keywords_semantic=body.maxKeywordsSemantic,
+            max_own_channels=body.maxOwnChannels,
+            label=body.label,
+            can_track=body.canTrack,
+        )
+        db.add(row)
+    else:
+        row.max_groups = body.maxGroups
+        row.max_channels = body.maxChannels
+        row.max_keywords_exact = body.maxKeywordsExact
+        row.max_keywords_semantic = body.maxKeywordsSemantic
+        row.max_own_channels = body.maxOwnChannels
+        row.label = body.label
+        row.can_track = body.canTrack
+    db.commit()
+    db.refresh(row)
+    return AdminPlanLimitOut(
+        planSlug=row.plan_slug,
+        label=row.label,
+        maxGroups=row.max_groups,
+        maxChannels=row.max_channels,
+        maxKeywordsExact=row.max_keywords_exact,
+        maxKeywordsSemantic=row.max_keywords_semantic,
+        maxOwnChannels=row.max_own_channels,
+        canTrack=row.can_track,
+    )
 
 
 def _parser_status() -> ParserStatusOut:
@@ -1476,6 +1763,7 @@ def subscribe_by_identifier(
 ) -> ChatOut:
     """Подписаться на глобальный канал по ссылке, @username или chat_id."""
     _ensure_default_user(db)
+    _check_plan_can_track(user)
     username, tg_chat_id, invite_hash = _parse_chat_identifier(body.identifier)
 
     c = None
@@ -1513,6 +1801,7 @@ def subscribe_by_identifier(
     ).first()
     if existing:
         return _chat_to_out(c, is_owner=False)
+    _check_limits(db, user, delta_channels=1)
     db.execute(user_chat_subscriptions.insert().values(user_id=user.id, chat_id=c.id))
     db.commit()
     db.refresh(c)
@@ -1521,6 +1810,7 @@ def subscribe_by_identifier(
 
 @app.post("/api/chats/{chat_id}/subscribe", response_model=ChatOut)
 def subscribe_chat(chat_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> ChatOut:
+    _check_plan_can_track(user)
     c = db.scalar(select(Chat).where(Chat.id == chat_id))
     if not c:
         raise HTTPException(status_code=404, detail="chat not found")
@@ -1534,6 +1824,7 @@ def subscribe_chat(chat_id: int, user: User = Depends(get_current_user), db: Ses
     ).first()
     if existing:
         return _chat_to_out(c, is_owner=False)
+    _check_limits(db, user, delta_channels=1)
     db.execute(
         user_chat_subscriptions.insert().values(user_id=user.id, chat_id=chat_id)
     )

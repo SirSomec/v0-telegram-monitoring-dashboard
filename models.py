@@ -44,6 +44,9 @@ class User(Base):
     password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     is_admin: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    # Тариф: free | basic | pro | business; при истечении plan_expires_at эффективный план = free
+    plan_slug: Mapped[str] = mapped_column(String(32), nullable=False, default="free", server_default="'free'")
+    plan_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     keywords: Mapped[list["Keyword"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     mentions: Mapped[list["Mention"]] = relationship(back_populates="user", cascade="all, delete-orphan")
@@ -107,6 +110,20 @@ class ChatGroup(Base):
         secondary=chat_group_links,
         back_populates="groups",
     )
+
+
+class PlanLimit(Base):
+    """Лимиты тарифного плана. Одна строка на план (free, basic, pro, business). При отсутствии строки используются значения по умолчанию из plans.LIMITS."""
+    __tablename__ = "plan_limits"
+
+    plan_slug: Mapped[str] = mapped_column(String(32), primary_key=True)
+    max_groups: Mapped[int] = mapped_column(Integer, nullable=False)
+    max_channels: Mapped[int] = mapped_column(Integer, nullable=False)
+    max_keywords_exact: Mapped[int] = mapped_column(Integer, nullable=False)
+    max_keywords_semantic: Mapped[int] = mapped_column(Integer, nullable=False)
+    max_own_channels: Mapped[int] = mapped_column(Integer, nullable=False)
+    label: Mapped[str] = mapped_column(String(64), nullable=False)
+    can_track: Mapped[bool] = mapped_column(Boolean, nullable=False)
 
 
 class ParserSetting(Base):

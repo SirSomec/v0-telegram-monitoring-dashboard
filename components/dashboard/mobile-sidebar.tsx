@@ -22,7 +22,7 @@ const allNavItems = [
   { icon: Hash, label: "Ключевые слова", visible: true },
   { icon: Users, label: "Группы", visible: true },
   { icon: Bell, label: "Уведомления", visible: true },
-  { icon: CreditCard, label: "Оплата", visible: false },
+  { icon: CreditCard, label: "Оплата", visible: true },
   { icon: Settings, label: "Настройки", visible: true },
 ]
 const navItems = allNavItems.filter((item) => item.visible)

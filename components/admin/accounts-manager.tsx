@@ -15,9 +15,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { Trash2, Plus, RefreshCw, KeyRound } from "lucide-react"
+import { Trash2, Plus, RefreshCw, KeyRound, CreditCard } from "lucide-react"
 import { apiJson } from "@/components/admin/api"
 import type { UserAccount } from "@/components/admin/types"
+
+const PLAN_LABELS: Record<string, string> = {
+  free: "Без оплаты",
+  basic: "Базовый",
+  pro: "Про",
+  business: "Бизнес",
+}
 
 export function AccountsManager() {
   const [users, setUsers] = useState<UserAccount[]>([])
@@ -34,6 +41,11 @@ export function AccountsManager() {
   const [newPasswordConfirm, setNewPasswordConfirm] = useState("")
   const [passwordDialogError, setPasswordDialogError] = useState("")
   const [passwordDialogSubmitting, setPasswordDialogSubmitting] = useState(false)
+
+  const [planDialogUser, setPlanDialogUser] = useState<UserAccount | null>(null)
+  const [planSlug, setPlanSlug] = useState<string>("free")
+  const [planExpiresAt, setPlanExpiresAt] = useState<string>("")
+  const [planDialogSubmitting, setPlanDialogSubmitting] = useState(false)
 
   async function refresh() {
     setLoading(true)
@@ -118,6 +130,38 @@ export function AccountsManager() {
     setNewPassword("")
     setNewPasswordConfirm("")
     setPasswordDialogError("")
+  }
+
+  function openPlanDialog(user: UserAccount) {
+    setPlanDialogUser(user)
+    setPlanSlug(user.plan ?? "free")
+    setPlanExpiresAt(user.planExpiresAt ? user.planExpiresAt.slice(0, 16) : "")
+  }
+
+  function closePlanDialog() {
+    setPlanDialogUser(null)
+    setPlanSlug("free")
+    setPlanExpiresAt("")
+  }
+
+  async function submitPlan() {
+    if (!planDialogUser) return
+    setPlanDialogSubmitting(true)
+    try {
+      await apiJson<UserAccount>(`/api/users/${planDialogUser.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          plan: planSlug,
+          planExpiresAt: planExpiresAt.trim() ? planExpiresAt.trim() : "",
+        }),
+      })
+      closePlanDialog()
+      await refresh()
+    } catch (e) {
+      // keep dialog open
+    } finally {
+      setPlanDialogSubmitting(false)
+    }
   }
 
   function closePasswordDialog() {
@@ -214,6 +258,8 @@ export function AccountsManager() {
                 <TableHead>ID</TableHead>
                 <TableHead>Имя</TableHead>
                 <TableHead>Email</TableHead>
+                <TableHead>Тариф</TableHead>
+                <TableHead>Действует до</TableHead>
                 <TableHead>Роль</TableHead>
                 <TableHead className="text-right">Действия</TableHead>
               </TableRow>
@@ -224,6 +270,12 @@ export function AccountsManager() {
                   <TableCell className="font-mono text-xs">{u.id}</TableCell>
                   <TableCell className="whitespace-normal">{u.name || "—"}</TableCell>
                   <TableCell className="whitespace-normal">{u.email || "—"}</TableCell>
+                  <TableCell>
+                    <span className="text-sm">{PLAN_LABELS[u.plan as keyof typeof PLAN_LABELS] ?? u.plan}</span>
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {u.planExpiresAt ? new Date(u.planExpiresAt).toLocaleDateString("ru-RU") : "—"}
+                  </TableCell>
                   <TableCell>
                     <Button
                       size="sm"
@@ -236,6 +288,16 @@ export function AccountsManager() {
                     </Button>
                   </TableCell>
                   <TableCell className="text-right">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => openPlanDialog(u)}
+                      disabled={loading}
+                      className="text-muted-foreground hover:text-foreground"
+                      title="Назначить тариф"
+                    >
+                      <CreditCard className="size-4" />
+                    </Button>
                     <Button
                       size="sm"
                       variant="ghost"
@@ -261,7 +323,7 @@ export function AccountsManager() {
               ))}
               {users.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={5} className="text-center text-sm text-muted-foreground py-8">
+                  <TableCell colSpan={7} className="text-center text-sm text-muted-foreground py-8">
                     Пользователи не созданы
                   </TableCell>
                 </TableRow>
@@ -270,6 +332,50 @@ export function AccountsManager() {
           </Table>
         </CardContent>
       </Card>
+
+      <Dialog open={!!planDialogUser} onOpenChange={(open) => !open && closePlanDialog()}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Назначить тариф</DialogTitle>
+            <DialogDescription>
+              {planDialogUser && (
+                <>Тариф и срок действия для {planDialogUser.email || planDialogUser.name || `#${planDialogUser.id}`}. По истечении срока учётная запись перейдёт на «Без оплаты».</>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          {planDialogUser && (
+            <div className="grid gap-4 py-2">
+              <div className="space-y-2">
+                <Label>Тариф</Label>
+                <select
+                  value={planSlug}
+                  onChange={(e) => setPlanSlug(e.target.value)}
+                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"
+                >
+                  {(["free", "basic", "pro", "business"] as const).map((p) => (
+                    <option key={p} value={p}>{PLAN_LABELS[p]}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="plan-expires">Действует до (необязательно)</Label>
+                <Input
+                  id="plan-expires"
+                  type="datetime-local"
+                  value={planExpiresAt}
+                  onChange={(e) => setPlanExpiresAt(e.target.value)}
+                  className="bg-secondary border-border"
+                />
+                <p className="text-xs text-muted-foreground">Оставьте пустым, чтобы тариф действовал без срока.</p>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={closePlanDialog} disabled={planDialogSubmitting}>Отмена</Button>
+            <Button onClick={submitPlan} disabled={planDialogSubmitting}>{planDialogSubmitting ? "Сохранение…" : "Сохранить"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={!!passwordDialogUser} onOpenChange={(open) => !open && closePasswordDialog()}>
         <DialogContent>

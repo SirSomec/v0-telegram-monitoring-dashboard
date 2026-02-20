@@ -18,6 +18,7 @@ from telethon.tl.functions.messages import ImportChatInviteRequest
 from database import db_session
 from models import Chat, Keyword, Mention, User, user_chat_subscriptions
 from parser_log import append as log_append, append_exception as log_exception
+from plans import can_track, get_effective_plan
 from parser_config import (
     get_parser_setting_str,
     get_parser_setting_bool,
@@ -354,10 +355,12 @@ class TelegramScanner:
             from sqlalchemy import select
 
             with db_session() as db:
+                users = db.query(User).all()
+                allowed_user_ids = {u.id for u in users if can_track(get_effective_plan(u), db)}
                 rows: list[Chat] = (
                     db.query(Chat).filter(Chat.enabled.is_(True)).order_by(Chat.id.asc()).all()
                 )
-                # Для глобальных каналов — пользователи из подписок; для остальных — владелец
+                # Для глобальных каналов — пользователи из подписок; для остальных — владелец. Только пользователи с платным тарифом.
                 user_ids_by_chat: dict[int, set[int]] = {}
                 for r in rows:
                     if getattr(r, "is_global", False):
@@ -368,9 +371,9 @@ class TelegramScanner:
                                 )
                             ).scalars().all()
                         )
-                        user_ids_by_chat[r.id] = sub_ids
+                        user_ids_by_chat[r.id] = sub_ids & allowed_user_ids
                     else:
-                        user_ids_by_chat[r.id] = {r.user_id}
+                        user_ids_by_chat[r.id] = {r.user_id} if r.user_id in allowed_user_ids else set()
 
             self._chat_ids_to_users = {}
             self._chat_usernames_to_users = {}
@@ -400,7 +403,11 @@ class TelegramScanner:
                             result.append(resolved)
             return result if result else None
 
-        # Один пользователь: TG_CHATS или БД
+        # Один пользователь: TG_CHATS или БД. Не загружаем чаты, если у пользователя тариф free.
+        with db_session() as db:
+            user = db.get(User, self.user_id)
+            if not user or not can_track(get_effective_plan(user), db):
+                return None
         env_chats = _parse_chat_identifiers(get_parser_setting_str("TG_CHATS"))
         if env_chats:
             parsed: list[str | int] = []
@@ -617,6 +624,9 @@ class TelegramScanner:
 
     def _load_keywords(self) -> list[KeywordItem]:
         with db_session() as db:
+            user = db.get(User, self.user_id)
+            if not user or not can_track(get_effective_plan(user), db):
+                return []
             rows = (
                 db.query(Keyword)
                 .filter(Keyword.user_id == self.user_id, Keyword.enabled.is_(True))
@@ -633,6 +643,8 @@ class TelegramScanner:
 
     def _load_keywords_multi(self) -> dict[int, list[KeywordItem]]:
         with db_session() as db:
+            users = db.query(User).all()
+            allowed_user_ids = {u.id for u in users if can_track(get_effective_plan(u), db)}
             rows = (
                 db.query(Keyword)
                 .filter(Keyword.enabled.is_(True))
@@ -641,6 +653,8 @@ class TelegramScanner:
             )
             out: dict[int, list[KeywordItem]] = {}
             for r in rows:
+                if r.user_id not in allowed_user_ids:
+                    continue
                 t = (r.text or "").strip()
                 if t:
                     use_sem = getattr(r, "use_semantic", False)

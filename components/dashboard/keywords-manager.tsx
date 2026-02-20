@@ -12,7 +12,7 @@ import { apiBaseUrl, apiJson } from "@/lib/api"
 
 type KeywordItem = { id: number; text: string; useSemantic: boolean }
 
-export function KeywordsManager({ userId = 1 }: { userId?: number }) {
+export function KeywordsManager({ userId = 1, canAddResources = true }: { userId?: number; canAddResources?: boolean }) {
   const [keywords, setKeywords] = useState<KeywordItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string>("")
@@ -76,6 +76,11 @@ export function KeywordsManager({ userId = 1 }: { userId?: number }) {
   return (
     <Card className="border-border bg-card">
       <CardHeader className="pb-4">
+        {!canAddResources && (
+          <p className="text-xs text-amber-600 bg-amber-500/10 border border-amber-500/30 rounded-md px-3 py-2 mb-2">
+            Тариф «Без оплаты»: добавление ключевых слов недоступно. Доступны только просмотр и выгрузка. Раздел «Оплата» → назначение тарифа администратором.
+          </p>
+        )}
         <div className="flex items-center justify-between">
           <CardTitle className="text-base font-semibold text-card-foreground">
             Управление ключевыми словами
@@ -106,12 +111,13 @@ export function KeywordsManager({ userId = 1 }: { userId?: number }) {
             value={newKeyword}
             onChange={(e) => setNewKeyword(e.target.value)}
             onKeyDown={handleKeyDown}
+            disabled={!canAddResources}
             className="bg-secondary border-border text-foreground placeholder:text-muted-foreground"
           />
           <Button
             onClick={addKeyword}
             size="sm"
-            disabled={adding || !newKeyword.trim()}
+            disabled={!canAddResources || adding || !newKeyword.trim()}
             className="shrink-0 bg-primary text-primary-foreground hover:bg-primary/90"
           >
             {adding ? <Loader2 className="mr-1 size-4 animate-spin" /> : <Plus className="mr-1 size-4" />}

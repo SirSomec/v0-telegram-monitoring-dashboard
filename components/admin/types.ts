@@ -25,6 +25,8 @@ export type UserAccount = {
   name: string | null
   isAdmin: boolean
   createdAt: string
+  plan: string
+  planExpiresAt: string | null
 }
 
 export type ParserStatus = {

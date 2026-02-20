@@ -58,17 +58,61 @@ def _migrate_mentions_sender_username() -> None:
         conn.commit()
 
 
+def _migrate_users_plan() -> None:
+    """Добавить колонки plan_slug и plan_expires_at в users, если их ещё нет."""
+    with engine.connect() as conn:
+        r = conn.execute(
+            text(
+                "SELECT 1 FROM information_schema.columns "
+                "WHERE table_name = 'users' AND column_name = 'plan_slug'"
+            )
+        )
+        if r.scalar() is not None:
+            return
+        conn.execute(text("ALTER TABLE users ADD COLUMN plan_slug VARCHAR(32) NOT NULL DEFAULT 'free'"))
+        conn.execute(text("ALTER TABLE users ADD COLUMN plan_expires_at TIMESTAMP WITH TIME ZONE"))
+        conn.commit()
+
+
+def _migrate_plan_limits() -> None:
+    """Заполнить plan_limits значениями по умолчанию из plans.LIMITS, если таблица пуста."""
+    from sqlalchemy import func, select
+    from models import PlanLimit
+    from plans import LIMITS, PLAN_ORDER
+
+    with SessionLocal() as db:
+        n = db.scalar(select(func.count()).select_from(PlanLimit)) or 0
+        if n > 0:
+            return
+        for slug in PLAN_ORDER:
+            L = LIMITS[slug]
+            row = PlanLimit(
+                plan_slug=slug,
+                max_groups=L["max_groups"],
+                max_channels=L["max_channels"],
+                max_keywords_exact=L["max_keywords_exact"],
+                max_keywords_semantic=L["max_keywords_semantic"],
+                max_own_channels=L["max_own_channels"],
+                label=L["label"],
+                can_track=L["can_track"],
+            )
+            db.add(row)
+        db.commit()
+
+
 def init_db() -> None:
-    from models import Chat, ChatGroup, Keyword, Mention, NotificationSettings, ParserSetting, User, PasswordResetToken  # noqa: F401
+    from models import Chat, ChatGroup, Keyword, Mention, NotificationSettings, ParserSetting, User, PasswordResetToken, PlanLimit  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
     _migrate_keywords_use_semantic()
     _migrate_mentions_sender_username()
+    _migrate_users_plan()
+    _migrate_plan_limits()
 
 
 def drop_all_tables() -> None:
     """Удаляет все таблицы (для пересоздания схемы). Все данные будут потеряны."""
-    from models import Chat, ChatGroup, Keyword, Mention, NotificationSettings, ParserSetting, User, PasswordResetToken  # noqa: F401
+    from models import Chat, ChatGroup, Keyword, Mention, NotificationSettings, ParserSetting, User, PasswordResetToken, PlanLimit  # noqa: F401
 
     Base.metadata.drop_all(bind=engine)
 

@@ -22,7 +22,7 @@ export type ChatGroupAvailableOut = {
   subscribed: boolean
 }
 
-export function ChannelGroupsSection({ onSubscribedChange }: { onSubscribedChange?: () => void }) {
+export function ChannelGroupsSection({ onSubscribedChange, canAddResources = true }: { onSubscribedChange?: () => void; canAddResources?: boolean }) {
   const [groups, setGroups] = useState<ChatGroupAvailableOut[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string>("")
@@ -97,6 +97,11 @@ export function ChannelGroupsSection({ onSubscribedChange }: { onSubscribedChang
         </Button>
       </CardHeader>
       <CardContent className="space-y-4">
+        {!canAddResources && (
+          <p className="text-xs text-amber-600 bg-amber-500/10 border border-amber-500/30 rounded-md px-3 py-2">
+            Тариф «Без оплаты»: подписка на группы недоступна. Раздел «Оплата» или администратор.
+          </p>
+        )}
         {error && (
           <p className="text-sm text-destructive">{error}</p>
         )}
@@ -136,7 +141,7 @@ export function ChannelGroupsSection({ onSubscribedChange }: { onSubscribedChang
                     size="sm"
                     variant={g.subscribed ? "outline" : "default"}
                     className="w-full"
-                    disabled={actingId !== null}
+                    disabled={actingId !== null || (!canAddResources && !g.subscribed)}
                     onClick={() => (g.subscribed ? unsubscribeGroup(g.id) : subscribeGroup(g.id))}
                   >
                     {actingId === g.id ? (

@@ -35,7 +35,7 @@ export type ChatAvailableOut = {
   createdAt: string
 }
 
-export function UserChannelsManager() {
+export function UserChannelsManager({ canAddResources = true }: { canAddResources?: boolean } = {}) {
   const [myChannels, setMyChannels] = useState<ChatOut[]>([])
   const [availableChannels, setAvailableChannels] = useState<ChatAvailableOut[]>([])
   const [loading, setLoading] = useState(false)
@@ -165,6 +165,11 @@ export function UserChannelsManager() {
     <div className="space-y-6">
       <Card className="border-border bg-card">
         <CardHeader>
+          {!canAddResources && (
+            <p className="text-xs text-amber-600 bg-amber-500/10 border border-amber-500/30 rounded-md px-3 py-2 mb-2">
+              Тариф «Без оплаты»: добавление и подписка на каналы недоступны. Раздел «Оплата» или администратор.
+            </p>
+          )}
           <CardTitle className="text-base font-semibold text-card-foreground">Добавить свой канал</CardTitle>
           <p className="text-sm text-muted-foreground">
             Вставьте ссылку (t.me/… или приглашение t.me/joinchat/…), @username или числовой chat_id.
@@ -176,6 +181,7 @@ export function UserChannelsManager() {
               value={identifier}
               onChange={(e) => setIdentifier(e.target.value)}
               placeholder="Ссылка, @username или chat_id"
+              disabled={!canAddResources}
               className="bg-secondary border-border"
             />
             <Input
@@ -197,7 +203,7 @@ export function UserChannelsManager() {
             </Label>
             <Switch id="enabled-add" checked={enabled} onCheckedChange={setEnabled} />
           </div>
-          <Button onClick={createChannel} disabled={loading || !canCreate}>
+          <Button onClick={createChannel} disabled={!canAddResources || loading || !canCreate}>
             <Plus className="mr-2 size-4" />
             Добавить канал
           </Button>
@@ -296,13 +302,14 @@ export function UserChannelsManager() {
                   setSubscribeError("")
                 }}
                 placeholder="Ссылка, @username или chat_id"
+                disabled={!canAddResources}
                 className="bg-secondary border-border"
                 onKeyDown={(e) => e.key === "Enter" && subscribeByIdentifier()}
               />
             </div>
             <Button
               onClick={subscribeByIdentifier}
-              disabled={loading || !subscribeIdentifier.trim()}
+              disabled={!canAddResources || loading || !subscribeIdentifier.trim()}
             >
               <UserPlus className="mr-2 size-4" />
               Подписаться
@@ -355,7 +362,7 @@ export function UserChannelsManager() {
                         <Button
                           size="sm"
                           onClick={() => subscribe(av.id)}
-                          disabled={loading}
+                          disabled={!canAddResources || loading}
                         >
                           <UserPlus className="mr-2 size-4" />
                           Подписаться
