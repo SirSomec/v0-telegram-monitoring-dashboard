@@ -665,6 +665,38 @@ class TelegramScanner:
                     out.setdefault(r.user_id, []).append(KeywordItem(text=t, use_semantic=use_sem))
             return out
 
+    def _message_chunks(self, text: str, max_chunks: int = 6) -> list[str]:
+        """Фрагменты сообщения для сравнения с короткими ключами (тема лучше видна в короткой фразе)."""
+        import re
+        t = (text or "").strip()
+        if not t or len(t) < 10:
+            return []
+        parts = re.split(r"[.!?;\n]+", t)
+        chunks: list[str] = []
+        for p in parts:
+            p = p.strip()
+            if not p:
+                continue
+            words = p.split()
+            if len(words) <= 4:
+                chunks.append(p)
+            else:
+                # Добавить полную фразу и скользящие окна 3–5 слов (напр. «будет стоить 20 рублей»)
+                if len(words) <= 8:
+                    chunks.append(p)
+                for w in (4, 5, 3):
+                    if len(words) < w:
+                        continue
+                    for i in range(0, min(2, len(words) - w + 1)):  # первые 2 окна каждого размера
+                        chunk = " ".join(words[i : i + w])
+                        if chunk not in chunks:
+                            chunks.append(chunk)
+                        if len(chunks) >= max_chunks:
+                            return chunks[:max_chunks]
+            if len(chunks) >= max_chunks:
+                break
+        return chunks[:max_chunks]
+
     def _match_keywords(self, items: list[KeywordItem], text: str, text_cf: str) -> list[tuple[str, float | None]]:
         """Возвращает список (текст ключа, similarity 0–1 или None при точном совпадении)."""
         exact_items = [kw for kw in items if not kw.use_semantic]
@@ -694,10 +726,23 @@ class TelegramScanner:
             return matches
         msg_vec = msg_vectors[0]
         thresh = similarity_threshold()
+        # Для коротких ключей (1–2 слова) дополнительно сравниваем с фрагментами сообщения
+        chunk_vecs: list[list[float]] | None = None
+        chunks = self._message_chunks(text)
+        if chunks:
+            chunk_vectors = embed(chunks)
+            chunk_vecs = chunk_vectors if chunk_vectors else None
         for kw in semantic_items:
             kw_vec = cache.get(kw.text)
             if kw_vec is not None:
                 sim = cosine_similarity(msg_vec, kw_vec)
+                # Короткий ключ (1–2 слова): проверить фрагменты сообщения
+                is_short_key = len(kw.text.split()) <= 2 and len(kw.text.strip()) < 25
+                if sim < thresh and is_short_key and chunk_vecs:
+                    for cvec in chunk_vecs:
+                        s = cosine_similarity(cvec, kw_vec)
+                        if s > sim:
+                            sim = s
                 if sim >= thresh:
                     matches.append((kw.text, sim))
             elif kw.text.casefold() in text_cf:
