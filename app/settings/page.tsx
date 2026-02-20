@@ -7,13 +7,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { ArrowLeft, Settings, Loader2 } from "lucide-react"
+import { ArrowLeft, Settings, Loader2, LogOut } from "lucide-react"
 import { useAuth } from "@/lib/auth-context"
 import { apiBaseUrl, apiJson } from "@/lib/api"
 
 export default function SettingsPage() {
   const router = useRouter()
-  const { user, loading } = useAuth()
+  const { user, loading, logout } = useAuth()
   const [currentPassword, setCurrentPassword] = useState("")
   const [newPassword, setNewPassword] = useState("")
   const [confirmPassword, setConfirmPassword] = useState("")
@@ -161,6 +161,26 @@ export default function SettingsPage() {
                 Сохранить пароль
               </Button>
             </form>
+          </CardContent>
+        </Card>
+
+        <Card className="border-border bg-card">
+          <CardHeader>
+            <CardTitle className="text-base">Выход из аккаунта</CardTitle>
+            <CardDescription>Завершить сессию на этом устройстве</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button
+              variant="outline"
+              className="gap-2 text-muted-foreground hover:text-destructive hover:border-destructive"
+              onClick={() => {
+                logout()
+                router.replace("/auth")
+              }}
+            >
+              <LogOut className="size-4" />
+              Выйти из профиля
+            </Button>
           </CardContent>
         </Card>
       </main>
