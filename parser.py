@@ -512,10 +512,15 @@ class TelegramScanner:
                         db.add(mention)
                         db.flush()
                         message_link = None
-                        if cid is not None and msg_id is not None:
-                            aid = abs(cid)
-                            part = aid % (10**10) if aid >= 10**10 else aid
-                            message_link = f"https://t.me/c/{part}/{msg_id}"
+                        if msg_id is not None:
+                            if chat_username and str(chat_username).strip():
+                                uname = str(chat_username).strip().lstrip("@")
+                                if uname:
+                                    message_link = f"https://t.me/{uname}/{msg_id}"
+                            elif cid is not None:
+                                aid = abs(cid)
+                                part = aid % (10**10) if aid >= 10**10 else aid
+                                message_link = f"https://t.me/c/{part}/{msg_id}"
                         user_link = None
                         if sender_username and str(sender_username).strip():
                             user_link = f"https://t.me/{str(sender_username).strip().lstrip('@')}"
@@ -574,10 +579,15 @@ class TelegramScanner:
                 msg_id = int(msg.id) if getattr(msg, "id", None) is not None else None
                 cid = int(chat_id) if chat_id is not None else None
                 message_link = None
-                if cid is not None and msg_id is not None:
-                    aid = abs(cid)
-                    part = aid % (10**10) if aid >= 10**10 else aid
-                    message_link = f"https://t.me/c/{part}/{msg_id}"
+                if msg_id is not None:
+                    if chat_username and str(chat_username).strip():
+                        uname = str(chat_username).strip().lstrip("@")
+                        if uname:
+                            message_link = f"https://t.me/{uname}/{msg_id}"
+                    elif cid is not None:
+                        aid = abs(cid)
+                        part = aid % (10**10) if aid >= 10**10 else aid
+                        message_link = f"https://t.me/c/{part}/{msg_id}"
                 user_link = None
                 if sender_username and str(sender_username).strip():
                     user_link = f"https://t.me/{str(sender_username).strip().lstrip('@')}"

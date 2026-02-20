@@ -383,8 +383,19 @@ def get_current_admin(user: User = Depends(get_current_user)) -> User:
     return user
 
 
-def _message_link(chat_id: int | None, message_id: int | None) -> str | None:
-    if chat_id is None or message_id is None:
+def _message_link(
+    chat_id: int | None,
+    message_id: int | None,
+    chat_username: str | None = None,
+) -> str | None:
+    """Ссылка на сообщение в Telegram. Для публичных каналов — t.me/username/msg_id, иначе t.me/c/chat_part/msg_id."""
+    if message_id is None:
+        return None
+    if chat_username and str(chat_username).strip():
+        uname = str(chat_username).strip().lstrip("@")
+        if uname:
+            return f"https://t.me/{uname}/{message_id}"
+    if chat_id is None:
         return None
     cid = abs(chat_id)
     part = cid % (10**10) if cid >= 10**10 else cid
@@ -420,7 +431,7 @@ def _mention_to_front(m: Mention) -> MentionOut:
         isLead=bool(m.is_lead),
         isRead=bool(m.is_read),
         createdAt=created_at.isoformat(),
-        messageLink=_message_link(m.chat_id, m.message_id),
+        messageLink=_message_link(m.chat_id, m.message_id, m.chat_username),
         groupLink=_group_link(m.chat_username),
     )
 
@@ -1397,7 +1408,7 @@ def _row_to_group_out(row) -> MentionGroupOut:
         isRead=bool(row.is_read),
         createdAt=created_at.isoformat(),
         groupLink=_group_link(row.chat_username),
-        messageLink=_message_link(row.chat_id, row.message_id),
+        messageLink=_message_link(row.chat_id, row.message_id, row.chat_username),
     )
 
 
