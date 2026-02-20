@@ -733,8 +733,10 @@ def _on_mention_callback(payload: dict[str, Any]) -> None:
 
 
 @app.get("/health")
-def health() -> dict[str, Literal["ok"]]:
-    return {"status": "ok"}
+def health() -> dict[str, Any]:
+    """Проверка доступности API и статуса парсера (running = сервис онлайн в дашборде)."""
+    parser = _parser_status()
+    return {"status": "ok", "parser_running": parser.running}
 
 
 @app.post("/auth/register", response_model=AuthResponse)

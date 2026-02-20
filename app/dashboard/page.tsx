@@ -38,16 +38,20 @@ export default function DashboardPage() {
   useEffect(() => {
     if (!user) return
     let cancelled = false
-    fetch(`${apiBaseUrl()}/health`)
-      .then((r) => r.ok)
-      .then((ok) => {
-        if (!cancelled) setServiceOnline(ok)
-      })
-      .catch(() => {
-        if (!cancelled) setServiceOnline(false)
-      })
+    const check = () =>
+      fetch(`${apiBaseUrl()}/health`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data: { parser_running?: boolean } | null) => {
+          if (!cancelled) setServiceOnline(Boolean(data?.parser_running))
+        })
+        .catch(() => {
+          if (!cancelled) setServiceOnline(false)
+        })
+    check()
+    const interval = setInterval(check, 15000)
     return () => {
       cancelled = true
+      clearInterval(interval)
     }
   }, [user])
 
