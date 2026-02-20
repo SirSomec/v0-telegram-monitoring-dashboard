@@ -45,6 +45,15 @@ const PARSER_HINTS: Record<string, string> = {
     "Вкл: мониторинг по всем пользователям (чаты и ключевые слова из БД). Выкл: один пользователь — укажите TG_USER_ID.",
   TG_USER_ID:
     "ID пользователя в БД в режиме «один пользователь». Список id можно посмотреть во вкладке «Учётки».",
+  // MAX messenger
+  MAX_ACCESS_TOKEN:
+    "Токен доступа бота для API мессенджера MAX. Получить можно при создании бота в платформе MAX для партнёров (dev.max.ru). Без токена парсер MAX не будет запрашивать сообщения.",
+  MAX_BASE_URL:
+    "Базовый URL API MAX. По умолчанию: https://platform-api.max.ru. Менять только если используете другой хост.",
+  MAX_POLL_INTERVAL_SEC:
+    "Интервал опроса чатов MAX в секундах (15–600). Чем меньше — чаще проверка новых сообщений; учтите лимит API (около 30 запросов/сек). Рекомендуется 30–60.",
+  AUTO_START_MAX_SCANNER:
+    "При запуске API автоматически запускать парсер MAX (Long Polling). Иначе запуск только вручную кнопкой «Запустить» в блоке «Парсер MAX».",
 }
 
 function SettingRow({
@@ -115,7 +124,14 @@ export function ParserManager() {
   const [authError, setAuthError] = useState("")
 
   // Локальное состояние формы настроек (для редактирования)
-  const [form, setForm] = useState<ParserSettingsUpdate & { AUTO_START_SCANNER?: boolean; MULTI_USER_SCANNER?: boolean; TG_USER_ID?: number }>({})
+  const [form, setForm] = useState<
+    ParserSettingsUpdate & {
+      AUTO_START_SCANNER?: boolean
+      MULTI_USER_SCANNER?: boolean
+      TG_USER_ID?: number
+      AUTO_START_MAX_SCANNER?: boolean
+    }
+  >({})
 
   async function refresh() {
     setLoading(true)
@@ -132,6 +148,7 @@ export function ParserManager() {
         AUTO_START_SCANNER: settingsData.AUTO_START_SCANNER === "1" || settingsData.AUTO_START_SCANNER?.toLowerCase() === "true",
         MULTI_USER_SCANNER: settingsData.MULTI_USER_SCANNER !== "0" && (settingsData.MULTI_USER_SCANNER === "1" || settingsData.MULTI_USER_SCANNER?.toLowerCase() === "true"),
         TG_USER_ID: settingsData.TG_USER_ID ? parseInt(settingsData.TG_USER_ID, 10) : undefined,
+        AUTO_START_MAX_SCANNER: settingsData.AUTO_START_MAX_SCANNER === "1" || settingsData.AUTO_START_MAX_SCANNER?.toLowerCase() === "true",
       })
     } catch (e) {
       setError(e instanceof Error ? e.message : "Ошибка загрузки статуса")
@@ -273,6 +290,36 @@ export function ParserManager() {
     }
   }
 
+  async function startMaxParser() {
+    setActionLoading(true)
+    setError("")
+    try {
+      const data = await apiJson<ParserStatus>("/api/admin/parser/max/start", {
+        method: "POST",
+      })
+      setStatus(data)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Не удалось запустить парсер MAX")
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  async function stopMaxParser() {
+    setActionLoading(true)
+    setError("")
+    try {
+      const data = await apiJson<ParserStatus>("/api/admin/parser/max/stop", {
+        method: "POST",
+      })
+      setStatus(data)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Не удалось остановить парсер MAX")
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
   function updateForm<K extends keyof ParserSettings>(key: K, value: string) {
     setForm((prev) => ({ ...prev, [key]: value }))
   }
@@ -297,6 +344,10 @@ export function ParserManager() {
         AUTO_START_SCANNER: form.AUTO_START_SCANNER,
         MULTI_USER_SCANNER: form.MULTI_USER_SCANNER,
         TG_USER_ID: form.TG_USER_ID,
+        MAX_ACCESS_TOKEN: (form.MAX_ACCESS_TOKEN ?? settings.MAX_ACCESS_TOKEN) ?? "",
+        MAX_BASE_URL: (form.MAX_BASE_URL ?? settings.MAX_BASE_URL) ?? "",
+        MAX_POLL_INTERVAL_SEC: form.MAX_POLL_INTERVAL_SEC ?? (settings.MAX_POLL_INTERVAL_SEC ? parseInt(settings.MAX_POLL_INTERVAL_SEC, 10) : undefined),
+        AUTO_START_MAX_SCANNER: form.AUTO_START_MAX_SCANNER,
       }
       const data = await apiJson<ParserSettings>("/api/admin/parser/settings", {
         method: "PATCH",
@@ -308,6 +359,7 @@ export function ParserManager() {
         AUTO_START_SCANNER: data.AUTO_START_SCANNER === "1" || data.AUTO_START_SCANNER?.toLowerCase() === "true",
         MULTI_USER_SCANNER: data.MULTI_USER_SCANNER !== "0" && (data.MULTI_USER_SCANNER === "1" || data.MULTI_USER_SCANNER?.toLowerCase() === "true"),
         TG_USER_ID: data.TG_USER_ID ? parseInt(data.TG_USER_ID, 10) : undefined,
+        AUTO_START_MAX_SCANNER: data.AUTO_START_MAX_SCANNER === "1" || data.AUTO_START_MAX_SCANNER?.toLowerCase() === "true",
       })
       setSaveSuccess(true)
       setTimeout(() => setSaveSuccess(false), 3000)
@@ -329,6 +381,7 @@ export function ParserManager() {
   }
 
   const running = status?.running ?? false
+  const maxRunning = status?.maxRunning ?? false
   const modeLabel = status?.multiUser
     ? "Мультипользовательский (чаты и ключевые слова всех пользователей)"
     : status?.userId != null
@@ -401,6 +454,54 @@ export function ParserManager() {
             >
               <RotateCw className="mr-2 size-4" />
               Перезапустить
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <CardTitle>Парсер MAX</CardTitle>
+              <CardDescription>
+                Сканер сообщений мессенджера MAX (Long Polling). Добавьте чаты с источником «MAX» в разделе «Каналы», укажите токен и настройки ниже — затем запустите парсер.
+              </CardDescription>
+            </div>
+            <div className="flex items-center gap-2">
+              <Badge variant={maxRunning ? "default" : "secondary"}>
+                {maxRunning ? "Работает" : "Остановлен"}
+              </Badge>
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={refresh}
+                disabled={loading}
+                aria-label="Обновить статус"
+              >
+                <RefreshCw className={`size-4 ${loading ? "animate-spin" : ""}`} />
+              </Button>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex flex-wrap gap-2">
+            <Button
+              onClick={startMaxParser}
+              disabled={maxRunning || actionLoading}
+              aria-label="Запустить парсер MAX"
+            >
+              <Play className="mr-2 size-4" />
+              Запустить
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={stopMaxParser}
+              disabled={!maxRunning || actionLoading}
+              aria-label="Остановить парсер MAX"
+            >
+              <Square className="mr-2 size-4" />
+              Остановить
             </Button>
           </div>
         </CardContent>
@@ -663,6 +764,92 @@ export function ParserManager() {
                         </TooltipTrigger>
                         <TooltipContent side="right" className="max-w-xs">
                           {PARSER_HINTS.TG_USER_ID}
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  </div>
+                </div>
+              </div>
+
+              <div className="border-t pt-4">
+                <h4 className="mb-3 text-sm font-medium text-muted-foreground">Парсер MAX</h4>
+                <p className="mb-3 text-muted-foreground text-xs">
+                  Настройки для мониторинга чатов мессенджера MAX. Чаты с источником «MAX» добавляются в разделе «Каналы» (идентификатор — ID чата в MAX).
+                </p>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <SettingRow
+                    id="MAX_ACCESS_TOKEN"
+                    label="MAX Access Token"
+                    value={form.MAX_ACCESS_TOKEN ?? settings.MAX_ACCESS_TOKEN ?? ""}
+                    onChange={(v) => updateForm("MAX_ACCESS_TOKEN", v)}
+                    type="password"
+                    placeholder="Токен бота из платформы MAX"
+                    hint={PARSER_HINTS.MAX_ACCESS_TOKEN}
+                  />
+                  <SettingRow
+                    id="MAX_BASE_URL"
+                    label="MAX Base URL"
+                    value={form.MAX_BASE_URL ?? settings.MAX_BASE_URL ?? ""}
+                    onChange={(v) => updateForm("MAX_BASE_URL", v)}
+                    placeholder="https://platform-api.max.ru"
+                    hint={PARSER_HINTS.MAX_BASE_URL}
+                  />
+                  <div className="grid gap-2">
+                    <div className="flex items-center gap-2">
+                      <Label htmlFor="MAX_POLL_INTERVAL_SEC">Интервал опроса (сек)</Label>
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button
+                              type="button"
+                              className="inline-flex text-muted-foreground hover:text-foreground"
+                              aria-label="Подсказка"
+                            >
+                              <HelpCircle className="size-4" />
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent side="right" className="max-w-xs">
+                            {PARSER_HINTS.MAX_POLL_INTERVAL_SEC}
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    </div>
+                    <Input
+                      id="MAX_POLL_INTERVAL_SEC"
+                      type="number"
+                      min={15}
+                      max={600}
+                      value={form.MAX_POLL_INTERVAL_SEC ?? settings.MAX_POLL_INTERVAL_SEC ?? ""}
+                      onChange={(e) =>
+                        setForm((p) => ({
+                          ...p,
+                          MAX_POLL_INTERVAL_SEC: e.target.value ? parseInt(e.target.value, 10) : undefined,
+                        }))
+                      }
+                      placeholder="60"
+                      className="font-mono text-sm w-28"
+                    />
+                  </div>
+                  <div className="flex items-center gap-2 sm:col-span-2">
+                    <Switch
+                      id="AUTO_START_MAX_SCANNER"
+                      checked={form.AUTO_START_MAX_SCANNER ?? false}
+                      onCheckedChange={(v) => setForm((p) => ({ ...p, AUTO_START_MAX_SCANNER: v }))}
+                    />
+                    <Label htmlFor="AUTO_START_MAX_SCANNER">Автозапуск парсера MAX при старте API</Label>
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button
+                            type="button"
+                            className="inline-flex text-muted-foreground hover:text-foreground"
+                            aria-label="Подсказка"
+                          >
+                            <HelpCircle className="size-4" />
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent side="right" className="max-w-xs">
+                          {PARSER_HINTS.AUTO_START_MAX_SCANNER}
                         </TooltipContent>
                       </Tooltip>
                     </TooltipProvider>

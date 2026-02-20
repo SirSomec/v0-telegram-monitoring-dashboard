@@ -34,6 +34,7 @@ export type ParserStatus = {
   running: boolean
   multiUser: boolean
   userId: number | null
+  maxRunning?: boolean
 }
 
 export type ParserSettings = {
@@ -50,6 +51,10 @@ export type ParserSettings = {
   AUTO_START_SCANNER: string
   MULTI_USER_SCANNER: string
   TG_USER_ID: string
+  MAX_ACCESS_TOKEN: string
+  MAX_BASE_URL: string
+  MAX_POLL_INTERVAL_SEC: string
+  AUTO_START_MAX_SCANNER: string
 }
 
 export type ParserSettingsUpdate = Partial<{
@@ -66,5 +71,9 @@ export type ParserSettingsUpdate = Partial<{
   AUTO_START_SCANNER: boolean
   MULTI_USER_SCANNER: boolean
   TG_USER_ID: number
+  MAX_ACCESS_TOKEN: string
+  MAX_BASE_URL: string
+  MAX_POLL_INTERVAL_SEC: number
+  AUTO_START_MAX_SCANNER: boolean
 }>
 
