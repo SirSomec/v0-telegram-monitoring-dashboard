@@ -1062,13 +1062,26 @@ def create_keyword(body: KeywordCreate, user: User = Depends(get_current_user), 
 
 
 @app.delete("/api/keywords/{keyword_id}")
-def delete_keyword(keyword_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+def delete_keyword(
+    keyword_id: int,
+    permanent: bool = False,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
     k = db.scalar(select(Keyword).where(Keyword.id == keyword_id))
     if not k:
         raise HTTPException(status_code=404, detail="keyword not found")
     if k.user_id != user.id:
         raise HTTPException(status_code=403, detail="forbidden")
-    k.enabled = False
+    if permanent:
+        if getattr(k, "enabled", True):
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot permanently delete an active keyword; disable it first.",
+            )
+        db.delete(k)
+    else:
+        k.enabled = False
     db.commit()
     return {"ok": True}
 

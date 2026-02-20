@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
-import { Plus, X, Sparkles, Target, Loader2, RotateCcw } from "lucide-react"
+import { Plus, X, Sparkles, Target, Loader2, RotateCcw, Trash2 } from "lucide-react"
 import { apiBaseUrl, apiJson } from "@/lib/api"
 
 type KeywordItem = { id: number; text: string; useSemantic: boolean; enabled: boolean }
@@ -73,6 +73,16 @@ export function KeywordsManager({ userId = 1, canAddResources = true }: { userId
       setKeywords((prev) => prev.map((k) => (k.id === item.id ? restored : k)))
     } catch (e) {
       setError(e instanceof Error ? e.message : "Ошибка восстановления")
+    }
+  }
+
+  async function permanentDeleteKeyword(item: KeywordItem) {
+    setError("")
+    try {
+      await apiJson<{ ok: boolean }>(`${apiBaseUrl()}/api/keywords/${item.id}?permanent=1`, { method: "DELETE" })
+      setKeywords((prev) => prev.filter((k) => k.id !== item.id))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Ошибка удаления")
     }
   }
 
@@ -191,6 +201,14 @@ export function KeywordsManager({ userId = 1, canAddResources = true }: { userId
                         title="Восстановить"
                       >
                         <RotateCcw className="size-3" />
+                      </button>
+                      <button
+                        onClick={() => permanentDeleteKeyword(item)}
+                        className="rounded-full p-0.5 hover:bg-destructive/20 text-muted-foreground hover:text-destructive transition-colors"
+                        aria-label={`Удалить навсегда ${item.text}`}
+                        title="Удалить навсегда"
+                      >
+                        <Trash2 className="size-3" />
                       </button>
                     </Badge>
                   ))}
