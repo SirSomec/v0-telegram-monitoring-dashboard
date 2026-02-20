@@ -171,6 +171,14 @@ class UserUpdate(BaseModel):
     isAdmin: bool | None = None
 
 
+def _group_link(chat_username: str | None) -> str | None:
+    """Ссылка на группу/канал в Telegram (если есть username)."""
+    if not chat_username or not str(chat_username).strip():
+        return None
+    uname = str(chat_username).strip().lstrip("@")
+    return f"https://t.me/{uname}" if uname else None
+
+
 class MentionOut(BaseModel):
     id: str
     groupName: str
@@ -184,6 +192,25 @@ class MentionOut(BaseModel):
     isLead: bool
     isRead: bool
     createdAt: str
+    messageLink: str | None = None
+    groupLink: str | None = None  # ссылка на группу/канал t.me/chat_username
+
+
+class MentionGroupOut(BaseModel):
+    """Одно сообщение с перечнем всех совпавших ключевых слов."""
+    id: str
+    groupName: str
+    groupIcon: str
+    userName: str
+    userInitials: str
+    userLink: str | None = None
+    message: str
+    keywords: list[str]
+    timestamp: str
+    isLead: bool
+    isRead: bool
+    createdAt: str
+    groupLink: str | None = None
     messageLink: str | None = None
 
 
@@ -387,13 +414,14 @@ def _mention_to_front(m: Mention) -> MentionOut:
         userName=user_name,
         userInitials=_initials(user_name),
         userLink=_user_profile_link(m),
-        message=m.message_text,
+        message=(m.message_text or ""),
         keyword=m.keyword_text,
         timestamp=_humanize_ru(created_at),
         isLead=bool(m.is_lead),
         isRead=bool(m.is_read),
         createdAt=created_at.isoformat(),
         messageLink=_message_link(m.chat_id, m.message_id),
+        groupLink=_group_link(m.chat_username),
     )
 
 
@@ -1327,22 +1355,78 @@ def _mentions_filter_stmt(stmt, user_id: int, unreadOnly: bool, keyword: str | N
     return stmt
 
 
+def _group_keys():
+    return [
+        Mention.user_id,
+        Mention.chat_id,
+        Mention.message_id,
+        Mention.created_at,
+        Mention.message_text,
+        Mention.chat_name,
+        Mention.chat_username,
+        Mention.sender_id,
+        Mention.sender_name,
+        Mention.sender_username,
+    ]
+
+
+def _row_to_group_out(row) -> MentionGroupOut:
+    """Собрать MentionGroupOut из строки сгруппированного запроса."""
+    group_name = (row.chat_name or row.chat_username or "Неизвестный чат").strip()
+    user_name = (row.sender_name or "Неизвестный пользователь").strip()
+    created_at = row.created_at
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    user_link = None
+    if getattr(row, "sender_username", None) and str(row.sender_username).strip():
+        user_link = f"https://t.me/{str(row.sender_username).strip().lstrip('@')}"
+    elif getattr(row, "sender_id", None) is not None:
+        user_link = f"tg://user?id={row.sender_id}"
+    keywords = list(row.keywords) if row.keywords else []
+    return MentionGroupOut(
+        id=str(row.id),
+        groupName=group_name,
+        groupIcon=_initials(group_name),
+        userName=user_name,
+        userInitials=_initials(user_name),
+        userLink=user_link,
+        message=(row.message_text or ""),
+        keywords=keywords,
+        timestamp=_humanize_ru(created_at),
+        isLead=bool(row.is_lead),
+        isRead=bool(row.is_read),
+        createdAt=created_at.isoformat(),
+        groupLink=_group_link(row.chat_username),
+        messageLink=_message_link(row.chat_id, row.message_id),
+    )
+
+
 @app.get("/api/mentions/count", response_model=MentionsCountOut)
 def count_mentions(
     user: User = Depends(get_current_user),
     unreadOnly: bool = False,
     keyword: str | None = None,
     search: str | None = None,
+    grouped: bool = False,
     db: Session = Depends(get_db),
 ) -> MentionsCountOut:
     _ensure_default_user(db)
-    stmt = select(func.count(Mention.id))
-    stmt = _mentions_filter_stmt(stmt, user.id, unreadOnly, keyword, search)
-    total = db.scalar(stmt) or 0
+    if grouped:
+        stmt = (
+            select(*_group_keys())
+            .where(Mention.user_id == user.id)
+        )
+        stmt = _mentions_filter_stmt(stmt, user.id, unreadOnly, keyword, search)
+        subq = stmt.group_by(*_group_keys()).subquery()
+        total = db.scalar(select(func.count()).select_from(subq)) or 0
+    else:
+        stmt = select(func.count(Mention.id))
+        stmt = _mentions_filter_stmt(stmt, user.id, unreadOnly, keyword, search)
+        total = db.scalar(stmt) or 0
     return MentionsCountOut(total=total)
 
 
-@app.get("/api/mentions", response_model=list[MentionOut])
+@app.get("/api/mentions", response_model=list[MentionOut] | list[MentionGroupOut])
 def list_mentions(
     user: User = Depends(get_current_user),
     limit: int = 50,
@@ -1351,11 +1435,35 @@ def list_mentions(
     keyword: str | None = None,
     search: str | None = None,
     sortOrder: Literal["desc", "asc"] = "desc",
+    grouped: bool = False,
     db: Session = Depends(get_db),
-) -> list[MentionOut]:
+) -> list[MentionOut] | list[MentionGroupOut]:
     _ensure_default_user(db)
     limit = max(1, min(500, limit))
     offset = max(0, offset)
+    if grouped:
+        stmt = select(
+            func.min(Mention.id).label("id"),
+            Mention.user_id,
+            Mention.chat_id,
+            Mention.message_id,
+            Mention.created_at,
+            Mention.message_text,
+            Mention.chat_name,
+            Mention.chat_username,
+            Mention.sender_id,
+            Mention.sender_name,
+            Mention.sender_username,
+            func.array_agg(Mention.keyword_text).label("keywords"),
+            func.bool_or(Mention.is_lead).label("is_lead"),
+            func.bool_and(Mention.is_read).label("is_read"),
+        )
+        stmt = _mentions_filter_stmt(stmt, user.id, unreadOnly, keyword, search)
+        stmt = stmt.group_by(*_group_keys())
+        order = desc(Mention.created_at) if sortOrder == "desc" else Mention.created_at
+        stmt = stmt.order_by(order).offset(offset).limit(limit)
+        rows = db.execute(stmt).all()
+        return [_row_to_group_out(row) for row in rows]
     stmt = select(Mention)
     stmt = _mentions_filter_stmt(stmt, user.id, unreadOnly, keyword, search)
     order = desc(Mention.created_at) if sortOrder == "desc" else Mention.created_at
@@ -1407,15 +1515,15 @@ def export_mentions_csv(
     out = io.StringIO()
     writer = csv.writer(out)
     writer.writerow(
-        ["id", "created_at", "chat", "sender", "message", "keyword", "is_lead", "is_read", "message_link"]
+        ["id", "created_at", "chat", "sender", "message", "keyword", "is_lead", "is_read", "user_link"]
     )
     for m in rows:
         created = m.created_at.isoformat() if m.created_at else ""
         chat = (m.chat_name or m.chat_username or "").strip()
         sender = (m.sender_name or "").strip()
-        link = _message_link(m.chat_id, m.message_id) or ""
+        user_link = _user_profile_link(m) or ""
         writer.writerow(
-            [str(m.id), created, chat, sender, (m.message_text or ""), m.keyword_text, m.is_lead, m.is_read, link]
+            [str(m.id), created, chat, sender, (m.message_text or ""), m.keyword_text, m.is_lead, m.is_read, user_link]
         )
     body = out.getvalue().encode("utf-8-sig")
     return Response(
@@ -1444,6 +1552,16 @@ def mark_all_mentions_read(
     return MarkAllReadOut(marked=result.rowcount or 0)
 
 
+def _same_group_where(m: Mention):
+    """Условие WHERE: те же user_id, chat_id, message_id, created_at (одно сообщение — одна группа)."""
+    return (
+        Mention.user_id == m.user_id,
+        Mention.chat_id == m.chat_id,
+        Mention.message_id == m.message_id,
+        Mention.created_at == m.created_at,
+    )
+
+
 @app.patch("/api/mentions/{mention_id}/lead", response_model=MentionOut)
 def set_mention_lead(mention_id: int, body: MentionLeadPatch, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> MentionOut:
     m = db.scalar(select(Mention).where(Mention.id == mention_id))
@@ -1451,8 +1569,8 @@ def set_mention_lead(mention_id: int, body: MentionLeadPatch, user: User = Depen
         raise HTTPException(status_code=404, detail="mention not found")
     if m.user_id != user.id:
         raise HTTPException(status_code=403, detail="forbidden")
-    m.is_lead = bool(body.isLead)
-    db.add(m)
+    where_clauses = _same_group_where(m)
+    db.execute(update(Mention).where(*where_clauses).values(is_lead=bool(body.isLead)))
     db.commit()
     db.refresh(m)
     return _mention_to_front(m)
@@ -1465,8 +1583,8 @@ def set_mention_read(mention_id: int, body: MentionReadPatch, user: User = Depen
         raise HTTPException(status_code=404, detail="mention not found")
     if m.user_id != user.id:
         raise HTTPException(status_code=403, detail="forbidden")
-    m.is_read = bool(body.isRead)
-    db.add(m)
+    where_clauses = _same_group_where(m)
+    db.execute(update(Mention).where(*where_clauses).values(is_read=bool(body.isRead)))
     db.commit()
     db.refresh(m)
     return _mention_to_front(m)

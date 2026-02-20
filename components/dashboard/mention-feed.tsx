@@ -11,7 +11,8 @@ import { getStoredToken } from "@/lib/auth-context"
 
 const FEED_PAGE_SIZE = 10
 
-export interface Mention {
+/** Элемент ленты: одно сообщение, все совпавшие ключевые слова (grouped API). */
+export interface MentionGroup {
   id: string
   groupName: string
   groupIcon: string
@@ -19,33 +20,41 @@ export interface Mention {
   userInitials: string
   userLink?: string | null
   message: string
-  keyword: string
+  keywords: string[]
   timestamp: string
   isLead: boolean
   isRead?: boolean
+  groupLink?: string | null
   messageLink?: string | null
   createdAt?: string
 }
 
-function highlightKeyword(text: string, keyword: string) {
-  const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-  const regex = new RegExp(`(${escaped})`, "gi")
+/** Подсветка всех ключевых слов в тексте (без искажения самого текста). */
+function highlightKeywords(text: string, keywords: string[]) {
+  if (!keywords.length) return <span>{text}</span>
+  const escaped = keywords.map((k) => k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+  const regex = new RegExp(`(${escaped.join("|")})`, "gi")
+  const kwSet = new Set(keywords.map((k) => k.toLowerCase()))
   const parts = text.split(regex)
-  return parts.map((part, i) =>
-    i % 2 === 1 ? (
-      <mark key={i} className="rounded bg-primary/20 px-0.5 text-primary font-medium">
-        {part}
-      </mark>
-    ) : (
-      <span key={i}>{part}</span>
-    )
+  return (
+    <>
+      {parts.map((part, i) =>
+        part && kwSet.has(part.toLowerCase()) ? (
+          <mark key={i} className="rounded bg-primary/20 px-0.5 text-primary font-medium">
+            {part}
+          </mark>
+        ) : (
+          <span key={i}>{part}</span>
+        )
+      )}
+    </>
   )
 }
 
 type KeywordOption = { id: number; text: string }
 
 export function MentionFeed({ userId }: { userId?: number }) {
-  const [mentions, setMentions] = useState<Mention[]>([])
+  const [mentions, setMentions] = useState<MentionGroup[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string>("")
   const [unreadOnly, setUnreadOnly] = useState(false)
@@ -58,6 +67,7 @@ export function MentionFeed({ userId }: { userId?: number }) {
   const [keywords, setKeywords] = useState<KeywordOption[]>([])
   const [exporting, setExporting] = useState(false)
   const wsRef = useRef<WebSocket | null>(null)
+  const fetchPageRef = useRef<() => Promise<void>>(() => Promise.resolve())
   const token = typeof window !== "undefined" ? getStoredToken() : null
 
   const totalPages = Math.max(1, Math.ceil(totalCount / FEED_PAGE_SIZE))
@@ -82,6 +92,7 @@ export function MentionFeed({ userId }: { userId?: number }) {
         limit: String(FEED_PAGE_SIZE),
         offset: String(overrides.offset ?? (page - 1) * FEED_PAGE_SIZE),
         sortOrder,
+        grouped: "true",
       })
       if (unreadOnly) params.set("unreadOnly", "true")
       if (keywordFilter.trim()) params.set("keyword", keywordFilter.trim())
@@ -92,7 +103,7 @@ export function MentionFeed({ userId }: { userId?: number }) {
   )
 
   const countParams = useCallback(() => {
-    const p: string[] = []
+    const p: string[] = ["grouped=true"]
     if (unreadOnly) p.push("unreadOnly=true")
     if (keywordFilter.trim()) p.push(`keyword=${encodeURIComponent(keywordFilter.trim())}`)
     if (searchQuery.trim()) p.push(`search=${encodeURIComponent(searchQuery.trim())}`)
@@ -105,7 +116,7 @@ export function MentionFeed({ userId }: { userId?: number }) {
     try {
       const countQuery = countParams()
       const [data, countRes] = await Promise.all([
-        apiJson<Mention[]>(`${apiBaseUrl()}/api/mentions?${buildParams()}`),
+        apiJson<MentionGroup[]>(`${apiBaseUrl()}/api/mentions?${buildParams()}`),
         apiJson<{ total: number }>(
           `${apiBaseUrl()}/api/mentions/count${countQuery ? `?${countQuery}` : ""}`
         ),
@@ -118,6 +129,8 @@ export function MentionFeed({ userId }: { userId?: number }) {
       setLoading(false)
     }
   }, [buildParams, countParams])
+
+  fetchPageRef.current = fetchPage
 
   useEffect(() => {
     fetchPage()
@@ -133,14 +146,13 @@ export function MentionFeed({ userId }: { userId?: number }) {
       try {
         const payload = JSON.parse(event.data as string)
         if (payload.type === "init" && Array.isArray(payload.data)) {
-          setMentions(payload.data)
-          setTotalCount((c) => (payload.data.length > 0 ? payload.data.length : c))
+          fetchPageRef.current()
         }
         if (payload.type === "mention" && payload.data) {
-          const data = payload.data as Mention & { userId?: number }
+          const data = payload.data as { userId?: number }
           if (data.userId === undefined || data.userId === userId) {
-            setMentions((prev) => [data, ...prev])
             setTotalCount((c) => c + 1)
+            fetchPageRef.current()
           }
         }
       } catch {
@@ -342,25 +354,27 @@ export function MentionFeed({ userId }: { userId?: number }) {
                     </Badge>
                   </div>
 
-                  <p className="mt-2 text-sm leading-relaxed text-secondary-foreground">
-                    {highlightKeyword(mention.message, mention.keyword)}
+                  <p className="mt-2 text-sm leading-relaxed text-secondary-foreground whitespace-pre-wrap">
+                    {highlightKeywords(mention.message, mention.keywords)}
                   </p>
 
                   <div className="mt-3 flex items-center gap-2 flex-wrap">
-                    <Badge variant="secondary" className="bg-primary/10 text-primary border-0 text-xs">
-                      {mention.keyword}
-                    </Badge>
+                    {mention.keywords.map((kw) => (
+                      <Badge key={kw} variant="secondary" className="bg-primary/10 text-primary border-0 text-xs">
+                        {kw}
+                      </Badge>
+                    ))}
 
                     <div className="ml-auto flex items-center gap-2 flex-wrap">
-                      {mention.messageLink ? (
+                      {(mention.groupLink || mention.messageLink) ? (
                         <a
-                          href={mention.messageLink}
+                          href={mention.groupLink || mention.messageLink || "#"}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground"
                         >
                           <ExternalLink className="size-3" />
-                          К сообщению
+                          {mention.groupLink ? "В группу" : "К сообщению"}
                         </a>
                       ) : null}
                       {!mention.isRead ? (

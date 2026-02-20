@@ -452,10 +452,11 @@ class TelegramScanner:
 
     async def _handle_message(self, event: events.NewMessage.Event) -> None:
         msg = event.message
-        text = (msg.message or "").strip()
+        text_raw = msg.message or ""
+        text = text_raw.strip()
         if not text:
             return
-
+        # Сохраняем в БД исходный текст без искажений; для поиска по ключам — нормализованная строка
         text_cf = text.casefold()
 
         chat = await event.get_chat()
@@ -496,7 +497,7 @@ class TelegramScanner:
                         mention = Mention(
                             user_id=uid,
                             keyword_text=kw,
-                            message_text=text,
+                            message_text=text_raw,
                             chat_id=cid,
                             chat_name=chat_title,
                             chat_username=chat_username,
@@ -530,7 +531,7 @@ class TelegramScanner:
                                 "userName": (sender_name or "Неизвестный пользователь"),
                                 "userInitials": _initials(sender_name),
                                 "userLink": user_link,
-                                "message": text,
+                                "message": text_raw,
                                 "keyword": kw,
                                 "timestamp": _humanize_ru(created_at),
                                 "isLead": False,
@@ -556,7 +557,7 @@ class TelegramScanner:
                 mention = Mention(
                     user_id=self.user_id,
                     keyword_text=kw,
-                    message_text=text,
+                    message_text=text_raw,
                     chat_id=int(chat_id) if chat_id is not None else None,
                     chat_name=chat_title,
                     chat_username=chat_username,
@@ -591,7 +592,7 @@ class TelegramScanner:
                         "userName": (sender_name or "Неизвестный пользователь"),
                         "userInitials": _initials(sender_name),
                         "userLink": user_link,
-                        "message": text,
+                        "message": text_raw,
                         "keyword": kw,
                         "timestamp": _humanize_ru(created_at),
                         "isLead": False,
