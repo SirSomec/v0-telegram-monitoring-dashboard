@@ -424,11 +424,14 @@ class ConnectionManager:
 
 
 def _cors_config() -> dict:
-    raw = os.getenv("CORS_ORIGINS", "").strip()
+    raw = (os.getenv("CORS_ORIGINS") or "").strip()
+    # Старый дефолт из docker-compose — разрешаем любой origin (работает доступ по домену и по IP)
+    if raw == "http://localhost:3000,http://127.0.0.1:3000":
+        raw = ""
     if raw:
         origins = [x.strip() for x in raw.split(",") if x.strip()]
         return {"allow_origins": origins, "allow_origin_regex": None}
-    # Один сервер (фронт :3000, бэкенд :8000) — разрешаем любой origin, в .env ничего не нужно
+    # Пусто или не задано — разрешаем любой origin (https?://.*)
     return {"allow_origins": [], "allow_origin_regex": r"https?://.*"}
 
 
