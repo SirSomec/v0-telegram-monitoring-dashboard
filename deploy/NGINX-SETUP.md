@@ -57,17 +57,19 @@ sudo systemctl reload nginx
 
 В `.env` на сервере:
 
-- **NEXT_PUBLIC_API_URL** — оставьте **пустым** или не задавайте. Тогда фронт ходит на тот же хост (`/api`, `/auth`, `/ws`), и Nginx проксирует на бэкенд.
-- **CORS_ORIGINS** — укажите домен и при необходимости IP (для доступа по IP с того же сервера можно не добавлять):
+- **NEXT_PUBLIC_API_URL** — оставьте **пустым** или не задавайте. Тогда фронт ходит на тот же хост (`/api`, `/auth`, `/ws`), и Nginx проксирует на бэкенд.  
+  **Важно:** если эта переменная задана (например `http://IP:8000`), при входе по домену регистрация/авторизация могут не работать (запросы уходят на порт 8000, CORS или фаервол блокируют). По IP:3000 при этом всё работает. Решение: очистить `NEXT_PUBLIC_API_URL` и пересобрать фронт (см. ниже).
+- **CORS_ORIGINS** — укажите домен и при необходимости IP:
 
   ```env
   CORS_ORIGINS=https://integration-wa.ru,http://integration-wa.ru
   ```
 
-После смены `.env` перезапустите бэкенд:
+После смены `.env` перезапустите бэкенд и при смене `NEXT_PUBLIC_API_URL` — пересоберите фронт:
 
 ```bash
-docker compose up -d --force-recreate backend
+docker compose build --no-cache frontend
+docker compose up -d --force-recreate
 ```
 
 ### 6. HTTPS (рекомендуется для продакшена)

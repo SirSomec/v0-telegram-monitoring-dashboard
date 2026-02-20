@@ -58,10 +58,9 @@ export async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
 /** URL для WebSocket упоминаний. Требуется токен (передаётся в query). */
 export function wsMentionsUrl(token: string | null): string {
   let base = getApiUrl()
-  // Когда API идёт через прокси (base пустой), WS на бэкенде — используем тот же хост, порт 8000
+  // Когда API через тот же origin (base пустой) — WS тоже через тот же хост, Nginx проксирует /ws
   if (typeof window !== "undefined" && !base) {
-    const { protocol, hostname } = window.location
-    base = `${protocol}//${hostname}:8000`
+    base = window.location.origin
   }
   const wsBase = base.replace(/^http/, "ws")
   if (!token) return `${wsBase}/ws/mentions`
