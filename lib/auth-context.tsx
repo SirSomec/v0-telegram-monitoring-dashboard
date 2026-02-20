@@ -10,15 +10,12 @@ import {
 } from "react"
 import { apiBaseUrl, apiJson } from "@/lib/api"
 
-/** Базовый URL API: из env или тот же хост:8000 (деплой на одном сервере). */
+/** Базовый URL для /auth/*: как apiBaseUrl; при том же origin — пустая строка (Nginx проксирует /auth на бэкенд). */
 function authApiBase(): string {
   const base = apiBaseUrl()
   if (base) return base
-  if (typeof window !== "undefined") {
-    const { protocol, hostname } = window.location
-    return `${protocol}//${hostname}:8000`
-  }
-  return "http://127.0.0.1:8000"
+  if (typeof window !== "undefined") return ""
+  return process.env.API_PROXY_TARGET || "http://127.0.0.1:8000"
 }
 
 const TOKEN_KEY = "telescope_token"
