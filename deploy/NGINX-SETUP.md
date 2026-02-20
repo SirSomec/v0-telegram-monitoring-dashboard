@@ -51,7 +51,8 @@ sudo systemctl reload nginx
 
 - **http://integration-wa.ru** — фронтенд  
 - **http://IP_СЕРВЕРА** — тот же фронтенд (благодаря `default_server`)  
-- **http://integration-wa.ru/api/...** и **http://IP_СЕРВЕРА/api/...** — бэкенд
+- **http://integration-wa.ru/api/...** — бэкенд (Nginx проксирует)  
+- **http://integration-wa.ru/auth/...** (логин, регистрация) — запрос идёт на фронт, Next.js проксирует на бэкенд (так же, как при доступе по IP:3000)
 
 ### 5. Переменные окружения на сервере
 
@@ -119,14 +120,6 @@ server {
     }
 
     location /api {
-        proxy_pass http://127.0.0.1:8000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-
-    location /auth {
         proxy_pass http://127.0.0.1:8000;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
