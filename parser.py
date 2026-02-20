@@ -499,7 +499,7 @@ class TelegramScanner:
             for uid in user_ids:
                 items = keywords_by_user.get(uid, [])
                 matches = self._match_keywords(items, text, text_cf)
-                for kw in matches:
+                for kw, sim in matches:
                     with db_session() as db:
                         mention = Mention(
                             user_id=uid,
@@ -514,6 +514,7 @@ class TelegramScanner:
                             sender_username=sender_username,
                             is_read=False,
                             is_lead=False,
+                            semantic_similarity=sim,
                             created_at=created_at,
                         )
                         db.add(mention)
@@ -550,6 +551,7 @@ class TelegramScanner:
                                 "isRead": False,
                                 "createdAt": created_at.isoformat(),
                                 "messageLink": message_link,
+                                "topicMatchPercent": round(sim * 100) if sim is not None else None,
                             },
                         }
                     if self.on_mention:
@@ -564,7 +566,7 @@ class TelegramScanner:
             return
 
         # Записываем mention для каждого совпавшего keyword (можно поменять на “первое совпадение” при желании)
-        for kw in matches:
+        for kw, sim in matches:
             with db_session() as db:
                 mention = Mention(
                     user_id=self.user_id,
@@ -579,6 +581,7 @@ class TelegramScanner:
                     sender_username=sender_username,
                     is_read=False,
                     is_lead=False,
+                    semantic_similarity=sim,
                     created_at=created_at,
                 )
                 db.add(mention)
@@ -616,6 +619,7 @@ class TelegramScanner:
                         "isRead": False,
                         "createdAt": created_at.isoformat(),
                         "messageLink": message_link,
+                        "topicMatchPercent": round(sim * 100) if sim is not None else None,
                     },
                 }
 
@@ -661,39 +665,42 @@ class TelegramScanner:
                     out.setdefault(r.user_id, []).append(KeywordItem(text=t, use_semantic=use_sem))
             return out
 
-    def _match_keywords(self, items: list[KeywordItem], text: str, text_cf: str) -> list[str]:
-        """Возвращает список текстов ключевых слов, совпавших с сообщением (точное и/или семантическое)."""
+    def _match_keywords(self, items: list[KeywordItem], text: str, text_cf: str) -> list[tuple[str, float | None]]:
+        """Возвращает список (текст ключа, similarity 0–1 или None при точном совпадении)."""
         exact_items = [kw for kw in items if not kw.use_semantic]
         semantic_items = [kw for kw in items if kw.use_semantic]
-        matches: list[str] = [kw.text for kw in exact_items if kw.text.casefold() in text_cf]
+        matches: list[tuple[str, float | None]] = [
+            (kw.text, None) for kw in exact_items if kw.text.casefold() in text_cf
+        ]
         if not semantic_items:
             return matches
         cache = self._embedding_cache
         if cache is None or embed is None or cosine_similarity is None or similarity_threshold is None:
             for kw in semantic_items:
                 if kw.text.casefold() in text_cf:
-                    matches.append(kw.text)
+                    matches.append((kw.text, None))
             return matches
         cache.update([kw.text for kw in semantic_items])
         if not cache.is_available():
             for kw in semantic_items:
                 if kw.text.casefold() in text_cf:
-                    matches.append(kw.text)
+                    matches.append((kw.text, None))
             return matches
         msg_vectors = embed([text])
         if not msg_vectors:
             for kw in semantic_items:
                 if kw.text.casefold() in text_cf:
-                    matches.append(kw.text)
+                    matches.append((kw.text, None))
             return matches
         msg_vec = msg_vectors[0]
         thresh = similarity_threshold()
         for kw in semantic_items:
             kw_vec = cache.get(kw.text)
-            if kw_vec is not None and cosine_similarity(msg_vec, kw_vec) >= thresh:
-                matches.append(kw.text)
-            elif kw_vec is None:
-                if kw.text.casefold() in text_cf:
-                    matches.append(kw.text)
+            if kw_vec is not None:
+                sim = cosine_similarity(msg_vec, kw_vec)
+                if sim >= thresh:
+                    matches.append((kw.text, sim))
+            elif kw.text.casefold() in text_cf:
+                matches.append((kw.text, None))
         return matches
 

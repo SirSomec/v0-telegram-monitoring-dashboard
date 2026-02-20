@@ -105,6 +105,21 @@ def _migrate_mentions_source() -> None:
         conn.commit()
 
 
+def _migrate_mentions_semantic_similarity() -> None:
+    """Добавить колонку semantic_similarity в mentions (процент совпадения с темой при семантическом поиске)."""
+    with engine.connect() as conn:
+        r = conn.execute(
+            text(
+                "SELECT 1 FROM information_schema.columns "
+                "WHERE table_name = 'mentions' AND column_name = 'semantic_similarity'"
+            )
+        )
+        if r.scalar() is not None:
+            return
+        conn.execute(text("ALTER TABLE mentions ADD COLUMN semantic_similarity DOUBLE PRECISION"))
+        conn.commit()
+
+
 def _migrate_plan_limits() -> None:
     """Заполнить plan_limits значениями по умолчанию из plans.LIMITS, если таблица пуста."""
     from sqlalchemy import func, select
@@ -140,6 +155,7 @@ def init_db() -> None:
     _migrate_users_plan()
     _migrate_chats_source_and_max_chat_id()
     _migrate_mentions_source()
+    _migrate_mentions_semantic_similarity()
     _migrate_plan_limits()
 
 

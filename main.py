@@ -225,6 +225,7 @@ class MentionOut(BaseModel):
     messageLink: str | None = None
     groupLink: str | None = None  # ссылка на группу/канал t.me/chat_username
     source: str = "telegram"
+    topicMatchPercent: int | None = None  # % совпадения с темой (семантика), 0–100
 
 
 class MentionGroupOut(BaseModel):
@@ -244,6 +245,7 @@ class MentionGroupOut(BaseModel):
     groupLink: str | None = None
     messageLink: str | None = None
     source: str = "telegram"
+    topicMatchPercent: int | None = None  # макс. % совпадения с темой по семантике среди ключей
 
 
 class StatsOut(BaseModel):
@@ -624,6 +626,8 @@ def _mention_to_front(m: Mention) -> MentionOut:
     if created_at.tzinfo is None:
         created_at = created_at.replace(tzinfo=timezone.utc)
     source = getattr(m, "source", None) or CHAT_SOURCE_TELEGRAM
+    sim = getattr(m, "semantic_similarity", None)
+    topic_pct = round(sim * 100) if sim is not None else None
     return MentionOut(
         id=str(m.id),
         groupName=group_name,
@@ -640,6 +644,7 @@ def _mention_to_front(m: Mention) -> MentionOut:
         messageLink=_message_link(m.chat_id, m.message_id, m.chat_username),
         groupLink=_group_link(m.chat_username),
         source=source,
+        topicMatchPercent=topic_pct,
     )
 
 
@@ -2056,6 +2061,8 @@ def _row_to_group_out(row) -> MentionGroupOut:
         user_link = f"tg://user?id={row.sender_id}"
     keywords = list(row.keywords) if row.keywords else []
     src = getattr(row, "source", None) or CHAT_SOURCE_TELEGRAM
+    max_sim = getattr(row, "max_semantic_similarity", None)
+    topic_pct = round(max_sim * 100) if max_sim is not None else None
     return MentionGroupOut(
         id=str(row.id),
         groupName=group_name,
@@ -2072,6 +2079,7 @@ def _row_to_group_out(row) -> MentionGroupOut:
         groupLink=_group_link(row.chat_username),
         messageLink=_message_link(row.chat_id, row.message_id, row.chat_username),
         source=src,
+        topicMatchPercent=topic_pct,
     )
 
 
@@ -2134,6 +2142,7 @@ def list_mentions(
             func.array_agg(Mention.keyword_text).label("keywords"),
             func.bool_or(Mention.is_lead).label("is_lead"),
             func.bool_and(Mention.is_read).label("is_read"),
+            func.max(Mention.semantic_similarity).label("max_semantic_similarity"),
         )
         stmt = _mentions_filter_stmt(stmt, user.id, unreadOnly, keyword, search, source)
         stmt = stmt.group_by(*_group_keys())

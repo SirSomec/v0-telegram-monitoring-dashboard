@@ -27,6 +27,8 @@ export interface MentionGroup {
   groupLink?: string | null
   messageLink?: string | null
   createdAt?: string
+  /** % совпадения с темой по семантике (0–100), только при семантическом совпадении */
+  topicMatchPercent?: number | null
 }
 
 /** Подсветка всех ключевых слов в тексте (без искажения самого текста). */
@@ -364,6 +366,11 @@ export function MentionFeed({ userId }: { userId?: number }) {
                         {kw}
                       </Badge>
                     ))}
+                    {mention.topicMatchPercent != null && (
+                      <Badge variant="outline" className="text-xs font-mono border-primary/30 text-primary">
+                        Совпадение с темой: {mention.topicMatchPercent}%
+                      </Badge>
+                    )}
 
                     <div className="ml-auto flex items-center gap-2 flex-wrap">
                       {(mention.groupLink || mention.messageLink) ? (
