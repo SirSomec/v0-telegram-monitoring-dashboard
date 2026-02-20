@@ -177,6 +177,7 @@ class MentionOut(BaseModel):
     groupIcon: str
     userName: str
     userInitials: str
+    userLink: str | None = None  # ссылка на профиль TG: t.me/username или tg://user?id=...
     message: str
     keyword: str
     timestamp: str
@@ -363,6 +364,16 @@ def _message_link(chat_id: int | None, message_id: int | None) -> str | None:
     return f"https://t.me/c/{part}/{message_id}"
 
 
+def _user_profile_link(m: Mention) -> str | None:
+    """Ссылка на профиль пользователя в Telegram."""
+    if getattr(m, "sender_username", None) and str(m.sender_username).strip():
+        uname = str(m.sender_username).strip().lstrip("@")
+        return f"https://t.me/{uname}" if uname else None
+    if m.sender_id is not None:
+        return f"tg://user?id={m.sender_id}"
+    return None
+
+
 def _mention_to_front(m: Mention) -> MentionOut:
     group_name = (m.chat_name or m.chat_username or "Неизвестный чат").strip()
     user_name = (m.sender_name or "Неизвестный пользователь").strip()
@@ -375,6 +386,7 @@ def _mention_to_front(m: Mention) -> MentionOut:
         groupIcon=_initials(group_name),
         userName=user_name,
         userInitials=_initials(user_name),
+        userLink=_user_profile_link(m),
         message=m.message_text,
         keyword=m.keyword_text,
         timestamp=_humanize_ru(created_at),
@@ -1300,6 +1312,36 @@ def delete_chat(chat_id: int, user: User = Depends(get_current_user), db: Sessio
     return {"ok": True}
 
 
+class MentionsCountOut(BaseModel):
+    total: int
+
+
+def _mentions_filter_stmt(stmt, user_id: int, unreadOnly: bool, keyword: str | None, search: str | None):
+    stmt = stmt.where(Mention.user_id == user_id)
+    if unreadOnly:
+        stmt = stmt.where(Mention.is_read.is_(False))
+    if keyword is not None and keyword.strip():
+        stmt = stmt.where(Mention.keyword_text == keyword.strip())
+    if search is not None and search.strip():
+        stmt = stmt.where(Mention.message_text.ilike(f"%{search.strip()}%"))
+    return stmt
+
+
+@app.get("/api/mentions/count", response_model=MentionsCountOut)
+def count_mentions(
+    user: User = Depends(get_current_user),
+    unreadOnly: bool = False,
+    keyword: str | None = None,
+    search: str | None = None,
+    db: Session = Depends(get_db),
+) -> MentionsCountOut:
+    _ensure_default_user(db)
+    stmt = select(func.count(Mention.id))
+    stmt = _mentions_filter_stmt(stmt, user.id, unreadOnly, keyword, search)
+    total = db.scalar(stmt) or 0
+    return MentionsCountOut(total=total)
+
+
 @app.get("/api/mentions", response_model=list[MentionOut])
 def list_mentions(
     user: User = Depends(get_current_user),
@@ -1307,22 +1349,22 @@ def list_mentions(
     offset: int = 0,
     unreadOnly: bool = False,
     keyword: str | None = None,
+    search: str | None = None,
+    sortOrder: Literal["desc", "asc"] = "desc",
     db: Session = Depends(get_db),
 ) -> list[MentionOut]:
     _ensure_default_user(db)
     limit = max(1, min(500, limit))
     offset = max(0, offset)
-    stmt = select(Mention).where(Mention.user_id == user.id)
-    if unreadOnly:
-        stmt = stmt.where(Mention.is_read.is_(False))
-    if keyword is not None and keyword.strip():
-        stmt = stmt.where(Mention.keyword_text == keyword.strip())
+    stmt = select(Mention)
+    stmt = _mentions_filter_stmt(stmt, user.id, unreadOnly, keyword, search)
+    order = desc(Mention.created_at) if sortOrder == "desc" else Mention.created_at
     rows = (
         db.scalars(
-            stmt.order_by(desc(Mention.created_at)).offset(offset).limit(limit)
+            stmt.order_by(order).offset(offset).limit(limit)
         ).all()
     )
-    return [_mention_to_front(m) for m in rows][::-1]
+    return [_mention_to_front(m) for m in rows]
 
 
 _EXPORT_MAX = 10_000

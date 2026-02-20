@@ -468,7 +468,8 @@ class TelegramScanner:
         sender_id = getattr(sender, "id", None)
         first_name = getattr(sender, "first_name", None) or ""
         last_name = getattr(sender, "last_name", None) or ""
-        sender_name = (f"{first_name} {last_name}").strip() or getattr(sender, "username", None)
+        sender_username = getattr(sender, "username", None)
+        sender_name = (f"{first_name} {last_name}").strip() or sender_username
 
         created_at = msg.date
         if created_at is None:
@@ -502,6 +503,7 @@ class TelegramScanner:
                             message_id=msg_id,
                             sender_id=int(sender_id) if sender_id is not None else None,
                             sender_name=sender_name,
+                            sender_username=sender_username,
                             is_read=False,
                             is_lead=False,
                             created_at=created_at,
@@ -513,6 +515,11 @@ class TelegramScanner:
                             aid = abs(cid)
                             part = aid % (10**10) if aid >= 10**10 else aid
                             message_link = f"https://t.me/c/{part}/{msg_id}"
+                        user_link = None
+                        if sender_username and str(sender_username).strip():
+                            user_link = f"https://t.me/{str(sender_username).strip().lstrip('@')}"
+                        elif sender_id is not None:
+                            user_link = f"tg://user?id={sender_id}"
                         payload = {
                             "type": "mention",
                             "data": {
@@ -522,6 +529,7 @@ class TelegramScanner:
                                 "groupIcon": _initials(chat_title or chat_username),
                                 "userName": (sender_name or "Неизвестный пользователь"),
                                 "userInitials": _initials(sender_name),
+                                "userLink": user_link,
                                 "message": text,
                                 "keyword": kw,
                                 "timestamp": _humanize_ru(created_at),
@@ -555,6 +563,7 @@ class TelegramScanner:
                     message_id=int(msg.id) if getattr(msg, "id", None) is not None else None,
                     sender_id=int(sender_id) if sender_id is not None else None,
                     sender_name=sender_name,
+                    sender_username=sender_username,
                     is_read=False,
                     is_lead=False,
                     created_at=created_at,
@@ -568,6 +577,11 @@ class TelegramScanner:
                     aid = abs(cid)
                     part = aid % (10**10) if aid >= 10**10 else aid
                     message_link = f"https://t.me/c/{part}/{msg_id}"
+                user_link = None
+                if sender_username and str(sender_username).strip():
+                    user_link = f"https://t.me/{str(sender_username).strip().lstrip('@')}"
+                elif sender_id is not None:
+                    user_link = f"tg://user?id={sender_id}"
                 payload = {
                     "type": "mention",
                     "data": {
@@ -576,6 +590,7 @@ class TelegramScanner:
                         "groupIcon": _initials(chat_title or chat_username),
                         "userName": (sender_name or "Неизвестный пользователь"),
                         "userInitials": _initials(sender_name),
+                        "userLink": user_link,
                         "message": text,
                         "keyword": kw,
                         "timestamp": _humanize_ru(created_at),

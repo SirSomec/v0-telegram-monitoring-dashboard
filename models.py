@@ -134,6 +134,7 @@ class Mention(Base):
 
     sender_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
     sender_name: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    sender_username: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     is_read: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     is_lead: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")

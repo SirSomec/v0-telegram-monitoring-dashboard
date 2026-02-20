@@ -43,11 +43,27 @@ def _migrate_keywords_use_semantic() -> None:
         conn.commit()
 
 
+def _migrate_mentions_sender_username() -> None:
+    """Добавить колонку sender_username в mentions, если её ещё нет."""
+    with engine.connect() as conn:
+        r = conn.execute(
+            text(
+                "SELECT 1 FROM information_schema.columns "
+                "WHERE table_name = 'mentions' AND column_name = 'sender_username'"
+            )
+        )
+        if r.scalar() is not None:
+            return
+        conn.execute(text("ALTER TABLE mentions ADD COLUMN sender_username VARCHAR(128)"))
+        conn.commit()
+
+
 def init_db() -> None:
     from models import Chat, ChatGroup, Keyword, Mention, ParserSetting, User  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
     _migrate_keywords_use_semantic()
+    _migrate_mentions_sender_username()
 
 
 def drop_all_tables() -> None:

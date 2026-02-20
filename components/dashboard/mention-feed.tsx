@@ -5,11 +5,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
-import { ExternalLink, UserPlus, Check, MessageSquare, Loader2, CheckCheck, ChevronDown, Download } from "lucide-react"
+import { ExternalLink, UserPlus, Check, MessageSquare, Loader2, CheckCheck, ChevronLeft, ChevronRight, Download } from "lucide-react"
 import { apiBaseUrl, apiJson, wsMentionsUrl, downloadMentionsCsv } from "@/lib/api"
 import { getStoredToken } from "@/lib/auth-context"
 
-const PAGE_SIZE = 50
+const FEED_PAGE_SIZE = 10
 
 export interface Mention {
   id: string
@@ -17,12 +17,14 @@ export interface Mention {
   groupIcon: string
   userName: string
   userInitials: string
+  userLink?: string | null
   message: string
   keyword: string
   timestamp: string
   isLead: boolean
   isRead?: boolean
   messageLink?: string | null
+  createdAt?: string
 }
 
 function highlightKeyword(text: string, keyword: string) {
@@ -45,15 +47,20 @@ type KeywordOption = { id: number; text: string }
 export function MentionFeed({ userId }: { userId?: number }) {
   const [mentions, setMentions] = useState<Mention[]>([])
   const [loading, setLoading] = useState(true)
-  const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState<string>("")
   const [unreadOnly, setUnreadOnly] = useState(false)
   const [keywordFilter, setKeywordFilter] = useState<string>("")
+  const [searchPhrase, setSearchPhrase] = useState<string>("")
+  const [searchQuery, setSearchQuery] = useState<string>("") // debounced для запросов
+  const [sortOrder, setSortOrder] = useState<"desc" | "asc">("desc")
+  const [page, setPage] = useState(1)
+  const [totalCount, setTotalCount] = useState(0)
   const [keywords, setKeywords] = useState<KeywordOption[]>([])
-  const [hasMore, setHasMore] = useState(true)
   const [exporting, setExporting] = useState(false)
   const wsRef = useRef<WebSocket | null>(null)
   const token = typeof window !== "undefined" ? getStoredToken() : null
+
+  const totalPages = Math.max(1, Math.ceil(totalCount / FEED_PAGE_SIZE))
 
   useEffect(() => {
     apiJson<KeywordOption[]>(`${apiBaseUrl()}/api/keywords`)
@@ -61,48 +68,60 @@ export function MentionFeed({ userId }: { userId?: number }) {
       .catch(() => {})
   }, [])
 
-  const initialFetch = useCallback(async () => {
-    setLoading(true)
-    setError("")
-    setHasMore(true)
-    try {
-      const params = new URLSearchParams({ limit: String(PAGE_SIZE), offset: "0" })
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setSearchQuery(searchPhrase)
+      setPage(1)
+    }, 300)
+    return () => clearTimeout(t)
+  }, [searchPhrase])
+
+  const buildParams = useCallback(
+    (overrides: { offset?: number } = {}) => {
+      const params = new URLSearchParams({
+        limit: String(FEED_PAGE_SIZE),
+        offset: String(overrides.offset ?? (page - 1) * FEED_PAGE_SIZE),
+        sortOrder,
+      })
       if (unreadOnly) params.set("unreadOnly", "true")
       if (keywordFilter.trim()) params.set("keyword", keywordFilter.trim())
-      const data = await apiJson<Mention[]>(`${apiBaseUrl()}/api/mentions?${params}`)
+      if (searchQuery.trim()) params.set("search", searchQuery.trim())
+      return params
+    },
+    [page, sortOrder, unreadOnly, keywordFilter, searchQuery]
+  )
+
+  const countParams = useCallback(() => {
+    const p: string[] = []
+    if (unreadOnly) p.push("unreadOnly=true")
+    if (keywordFilter.trim()) p.push(`keyword=${encodeURIComponent(keywordFilter.trim())}`)
+    if (searchQuery.trim()) p.push(`search=${encodeURIComponent(searchQuery.trim())}`)
+    return p.join("&")
+  }, [unreadOnly, keywordFilter, searchQuery])
+
+  const fetchPage = useCallback(async () => {
+    setLoading(true)
+    setError("")
+    try {
+      const countQuery = countParams()
+      const [data, countRes] = await Promise.all([
+        apiJson<Mention[]>(`${apiBaseUrl()}/api/mentions?${buildParams()}`),
+        apiJson<{ total: number }>(
+          `${apiBaseUrl()}/api/mentions/count${countQuery ? `?${countQuery}` : ""}`
+        ),
+      ])
       setMentions(data)
-      setHasMore(data.length >= PAGE_SIZE)
+      setTotalCount(countRes.total)
     } catch (e) {
       setError(e instanceof Error ? e.message : "Ошибка загрузки")
     } finally {
       setLoading(false)
     }
-  }, [unreadOnly, keywordFilter])
+  }, [buildParams, countParams])
 
   useEffect(() => {
-    initialFetch()
-  }, [initialFetch])
-
-  const loadMore = useCallback(async () => {
-    if (loadingMore || !hasMore) return
-    setLoadingMore(true)
-    setError("")
-    try {
-      const params = new URLSearchParams({
-        limit: String(PAGE_SIZE),
-        offset: String(mentions.length),
-      })
-      if (unreadOnly) params.set("unreadOnly", "true")
-      if (keywordFilter.trim()) params.set("keyword", keywordFilter.trim())
-      const data = await apiJson<Mention[]>(`${apiBaseUrl()}/api/mentions?${params}`)
-      setMentions((prev) => [...prev, ...data])
-      setHasMore(data.length >= PAGE_SIZE)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Ошибка загрузки")
-    } finally {
-      setLoadingMore(false)
-    }
-  }, [loadingMore, hasMore, mentions.length, unreadOnly, keywordFilter])
+    fetchPage()
+  }, [fetchPage])
 
   useEffect(() => {
     if (!token) return
@@ -115,11 +134,13 @@ export function MentionFeed({ userId }: { userId?: number }) {
         const payload = JSON.parse(event.data as string)
         if (payload.type === "init" && Array.isArray(payload.data)) {
           setMentions(payload.data)
+          setTotalCount((c) => (payload.data.length > 0 ? payload.data.length : c))
         }
         if (payload.type === "mention" && payload.data) {
           const data = payload.data as Mention & { userId?: number }
           if (data.userId === undefined || data.userId === userId) {
             setMentions((prev) => [data, ...prev])
+            setTotalCount((c) => c + 1)
           }
         }
       } catch {
@@ -204,9 +225,19 @@ export function MentionFeed({ userId }: { userId?: number }) {
             Лента упоминаний
           </CardTitle>
           <div className="flex flex-wrap items-center gap-2">
+            <input
+              type="text"
+              placeholder="Поиск по тексту..."
+              value={searchPhrase}
+              onChange={(e) => setSearchPhrase(e.target.value)}
+              className="h-8 w-40 rounded-md border border-border bg-secondary px-2 text-xs text-foreground placeholder:text-muted-foreground"
+            />
             <select
               value={keywordFilter}
-              onChange={(e) => setKeywordFilter(e.target.value)}
+              onChange={(e) => {
+                setKeywordFilter(e.target.value)
+                setPage(1)
+              }}
               className="h-8 rounded-md border border-border bg-secondary px-2 text-xs text-foreground"
             >
               <option value="">Все ключевые слова</option>
@@ -216,11 +247,25 @@ export function MentionFeed({ userId }: { userId?: number }) {
                 </option>
               ))}
             </select>
+            <select
+              value={sortOrder}
+              onChange={(e) => {
+                setSortOrder(e.target.value as "desc" | "asc")
+                setPage(1)
+              }}
+              className="h-8 rounded-md border border-border bg-secondary px-2 text-xs text-foreground"
+            >
+              <option value="desc">Сначала новые</option>
+              <option value="asc">Сначала старые</option>
+            </select>
             <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
               <input
                 type="checkbox"
                 checked={unreadOnly}
-                onChange={(e) => setUnreadOnly(e.target.checked)}
+                onChange={(e) => {
+                  setUnreadOnly(e.target.checked)
+                  setPage(1)
+                }}
                 className="rounded border-border"
               />
               Только непрочитанные
@@ -247,7 +292,7 @@ export function MentionFeed({ userId }: { userId?: number }) {
               Экспорт CSV
             </Button>
             <Badge variant="outline" className="border-primary/30 bg-primary/10 text-primary text-xs font-mono">
-              {mentions.length}
+              {totalCount}
             </Badge>
           </div>
         </div>
@@ -278,9 +323,20 @@ export function MentionFeed({ userId }: { userId?: number }) {
                       {mention.groupName}
                     </span>
                     <span className="text-muted-foreground">{"/"}</span>
-                    <span className="text-sm text-muted-foreground">
-                      {mention.userName}
-                    </span>
+                    {mention.userLink ? (
+                      <a
+                        href={mention.userLink}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-sm text-primary hover:underline"
+                      >
+                        {mention.userName}
+                      </a>
+                    ) : (
+                      <span className="text-sm text-muted-foreground">
+                        {mention.userName}
+                      </span>
+                    )}
                     <Badge variant="outline" className="ml-auto border-border text-xs text-muted-foreground font-mono">
                       {mention.timestamp}
                     </Badge>
@@ -354,21 +410,30 @@ export function MentionFeed({ userId }: { userId?: number }) {
           </p>
         )}
 
-        {!loading && mentions.length > 0 && hasMore && (
-          <div className="flex justify-center pt-2">
+        {!loading && totalCount > 0 && (
+          <div className="flex items-center justify-center gap-2 pt-4">
             <Button
               variant="outline"
               size="sm"
-              disabled={loadingMore}
-              onClick={loadMore}
-              className="gap-2"
+              disabled={page <= 1}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              className="gap-1"
             >
-              {loadingMore ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
-                <ChevronDown className="size-4" />
-              )}
-              Загрузить ещё
+              <ChevronLeft className="size-3" />
+              Назад
+            </Button>
+            <span className="text-sm text-muted-foreground">
+              Страница {page} из {totalPages}
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={page >= totalPages}
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              className="gap-1"
+            >
+              Вперёд
+              <ChevronRight className="size-3" />
             </Button>
           </div>
         )}
