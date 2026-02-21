@@ -40,8 +40,11 @@ function scoreGroupMatch(g: ChatGroupAvailableOut, q: string): number {
   return score
 }
 
+type PlanUsage = { groups: number; limits: { maxGroups: number } }
+
 export function ChannelGroupsSection({ onSubscribedChange, canAddResources = true }: { onSubscribedChange?: () => void; canAddResources?: boolean }) {
   const [groups, setGroups] = useState<ChatGroupAvailableOut[]>([])
+  const [planData, setPlanData] = useState<PlanUsage | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string>("")
   const [actingId, setActingId] = useState<number | null>(null)
@@ -52,8 +55,12 @@ export function ChannelGroupsSection({ onSubscribedChange, canAddResources = tru
     setLoading(true)
     setError("")
     try {
-      const data = await apiJson<ChatGroupAvailableOut[]>("/api/chat-groups/available")
-      setGroups(data)
+      const [groupsData, plan] = await Promise.all([
+        apiJson<ChatGroupAvailableOut[]>("/api/chat-groups/available"),
+        apiJson<{ usage: { groups: number }; limits: { maxGroups: number } }>("/api/plan"),
+      ])
+      setGroups(groupsData)
+      setPlanData({ groups: plan.usage.groups, limits: plan.limits })
     } catch (e) {
       setError(e instanceof Error ? e.message : "Ошибка загрузки групп")
     } finally {
@@ -64,6 +71,10 @@ export function ChannelGroupsSection({ onSubscribedChange, canAddResources = tru
   useEffect(() => {
     refresh()
   }, [refresh])
+
+  const groupsUsed = planData?.groups ?? 0
+  const maxGroups = planData?.limits.maxGroups ?? 0
+  const groupsLimitReached = maxGroups > 0 && groupsUsed >= maxGroups
 
   const filteredAndSorted = useMemo(() => {
     const q = searchQuery.trim()
@@ -139,6 +150,11 @@ export function ChannelGroupsSection({ onSubscribedChange, canAddResources = tru
             Тариф «Без оплаты»: подписка на группы недоступна. Раздел «Оплата» или администратор.
           </p>
         )}
+        {canAddResources && groupsLimitReached && (
+          <p className="text-xs text-muted-foreground rounded-md px-3 py-2 bg-muted/50">
+            Использовано групп: {groupsUsed} из {maxGroups}. Чтобы подписаться на ещё одну группу, отпишитесь от группы или смените тариф в разделе «Оплата».
+          </p>
+        )}
         {error && (
           <p className="text-sm text-destructive">{error}</p>
         )}
@@ -197,7 +213,11 @@ export function ChannelGroupsSection({ onSubscribedChange, canAddResources = tru
                     size="sm"
                     variant={g.subscribed ? "outline" : "default"}
                     className="w-full"
-                    disabled={actingId !== null || (!canAddResources && !g.subscribed)}
+                    disabled={
+                      actingId !== null ||
+                      (!canAddResources && !g.subscribed) ||
+                      (!g.subscribed && groupsLimitReached)
+                    }
                     onClick={() => (g.subscribed ? unsubscribeGroup(g.id) : subscribeGroup(g.id))}
                   >
                     {actingId === g.id ? (
