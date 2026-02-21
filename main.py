@@ -603,7 +603,7 @@ def _usage_counts(db: Session, user_id: int) -> dict[str, int]:
     """Текущее использование: groups, channels (всего), keywords_exact, keywords_semantic, own_channels.
     groups = свои группы + подписанные тематические (админские) группы."""
     own_groups = db.scalar(select(func.count(ChatGroup.id)).where(ChatGroup.user_id == user_id)) or 0
-    admin_ids = {u.id for u in db.scalars(select(User.id).where(User.is_admin.is_(True))).all()}
+    admin_ids = set(db.scalars(select(User.id).where(User.is_admin.is_(True))).all() or ())
     subscribed_thematic = 0
     if admin_ids:
         sub_ids = set(
