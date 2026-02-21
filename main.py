@@ -19,7 +19,7 @@ from database import get_db, init_db
 from models import Chat, ChatGroup, Keyword, Mention, NotificationSettings, PasswordResetToken, User, user_chat_subscriptions, PlanLimit, CHAT_SOURCE_TELEGRAM, CHAT_SOURCE_MAX
 from parser import TelegramScanner
 from parser_max import MaxScanner
-from plans import PLAN_FREE, PLAN_ORDER, get_effective_plan, get_limits
+from plans import PLAN_BASIC, PLAN_FREE, PLAN_ORDER, get_effective_plan, get_limits
 from parser_config import (
     get_all_parser_settings,
     get_parser_setting_bool,
@@ -793,11 +793,15 @@ def auth_register(body: RegisterRequest, db: Session = Depends(get_db)) -> AuthR
     # Первый зарегистрированный пользователь получает права админа
     count = db.scalar(select(func.count(User.id)).where(User.password_hash.isnot(None))) or 0
     is_first_user = count == 0
+    # Новым пользователям назначается базовый тариф на 7 дней
+    plan_expires_at = _now_utc() + timedelta(days=7)
     user = User(
         email=body.email.strip(),
         name=(body.name or "").strip() or None,
         password_hash=hash_password(body.password),
         is_admin=is_first_user,
+        plan_slug=PLAN_BASIC,
+        plan_expires_at=plan_expires_at,
     )
     db.add(user)
     db.commit()
