@@ -360,17 +360,25 @@ class TelegramScanner:
                 rows: list[Chat] = (
                     db.query(Chat).filter(Chat.enabled.is_(True), Chat.source == CHAT_SOURCE_TELEGRAM).order_by(Chat.id.asc()).all()
                 )
-                # Для глобальных каналов — пользователи из подписок; для остальных — владелец. Только пользователи с платным тарифом.
+                # Для глобальных каналов — пользователи из подписок (с включённым мониторингом); для остальных — владелец.
                 user_ids_by_chat: dict[int, set[int]] = {}
                 for r in rows:
                     if getattr(r, "is_global", False):
-                        sub_ids = set(
-                            db.execute(
-                                select(user_chat_subscriptions.c.user_id).where(
+                        try:
+                            sub_rows = db.execute(
+                                select(user_chat_subscriptions.c.user_id, user_chat_subscriptions.c.enabled).where(
                                     user_chat_subscriptions.c.chat_id == r.id
                                 )
-                            ).scalars().all()
-                        )
+                            ).all()
+                            sub_ids = {row[0] for row in sub_rows if len(row) < 2 or row[1] is None or row[1]}
+                        except Exception:
+                            sub_ids = set(
+                                row[0] for row in db.execute(
+                                    select(user_chat_subscriptions.c.user_id).where(
+                                        user_chat_subscriptions.c.chat_id == r.id
+                                    )
+                                ).scalars().all()
+                            )
                         user_ids_by_chat[r.id] = sub_ids & allowed_user_ids
                     else:
                         user_ids_by_chat[r.id] = {r.user_id} if r.user_id in allowed_user_ids else set()
@@ -422,13 +430,24 @@ class TelegramScanner:
         with db_session() as db:
             from sqlalchemy import select
 
-            sub_chat_ids = set(
-                db.execute(
-                    select(user_chat_subscriptions.c.chat_id).where(
+            sub_chat_ids = set()
+            try:
+                sub_rows = db.execute(
+                    select(user_chat_subscriptions.c.chat_id, user_chat_subscriptions.c.enabled).where(
                         user_chat_subscriptions.c.user_id == self.user_id
                     )
-                ).scalars().all()
-            )
+                ).all()
+                for r in sub_rows:
+                    if len(r) < 2 or r[1] is None or r[1]:
+                        sub_chat_ids.add(r[0])
+            except Exception:
+                sub_chat_ids = set(
+                    rid for (rid,) in db.execute(
+                        select(user_chat_subscriptions.c.chat_id).where(
+                            user_chat_subscriptions.c.user_id == self.user_id
+                        )
+                    ).scalars().all()
+                )
             rows_owned = (
                 db.query(Chat)
                 .filter(Chat.user_id == self.user_id, Chat.enabled.is_(True), Chat.source == CHAT_SOURCE_TELEGRAM)

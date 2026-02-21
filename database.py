@@ -262,6 +262,25 @@ def _migrate_user_chat_subscriptions_via_group_id() -> None:
         conn.commit()
 
 
+def _migrate_user_chat_subscriptions_enabled() -> None:
+    """Добавить колонку enabled в user_chat_subscriptions (вкл/выкл мониторинг для подписки)."""
+    with engine.connect() as conn:
+        r = conn.execute(
+            text(
+                "SELECT 1 FROM information_schema.columns "
+                "WHERE table_schema = 'public' AND table_name = 'user_chat_subscriptions' AND column_name = 'enabled'"
+            )
+        )
+        if r.scalar() is not None:
+            return
+        conn.execute(
+            text(
+                "ALTER TABLE user_chat_subscriptions ADD COLUMN enabled BOOLEAN NOT NULL DEFAULT true"
+            )
+        )
+        conn.commit()
+
+
 def init_db() -> None:
     from models import Chat, ChatGroup, Keyword, Mention, NotificationSettings, ParserSetting, User, PasswordResetToken, PlanLimit, SupportTicket, SupportMessage, SupportAttachment, user_thematic_group_subscriptions  # noqa: F401
 
@@ -277,6 +296,7 @@ def init_db() -> None:
     _migrate_support_ticket_user_last_read_at()
     _migrate_user_thematic_group_subscriptions()
     _migrate_user_chat_subscriptions_via_group_id()
+    _migrate_user_chat_subscriptions_enabled()
 
 
 def drop_all_tables() -> None:

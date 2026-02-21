@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -9,7 +9,7 @@ import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Trash2, Plus, RefreshCw, UserPlus } from "lucide-react"
+import { Trash2, Plus, RefreshCw, UserPlus, Search } from "lucide-react"
 import { apiJson } from "@/lib/api"
 
 export type ChatOut = {
@@ -30,9 +30,27 @@ export type ChatAvailableOut = {
   identifier: string
   title: string | null
   description: string | null
+  groupNames: string[]
   enabled: boolean
   subscribed: boolean
+  subscriptionEnabled: boolean | null
   createdAt: string
+}
+
+function scoreChannelMatch(ch: ChatAvailableOut, q: string): number {
+  const lower = q.toLowerCase().trim()
+  if (!lower) return 0
+  let score = 0
+  const title = (ch.title || "").toLowerCase()
+  const desc = (ch.description || "").toLowerCase()
+  const ident = (ch.identifier || "").toLowerCase()
+  const groupsStr = (ch.groupNames || []).join(" ").toLowerCase()
+  if (title.includes(lower)) score += 10
+  if (ident.includes(lower)) score += 8
+  if (desc.includes(lower)) score += 5
+  if (groupsStr.includes(lower)) score += 6
+  if (title.startsWith(lower) || ident.startsWith(lower)) score += 4
+  return score
 }
 
 export function UserChannelsManager({ canAddResources = true }: { canAddResources?: boolean } = {}) {
@@ -48,6 +66,17 @@ export function UserChannelsManager({ canAddResources = true }: { canAddResource
 
   const [subscribeIdentifier, setSubscribeIdentifier] = useState("")
   const [subscribeError, setSubscribeError] = useState<string>("")
+  const [channelSearchQuery, setChannelSearchQuery] = useState("")
+
+  const filteredAndSortedChannels = useMemo(() => {
+    const q = channelSearchQuery.trim()
+    if (q.length < 3) return availableChannels
+    const withScores = availableChannels
+      .map((ch) => ({ ch, score: scoreChannelMatch(ch, q) }))
+      .filter((x) => x.score > 0)
+    withScores.sort((a, b) => b.score - a.score)
+    return withScores.map((x) => x.ch)
+  }, [availableChannels, channelSearchQuery])
 
   async function refresh() {
     setLoading(true)
@@ -141,6 +170,22 @@ export function UserChannelsManager({ canAddResources = true }: { canAddResource
       setLoading(false)
     }
   }
+
+  const setSubscriptionEnabled = useCallback(async (chatId: number, enabled: boolean) => {
+    setLoading(true)
+    setError("")
+    try {
+      await apiJson<ChatOut>(`/api/chats/${chatId}/subscription`, {
+        method: "PATCH",
+        body: JSON.stringify({ enabled }),
+      })
+      await refresh()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Ошибка обновления")
+    } finally {
+      setLoading(false)
+    }
+  }, [])
 
   async function subscribeByIdentifier() {
     const ident = subscribeIdentifier.trim()
@@ -321,25 +366,70 @@ export function UserChannelsManager({ canAddResources = true }: { canAddResource
 
           <div className="border-t border-border pt-4">
             <h4 className="text-sm font-medium text-foreground mb-2">Доступные каналы</h4>
-          {availableChannels.length === 0 ? (
-            <p className="text-sm text-muted-foreground py-4">
-              Нет доступных каналов. Администратор может добавить каналы в админ-панели и отметить их как «Доступен всем».
-            </p>
-          ) : (
+            {availableChannels.length > 0 && (
+              <div className="relative mb-3">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground pointer-events-none" />
+                <Input
+                  placeholder="Поиск по названию, описанию или группе (от 3 символов)"
+                  value={channelSearchQuery}
+                  onChange={(e) => setChannelSearchQuery(e.target.value)}
+                  className="pl-9 bg-secondary border-border"
+                />
+              </div>
+            )}
+            {availableChannels.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-4">
+                Нет доступных каналов. Администратор может добавить каналы в админ-панели и отметить их как «Доступен всем».
+              </p>
+            ) : filteredAndSortedChannels.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-4">
+                По запросу «{channelSearchQuery}» ничего не найдено. Измените запрос или очистите поле поиска.
+              </p>
+            ) : (
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>Канал</TableHead>
+                  <TableHead>Описание и группы</TableHead>
+                  <TableHead>Мониторинг</TableHead>
                   <TableHead>Статус</TableHead>
                   <TableHead className="text-right">Действие</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {availableChannels.map((av) => (
+                {filteredAndSortedChannels.map((av) => (
                   <TableRow key={av.id}>
                     <TableCell className="whitespace-normal">
                       <div className="font-medium">{av.title || av.identifier}</div>
                       <div className="text-xs text-muted-foreground font-mono">{av.identifier}</div>
+                    </TableCell>
+                    <TableCell className="max-w-[220px]">
+                      {av.description && (
+                        <p className="text-xs text-muted-foreground line-clamp-2 mb-1">{av.description}</p>
+                      )}
+                      {(av.groupNames?.length ?? 0) > 0 && (
+                        <div className="flex flex-wrap gap-1">
+                          {av.groupNames.map((name) => (
+                            <Badge key={name} variant="secondary" className="text-xs font-normal">
+                              {name}
+                            </Badge>
+                          ))}
+                        </div>
+                      )}
+                      {!av.description && (!av.groupNames?.length) && (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {av.subscribed && av.subscriptionEnabled !== undefined ? (
+                        <Switch
+                          checked={av.subscriptionEnabled ?? true}
+                          onCheckedChange={(v) => setSubscriptionEnabled(av.id, v)}
+                          disabled={loading}
+                        />
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
                     </TableCell>
                     <TableCell>
                       {av.subscribed ? (
@@ -373,7 +463,7 @@ export function UserChannelsManager({ canAddResources = true }: { canAddResource
                 ))}
               </TableBody>
             </Table>
-          )}
+            )}
           </div>
         </CardContent>
       </Card>

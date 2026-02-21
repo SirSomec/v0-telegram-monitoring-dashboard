@@ -29,12 +29,14 @@ chat_group_links = Table(
 
 # Подписки пользователей на глобальные каналы (добавленные администратором).
 # via_group_id: NULL = индивидуальная подписка (учитывается в лимите каналов); иначе подписка через группу (не учитывается).
+# enabled: мониторинг канала для этого пользователя (по умолчанию True).
 user_chat_subscriptions = Table(
     "user_chat_subscriptions",
     Base.metadata,
     Column("user_id", ForeignKey("users.id", ondelete="CASCADE"), primary_key=True),
     Column("chat_id", ForeignKey("chats.id", ondelete="CASCADE"), primary_key=True),
     Column("via_group_id", ForeignKey("chat_groups.id", ondelete="CASCADE"), nullable=True),
+    Column("enabled", Boolean, nullable=False, default=True, server_default="true"),
 )
 
 # Подписки на тематические группы (одна запись = подписка на одну группу; каналы группы дублируются в user_chat_subscriptions)

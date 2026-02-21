@@ -120,13 +120,19 @@ class ChatAvailableOut(BaseModel):
     identifier: str
     title: str | None
     description: str | None
+    groupNames: list[str]  # названия групп (тематик), в которые входит канал
     enabled: bool
     subscribed: bool  # подписан ли текущий пользователь
+    subscriptionEnabled: bool | None  # при подписке — включён ли мониторинг у пользователя
     createdAt: str
 
 
 class SubscribeByIdentifierBody(BaseModel):
     identifier: str = Field(..., min_length=1, max_length=256, description="@username или числовой chat_id")
+
+
+class SubscriptionUpdateBody(BaseModel):
+    enabled: bool
 
 
 class ChatGroupCreate(BaseModel):
@@ -1819,7 +1825,7 @@ def _parse_chat_identifier(ident: str) -> tuple[str | None, int | None, str | No
     return (raw.lstrip("@"), None, None)
 
 
-def _chat_to_out(c: Chat, is_owner: bool) -> ChatOut:
+def _chat_to_out(c: Chat, is_owner: bool, subscription_enabled: bool | None = None) -> ChatOut:
     source = getattr(c, "source", None) or CHAT_SOURCE_TELEGRAM
     if source == CHAT_SOURCE_MAX:
         identifier = (getattr(c, "max_chat_id", None) or "") or (c.title or "—")
@@ -1832,13 +1838,14 @@ def _chat_to_out(c: Chat, is_owner: bool) -> ChatOut:
     created_at = c.created_at
     if created_at.tzinfo is None:
         created_at = created_at.replace(tzinfo=timezone.utc)
+    enabled = bool(subscription_enabled) if subscription_enabled is not None else bool(c.enabled)
     return ChatOut(
         id=c.id,
         identifier=identifier,
         title=c.title,
         description=c.description,
         groupIds=[g.id for g in (c.groups or [])],
-        enabled=bool(c.enabled),
+        enabled=enabled,
         userId=c.user_id,
         isGlobal=bool(c.is_global),
         isOwner=is_owner,
@@ -1866,10 +1873,21 @@ def list_chats(user: User = Depends(get_current_user), db: Session = Depends(get
             ).order_by(Chat.id.asc())
         )
     ).scalars().all()
+    sub_enabled_map: dict[int, bool] = {}
+    try:
+        sub_enabled_rows = db.execute(
+            select(user_chat_subscriptions.c.chat_id, user_chat_subscriptions.c.enabled).where(
+                user_chat_subscriptions.c.user_id == user.id
+            )
+        ).all()
+        for r in sub_enabled_rows:
+            sub_enabled_map[r[0]] = r[1] if (len(r) > 1 and r[1] is not None) else True
+    except Exception:
+        pass  # колонка enabled может отсутствовать до миграции
     for c in sub_rows:
         if c.id not in seen_ids:
             seen_ids.add(c.id)
-            out.append(_chat_to_out(c, is_owner=False))
+            out.append(_chat_to_out(c, is_owner=False, subscription_enabled=sub_enabled_map.get(c.id, True)))
     out.sort(key=lambda x: x.id)
     return out
 
@@ -1941,7 +1959,7 @@ def create_chat(body: ChatCreate, user: User = Depends(get_current_user), db: Se
             _check_limits(db, user, delta_channels=1)
             db.execute(
                 user_chat_subscriptions.insert().values(
-                    user_id=user_id, chat_id=existing_global.id, via_group_id=None
+                    user_id=user_id, chat_id=existing_global.id, via_group_id=None, enabled=True
                 )
             )
             db.commit()
@@ -2106,7 +2124,7 @@ def subscribe_chat_group(group_id: int, user: User = Depends(get_current_user), 
         if c.id not in sub_ids:
             db.execute(
                 user_chat_subscriptions.insert().values(
-                    user_id=user.id, chat_id=c.id, via_group_id=group_id
+                    user_id=user.id, chat_id=c.id, via_group_id=group_id, enabled=True
                 )
             )
     db.commit()
@@ -2515,13 +2533,26 @@ def list_available_chats(user: User = Depends(get_current_user), db: Session = D
     """Глобальные каналы (добавленные администратором), доступные для подписки."""
     _ensure_default_user(db)
     rows = db.scalars(
-        select(Chat).where(Chat.is_global.is_(True)).order_by(Chat.id.asc())
+        select(Chat)
+        .where(Chat.is_global.is_(True))
+        .order_by(Chat.id.asc())
+        .options(selectinload(Chat.groups))
     ).all()
-    sub_ids = set(
-        db.execute(
-            select(user_chat_subscriptions.c.chat_id).where(user_chat_subscriptions.c.user_id == user.id)
-        ).scalars().all()
-    )
+    sub_rows = db.execute(
+        select(user_chat_subscriptions.c.chat_id).where(user_chat_subscriptions.c.user_id == user.id)
+    ).all()
+    sub_ids = {r[0] for r in sub_rows}
+    sub_enabled: dict[int, bool] = {cid: True for cid in sub_ids}
+    try:
+        sub_enabled_rows = db.execute(
+            select(user_chat_subscriptions.c.chat_id, user_chat_subscriptions.c.enabled).where(
+                user_chat_subscriptions.c.user_id == user.id
+            )
+        ).all()
+        for r in sub_enabled_rows:
+            sub_enabled[r[0]] = r[1] if (len(r) > 1 and r[1] is not None) else True
+    except Exception:
+        pass  # колонка enabled может отсутствовать до миграции
     out: list[ChatAvailableOut] = []
     for c in rows:
         created_at = c.created_at
@@ -2532,14 +2563,17 @@ def list_available_chats(user: User = Depends(get_current_user), db: Session = D
             or (str(c.tg_chat_id) if c.tg_chat_id is not None else "")
             or (f"t.me/joinchat/{c.invite_hash}" if getattr(c, "invite_hash", None) else "")
         ) or "—"
+        group_names = [g.name for g in (c.groups or [])]
         out.append(
             ChatAvailableOut(
                 id=c.id,
                 identifier=ident_display,
                 title=c.title,
                 description=c.description,
+                groupNames=group_names,
                 enabled=bool(c.enabled),
                 subscribed=c.id in sub_ids,
+                subscriptionEnabled=sub_enabled.get(c.id) if c.id in sub_ids else None,
                 createdAt=created_at.isoformat(),
             )
         )
@@ -2614,7 +2648,7 @@ def subscribe_by_identifier(
         return _chat_to_out(c, is_owner=False)
     _check_limits(db, user, delta_channels=1)
     db.execute(
-        user_chat_subscriptions.insert().values(user_id=user.id, chat_id=c.id, via_group_id=None)
+        user_chat_subscriptions.insert().values(user_id=user.id, chat_id=c.id, via_group_id=None, enabled=True)
     )
     db.commit()
     db.refresh(c)
@@ -2650,11 +2684,48 @@ def subscribe_chat(chat_id: int, user: User = Depends(get_current_user), db: Ses
         return _chat_to_out(c, is_owner=False)
     _check_limits(db, user, delta_channels=1)
     db.execute(
-        user_chat_subscriptions.insert().values(user_id=user.id, chat_id=chat_id, via_group_id=None)
+        user_chat_subscriptions.insert().values(user_id=user.id, chat_id=chat_id, via_group_id=None, enabled=True)
     )
     db.commit()
     db.refresh(c)
     return _chat_to_out(c, is_owner=False)
+
+
+@app.patch("/api/chats/{chat_id}/subscription", response_model=ChatOut)
+def update_chat_subscription(
+    chat_id: int,
+    body: SubscriptionUpdateBody,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ChatOut:
+    """Включить/выключить мониторинг для подписанного канала (только для подписок, не для своих каналов)."""
+    c = db.scalar(select(Chat).where(Chat.id == chat_id))
+    if not c:
+        raise HTTPException(status_code=404, detail="chat not found")
+    if c.user_id == user.id:
+        raise HTTPException(status_code=400, detail="use PATCH /api/chats/:id for own channels")
+    sub = db.execute(
+        select(user_chat_subscriptions).where(
+            user_chat_subscriptions.c.user_id == user.id,
+            user_chat_subscriptions.c.chat_id == chat_id,
+        )
+    ).first()
+    if not sub:
+        raise HTTPException(status_code=404, detail="subscription not found")
+    try:
+        db.execute(
+            update(user_chat_subscriptions)
+            .where(
+                user_chat_subscriptions.c.user_id == user.id,
+                user_chat_subscriptions.c.chat_id == chat_id,
+            )
+            .values(enabled=body.enabled)
+        )
+        db.commit()
+    except Exception:
+        raise HTTPException(status_code=500, detail="subscription update not supported (migrate DB)")
+    db.refresh(c)
+    return _chat_to_out(c, is_owner=False, subscription_enabled=body.enabled)
 
 
 @app.delete("/api/chats/{chat_id}/unsubscribe")
