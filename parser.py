@@ -697,8 +697,31 @@ class TelegramScanner:
                 break
         return chunks[:max_chunks]
 
+    def _message_words(self, text: str, max_words: int = 40) -> list[str]:
+        """Отдельные слова сообщения для семантического сравнения (синонимы, другой язык, перефразирование)."""
+        import re
+        t = (text or "").strip()
+        if not t:
+            return []
+        # Токены: буквы (в т.ч. кириллица, латиница), цифры; минимум 2 символа
+        tokens = re.findall(r"[a-zA-Zа-яА-ЯёЁ0-9]{2,}", t)
+        seen: set[str] = set()
+        out: list[str] = []
+        for w in tokens:
+            w_lower = w.casefold()
+            if w_lower in seen:
+                continue
+            seen.add(w_lower)
+            out.append(w)
+            if len(out) >= max_words:
+                break
+        return out
+
     def _match_keywords(self, items: list[KeywordItem], text: str, text_cf: str) -> list[tuple[str, float | None]]:
-        """Возвращает список (текст ключа, similarity 0–1 или None при точном совпадении)."""
+        """
+        Совпадение по смыслу: общая тема сообщения, перефразирование (фразы), отдельные слова (синонимы, другой язык).
+        Учитывается максимум из: тема (весь текст), фрагменты (чанки), слова. Если любой >= порог — считаем совпадением.
+        """
         exact_items = [kw for kw in items if not kw.use_semantic]
         semantic_items = [kw for kw in items if kw.use_semantic]
         matches: list[tuple[str, float | None]] = [
@@ -718,33 +741,43 @@ class TelegramScanner:
                 if kw.text.casefold() in text_cf:
                     matches.append((kw.text, None))
             return matches
-        msg_vectors = embed([text])
-        if not msg_vectors:
+        # Один батч: [тема] + фрагменты + отдельные слова — для совпадения по смыслу, перефразу, языку, теме
+        chunks = self._message_chunks(text)
+        words = self._message_words(text)
+        to_embed: list[str] = [text]
+        to_embed.extend(chunks)
+        to_embed.extend(words)
+        all_vectors = embed(to_embed)
+        if not all_vectors or len(all_vectors) < 1:
             for kw in semantic_items:
                 if kw.text.casefold() in text_cf:
                     matches.append((kw.text, None))
             return matches
-        msg_vec = msg_vectors[0]
+        msg_vec = all_vectors[0]
+        n_chunks = len(chunks)
+        chunk_vecs = all_vectors[1 : 1 + n_chunks] if n_chunks else []
+        word_vecs = all_vectors[1 + n_chunks :] if words else []
         thresh = similarity_threshold()
-        # Для коротких ключей (1–2 слова) дополнительно сравниваем с фрагментами сообщения
-        chunk_vecs: list[list[float]] | None = None
-        chunks = self._message_chunks(text)
-        if chunks:
-            chunk_vectors = embed(chunks)
-            chunk_vecs = chunk_vectors if chunk_vectors else None
         for kw in semantic_items:
             kw_vec = cache.get(kw.text)
-            if kw_vec is not None:
-                sim = cosine_similarity(msg_vec, kw_vec)
-                # Короткий ключ (1–2 слова): проверить фрагменты сообщения
-                is_short_key = len(kw.text.split()) <= 2 and len(kw.text.strip()) < 25
-                if sim < thresh and is_short_key and chunk_vecs:
-                    for cvec in chunk_vecs:
-                        s = cosine_similarity(cvec, kw_vec)
-                        if s > sim:
-                            sim = s
-                if sim >= thresh:
-                    matches.append((kw.text, sim))
+            if kw_vec is None:
+                if kw.text.casefold() in text_cf:
+                    matches.append((kw.text, None))
+                continue
+            # Тема всего сообщения
+            sim = cosine_similarity(msg_vec, kw_vec)
+            # Фрагменты (перефразирование, тема в части сообщения)
+            for cvec in chunk_vecs:
+                s = cosine_similarity(cvec, kw_vec)
+                if s > sim:
+                    sim = s
+            # Отдельные слова (синонимы, другой язык)
+            for wvec in word_vecs:
+                s = cosine_similarity(wvec, kw_vec)
+                if s > sim:
+                    sim = s
+            if sim >= thresh:
+                matches.append((kw.text, sim))
             elif kw.text.casefold() in text_cf:
                 matches.append((kw.text, None))
         return matches
