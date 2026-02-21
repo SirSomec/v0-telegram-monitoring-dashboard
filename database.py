@@ -182,7 +182,7 @@ def _migrate_support_ticket_user_last_read_at() -> None:
 
 
 def init_db() -> None:
-    from models import Chat, ChatGroup, Keyword, Mention, NotificationSettings, ParserSetting, User, PasswordResetToken, PlanLimit, SupportTicket, SupportMessage  # noqa: F401
+    from models import Chat, ChatGroup, Keyword, Mention, NotificationSettings, ParserSetting, User, PasswordResetToken, PlanLimit, SupportTicket, SupportMessage, SupportAttachment  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
     _migrate_keywords_use_semantic()
@@ -198,7 +198,7 @@ def init_db() -> None:
 
 def drop_all_tables() -> None:
     """Удаляет все таблицы (для пересоздания схемы). Все данные будут потеряны."""
-    from models import Chat, ChatGroup, Keyword, Mention, NotificationSettings, ParserSetting, User, PasswordResetToken, PlanLimit, SupportTicket, SupportMessage  # noqa: F401
+    from models import Chat, ChatGroup, Keyword, Mention, NotificationSettings, ParserSetting, User, PasswordResetToken, PlanLimit, SupportTicket, SupportMessage, SupportAttachment  # noqa: F401
 
     Base.metadata.drop_all(bind=engine)
 

@@ -74,6 +74,36 @@ export type ExportMentionsParams = {
   dateTo?: string
 }
 
+/** POST/PATCH с FormData (без Content-Type — браузер подставит multipart boundary). */
+export async function apiFormData<T>(path: string, formData: FormData, method: "POST" | "PATCH" = "POST"): Promise<T> {
+  const url = path.startsWith("http") ? path : `${getApiUrl()}${path}`
+  const res = await fetch(url, {
+    method,
+    headers: getAuthHeaders(),
+    body: formData,
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => "")
+    let message = text || `HTTP ${res.status}`
+    try {
+      const json = JSON.parse(text) as { detail?: string }
+      if (json.detail) message = json.detail
+    } catch {
+      /* use raw text */
+    }
+    throw new Error(message)
+  }
+  return res.json() as Promise<T>
+}
+
+/** Скачать вложение поддержки (с авторизацией). Возвращает blob для отображения или сохранения. */
+export async function fetchSupportAttachment(attachmentId: number): Promise<Blob> {
+  const url = `${getApiUrl()}/api/support/attachments/${attachmentId}`
+  const res = await fetch(url, { headers: getAuthHeaders() })
+  if (!res.ok) throw new Error(await res.text().catch(() => `HTTP ${res.status}`))
+  return res.blob()
+}
+
 /** Скачивает CSV экспорт упоминаний (с текущими заголовками авторизации). */
 export async function downloadMentionsCsv(params: ExportMentionsParams = {}): Promise<void> {
   const search = new URLSearchParams()

@@ -8,15 +8,16 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import desc, func, select, update
 from sqlalchemy.orm import Session, selectinload
 
 from auth_utils import create_token, decode_token, hash_password, verify_password
 from database import get_db, init_db
-from models import Chat, ChatGroup, Keyword, Mention, NotificationSettings, PasswordResetToken, User, user_chat_subscriptions, PlanLimit, SupportTicket, SupportMessage, CHAT_SOURCE_TELEGRAM, CHAT_SOURCE_MAX
+from models import Chat, ChatGroup, Keyword, Mention, NotificationSettings, PasswordResetToken, User, user_chat_subscriptions, PlanLimit, SupportTicket, SupportMessage, SupportAttachment, CHAT_SOURCE_TELEGRAM, CHAT_SOURCE_MAX
 from parser import TelegramScanner
 from parser_max import MaxScanner
 from plans import PLAN_BASIC, PLAN_FREE, PLAN_ORDER, get_effective_plan, get_limits
@@ -28,6 +29,7 @@ from parser_config import (
 )
 from parser_log import get_lines as get_parser_log_lines
 import notify_telegram
+import support_uploads
 
 
 def _now_utc() -> datetime:
@@ -213,6 +215,15 @@ class SupportMessageCreate(BaseModel):
     body: str = Field(..., min_length=1, max_length=10000)
 
 
+class SupportAttachmentOut(BaseModel):
+    id: int
+    supportMessageId: int
+    originalFilename: str
+    contentType: str | None = None
+    sizeBytes: int
+    createdAt: str
+
+
 class SupportMessageOut(BaseModel):
     id: int
     ticketId: int
@@ -220,6 +231,7 @@ class SupportMessageOut(BaseModel):
     isFromStaff: bool
     body: str
     createdAt: str
+    attachments: list[SupportAttachmentOut] = []
 
 
 class SupportTicketOut(BaseModel):
@@ -796,6 +808,24 @@ async def on_startup() -> None:
         max_scanner.start()
         parser_log_append("[MAX] Парсер MAX запущен (автостарт).")
 
+    # Очистка вложений поддержки старше 30 дней — при старте и раз в сутки
+    async def _support_attachments_cleanup_loop() -> None:
+        import logging
+        log = logging.getLogger(__name__)
+        try:
+            await asyncio.get_running_loop().run_in_executor(None, _cleanup_expired_support_attachments)
+        except Exception:
+            log.exception("Ошибка очистки вложений поддержки при старте")
+        while True:
+            await asyncio.sleep(3600 * 24)  # 24 часа
+            try:
+                await asyncio.get_running_loop().run_in_executor(None, _cleanup_expired_support_attachments)
+                log.info("Очистка вложений поддержки (старше %s дн.) выполнена", support_uploads.RETENTION_DAYS)
+            except Exception:
+                log.exception("Ошибка очистки вложений поддержки")
+
+    asyncio.create_task(_support_attachments_cleanup_loop())
+
 
 def _schedule_ws_broadcast(payload: dict[str, Any]) -> None:
     # Callback из фонового потока (Telethon) -> отправляем в WS асинхронно.
@@ -1202,32 +1232,61 @@ def update_notification_settings(
 # --- API поддержки (пользователь: свои тикеты; админ: все + ответы) ---
 
 @app.post("/api/support/tickets", response_model=SupportTicketDetailOut)
-def create_support_ticket(
-    body: SupportTicketCreate,
+async def create_support_ticket(
+    subject: str = Form(..., min_length=1, max_length=300),
+    message: str = Form(..., min_length=1, max_length=10000),
+    files: list[UploadFile] = File(default=[]),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> SupportTicketDetailOut:
     _ensure_default_user(db)
-    ticket = SupportTicket(user_id=user.id, subject=body.subject.strip(), status="open")
+    ticket = SupportTicket(user_id=user.id, subject=subject.strip(), status="open")
     db.add(ticket)
     db.flush()
     msg = SupportMessage(
         ticket_id=ticket.id,
         sender_id=user.id,
         is_from_staff=False,
-        body=body.message.strip(),
+        body=message.strip(),
     )
     db.add(msg)
+    db.flush()
+    for upload in files or []:
+        if not upload.filename or upload.filename.strip() == "":
+            continue
+        content = await upload.read()
+        if len(content) > support_uploads.MAX_FILE_SIZE_BYTES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Файл «{upload.filename}» превышает лимит 5 МБ",
+            )
+        try:
+            stored_name, size = support_uploads.save_file(
+                content,
+                upload.filename or "file",
+                upload.content_type,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        att = SupportAttachment(
+            support_message_id=msg.id,
+            original_filename=(upload.filename or "file").strip()[:255],
+            stored_filename=stored_name,
+            content_type=(upload.content_type or "").strip()[:128] or None,
+            size_bytes=size,
+        )
+        db.add(att)
     db.commit()
     db.refresh(ticket)
     db.refresh(msg)
+    msg_attachments = db.scalars(select(SupportAttachment).where(SupportAttachment.support_message_id == msg.id)).all()
     _notify_admins_support(
         db,
         ticket.id,
         user.email,
         user.name,
         ticket.subject,
-        body.message.strip()[:300],
+        message.strip()[:300],
     )
     created_at = msg.created_at.replace(tzinfo=timezone.utc) if msg.created_at.tzinfo is None else msg.created_at
     return SupportTicketDetailOut(
@@ -1249,6 +1308,17 @@ def create_support_ticket(
                 isFromStaff=msg.is_from_staff,
                 body=msg.body,
                 createdAt=created_at.isoformat(),
+                attachments=[
+                    SupportAttachmentOut(
+                        id=a.id,
+                        supportMessageId=a.support_message_id,
+                        originalFilename=a.original_filename,
+                        contentType=a.content_type,
+                        sizeBytes=a.size_bytes,
+                        createdAt=a.created_at.isoformat() if a.created_at.tzinfo else a.created_at.replace(tzinfo=timezone.utc).isoformat(),
+                    )
+                    for a in msg_attachments
+                ],
             )
         ],
     )
@@ -1338,7 +1408,11 @@ def get_support_ticket(
     db: Session = Depends(get_db),
 ) -> SupportTicketDetailOut:
     _ensure_default_user(db)
-    ticket = db.scalar(select(SupportTicket).where(SupportTicket.id == ticket_id).options(selectinload(SupportTicket.messages)))
+    ticket = db.scalar(
+        select(SupportTicket)
+        .where(SupportTicket.id == ticket_id)
+        .options(selectinload(SupportTicket.messages).selectinload(SupportMessage.attachments))
+    )
     if not ticket:
         raise HTTPException(status_code=404, detail="ticket not found")
     if ticket.user_id != user.id and not user.is_admin:
@@ -1352,6 +1426,17 @@ def get_support_ticket(
     messages_out: list[SupportMessageOut] = []
     for m in ticket.messages:
         created = m.created_at.replace(tzinfo=timezone.utc) if m.created_at.tzinfo is None else m.created_at
+        att_out = [
+            SupportAttachmentOut(
+                id=a.id,
+                supportMessageId=a.support_message_id,
+                originalFilename=a.original_filename,
+                contentType=a.content_type,
+                sizeBytes=a.size_bytes,
+                createdAt=a.created_at.isoformat() if a.created_at.tzinfo else a.created_at.replace(tzinfo=timezone.utc).isoformat(),
+            )
+            for a in (m.attachments or [])
+        ]
         messages_out.append(
             SupportMessageOut(
                 id=m.id,
@@ -1360,6 +1445,7 @@ def get_support_ticket(
                 isFromStaff=m.is_from_staff,
                 body=m.body,
                 createdAt=created.isoformat(),
+                attachments=att_out,
             )
         )
     return SupportTicketDetailOut(
@@ -1369,9 +1455,10 @@ def get_support_ticket(
 
 
 @app.post("/api/support/tickets/{ticket_id}/messages", response_model=SupportMessageOut)
-def add_support_message(
+async def add_support_message(
     ticket_id: int,
-    body: SupportMessageCreate,
+    body: str = Form(..., min_length=1, max_length=10000),
+    files: list[UploadFile] = File(default=[]),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> SupportMessageOut:
@@ -1381,14 +1468,41 @@ def add_support_message(
         raise HTTPException(status_code=404, detail="ticket not found")
     if ticket.user_id != user.id and not user.is_admin:
         raise HTTPException(status_code=403, detail="forbidden")
+    body_clean = body.strip()
     is_staff = user.is_admin
     msg = SupportMessage(
         ticket_id=ticket_id,
         sender_id=user.id,
         is_from_staff=is_staff,
-        body=body.body.strip(),
+        body=body_clean,
     )
     db.add(msg)
+    db.flush()
+    for upload in files or []:
+        if not upload.filename or upload.filename.strip() == "":
+            continue
+        content = await upload.read()
+        if len(content) > support_uploads.MAX_FILE_SIZE_BYTES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Файл «{upload.filename}» превышает лимит 5 МБ",
+            )
+        try:
+            stored_name, size = support_uploads.save_file(
+                content,
+                upload.filename or "file",
+                upload.content_type,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        att = SupportAttachment(
+            support_message_id=msg.id,
+            original_filename=(upload.filename or "file").strip()[:255],
+            stored_filename=stored_name,
+            content_type=(upload.content_type or "").strip()[:128] or None,
+            size_bytes=size,
+        )
+        db.add(att)
     if is_staff:
         ticket.status = "answered"
     db.add(ticket)
@@ -1402,11 +1516,23 @@ def add_support_message(
             author.email if author else None,
             author.name if author else None,
             ticket.subject,
-            body.body.strip()[:300],
+            body_clean[:300],
         )
     else:
-        _notify_user_support_reply(db, ticket, body.body.strip()[:500])
+        _notify_user_support_reply(db, ticket, body_clean[:500])
     created = msg.created_at.replace(tzinfo=timezone.utc) if msg.created_at.tzinfo is None else msg.created_at
+    db.refresh(msg)
+    att_out = [
+        SupportAttachmentOut(
+            id=a.id,
+            supportMessageId=a.support_message_id,
+            originalFilename=a.original_filename,
+            contentType=a.content_type,
+            sizeBytes=a.size_bytes,
+            createdAt=a.created_at.isoformat() if a.created_at.tzinfo else a.created_at.replace(tzinfo=timezone.utc).isoformat(),
+        )
+        for a in (msg.attachments or [])
+    ]
     return SupportMessageOut(
         id=msg.id,
         ticketId=msg.ticket_id,
@@ -1414,7 +1540,50 @@ def add_support_message(
         isFromStaff=msg.is_from_staff,
         body=msg.body,
         createdAt=created.isoformat(),
+        attachments=att_out,
     )
+
+
+@app.get("/api/support/attachments/{attachment_id}")
+def download_support_attachment(
+    attachment_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> FileResponse:
+    """Скачать вложение (доступ: автор тикета или админ)."""
+    _ensure_default_user(db)
+    att = db.scalar(
+        select(SupportAttachment).where(SupportAttachment.id == attachment_id).options(selectinload(SupportAttachment.message))
+    )
+    if not att or not att.message:
+        raise HTTPException(status_code=404, detail="attachment not found")
+    ticket = db.scalar(select(SupportTicket).where(SupportTicket.id == att.message.ticket_id))
+    if not ticket:
+        raise HTTPException(status_code=404, detail="ticket not found")
+    if ticket.user_id != user.id and not user.is_admin:
+        raise HTTPException(status_code=403, detail="forbidden")
+    path = support_uploads.get_path(att.stored_filename)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="file not found")
+    return FileResponse(
+        path=str(path),
+        filename=att.original_filename,
+        media_type=att.content_type or "application/octet-stream",
+    )
+
+
+def _cleanup_expired_support_attachments() -> None:
+    """Удалить вложения старше RETENTION_DAYS (30 дней)."""
+    from database import SessionLocal
+    cutoff = _now_utc() - timedelta(days=support_uploads.RETENTION_DAYS)
+    with SessionLocal() as db:
+        rows = db.scalars(
+            select(SupportAttachment).where(SupportAttachment.created_at < cutoff)
+        ).all()
+        for a in rows:
+            support_uploads.delete_file(a.stored_filename)
+            db.delete(a)
+        db.commit()
 
 
 @app.patch("/api/support/tickets/{ticket_id}", response_model=SupportTicketOut)

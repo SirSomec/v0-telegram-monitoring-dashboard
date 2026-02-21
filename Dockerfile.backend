@@ -8,7 +8,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY main.py parser.py parser_max.py parser_config.py parser_log.py telegram_auth.py database.py models.py auth_utils.py semantic.py plans.py .
-COPY email_sender.py notify_telegram.py .
+COPY email_sender.py notify_telegram.py support_uploads.py .
 COPY scripts/ scripts/
 
 # Миграции БД запускаются при каждом старте контейнера (деплой)
