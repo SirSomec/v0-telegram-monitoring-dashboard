@@ -8,7 +8,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Response, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sqlalchemy import desc, func, select, update
@@ -27,6 +27,7 @@ from parser_config import (
     save_parser_settings,
 )
 from parser_log import get_lines as get_parser_log_lines
+import notify_telegram
 
 
 def _now_utc() -> datetime:
@@ -782,6 +783,82 @@ def health() -> dict[str, Any]:
     """Проверка доступности API и статуса парсера (running = сервис онлайн в дашборде)."""
     parser = _parser_status()
     return {"status": "ok", "parser_running": parser.running}
+
+
+def _telegram_chat_registered(db: Session, chat_id: int | str) -> bool:
+    """Проверить, добавлен ли chat_id в настройках уведомлений какого-либо пользователя (личный кабинет)."""
+    sid = str(chat_id).strip()
+    row = db.scalar(
+        select(NotificationSettings).where(
+            NotificationSettings.telegram_chat_id.isnot(None),
+            func.trim(NotificationSettings.telegram_chat_id) == sid,
+        )
+    )
+    return row is not None
+
+
+@app.post("/api/telegram-webhook")
+async def telegram_webhook(request: Request, db: Session = Depends(get_db)) -> dict[str, Any]:
+    """
+    Webhook для бота @telescopemsg_bot: при /start проверяем, добавлен ли пользователь в личном кабинете;
+    если нет — инструкция и кнопка «Проверить».
+    """
+    if not notify_telegram.is_configured():
+        return {"ok": True}
+    try:
+        body = await request.json()
+    except Exception:
+        return {"ok": False}
+    # Обработка /start
+    message = body.get("message") or {}
+    text = (message.get("text") or "").strip()
+    chat = message.get("chat") or {}
+    chat_id = chat.get("id")
+    if chat_id is not None and text == "/start":
+        registered = _telegram_chat_registered(db, chat_id)
+        if registered:
+            notify_telegram.send_message(
+                chat_id,
+                "✅ Вы зарегистрированы в личном кабинете. Уведомления о упоминаниях будут приходить сюда.",
+            )
+        else:
+            instructions = (
+                f"Чтобы получать уведомления, добавьте свой Telegram в личном кабинете:\n\n"
+                f"1. Войдите в дашборд (сайт мониторинга).\n"
+                f"2. Откройте раздел «Уведомления».\n"
+                f"3. Включите «Telegram» и в поле «ID чата или @username» укажите ваш Chat ID: {chat_id}\n\n"
+                f"4. Сохраните настройки и нажмите кнопку «Проверить» ниже."
+            )
+            notify_telegram.send_message(
+                chat_id,
+                instructions,
+                reply_markup={"inline_keyboard": [[{"text": "Проверить", "callback_data": "check_registration"}]]},
+            )
+        return {"ok": True}
+    # Обработка нажатия «Проверить»
+    callback = body.get("callback_query") or {}
+    if callback.get("data") == "check_registration" and callback.get("id"):
+        cb_id = callback["id"]
+        msg = callback.get("message") or {}
+        cb_chat_id = (msg.get("chat") or {}).get("id")
+        if cb_chat_id is None:
+            notify_telegram.answer_callback_query(cb_id, "Ошибка")
+            return {"ok": True}
+        notify_telegram.answer_callback_query(cb_id)
+        registered = _telegram_chat_registered(db, cb_chat_id)
+        if registered:
+            notify_telegram.send_message(
+                cb_chat_id,
+                "✅ Вы зарегистрированы. Уведомления о упоминаниях будут приходить сюда.",
+            )
+        else:
+            notify_telegram.send_message(
+                cb_chat_id,
+                "Пока не найдено. Убедитесь, что в личном кабинете в разделе «Уведомления» вы указали этот Chat ID и сохранили настройки, затем нажмите «Проверить» снова.",
+                reply_markup={"inline_keyboard": [[{"text": "Проверить", "callback_data": "check_registration"}]]},
+            )
+        return {"ok": True}
+    return {"ok": True}
 
 
 @app.post("/auth/register", response_model=AuthResponse)

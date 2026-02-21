@@ -73,6 +73,7 @@ nano .env
 
 - `TG_SESSION_STRING` — строка сессии Telethon (чтобы не вводить код вручную на сервере).
 - `AUTO_START_SCANNER=1` — автозапуск парсера Telegram при старте бэкенда.
+- `NOTIFY_TELEGRAM_BOT_TOKEN` — токен бота **@telescopemsg_bot** для уведомлений пользователей; после запуска настройте webhook (см. раздел «Webhook для бота» ниже).
 
 Сохранить и выйти (Ctrl+O, Enter, Ctrl+X).
 
@@ -137,6 +138,23 @@ sudo certbot certonly --standalone -d integration-wa.ru -d www.integration-wa.ru
 ```
 
 После получения сертификатов нужно добавить в Nginx конфиг поддержку 443 и путей к сертификатам. Либо временно остановить контейнер nginx (`docker compose stop nginx`), запустить certbot с `--standalone`, затем включить в конфиг Nginx (в Docker или на хосте) блок `listen 443 ssl` и снова запустить nginx. Подробности — в [deploy/NGINX-SETUP.md](../deploy/NGINX-SETUP.md) и в документации Certbot.
+
+---
+
+## Webhook для бота @telescopemsg_bot
+
+Чтобы пользователи могли нажать /start в Telegram и получить инструкцию (или «Проверить» после добавления Chat ID в личном кабинете), настройте webhook:
+
+1. В `.env` задайте `NOTIFY_TELEGRAM_BOT_TOKEN` (токен от @BotFather для бота @telescopemsg_bot).
+2. Укажите Telegram URL для приёма обновлений (подставьте свой домен и при необходимости HTTPS):
+
+```bash
+curl -X POST "https://api.telegram.org/bot<ВАШ_ТОКЕН>/setWebhook?url=https://integration-wa.ru/api/telegram-webhook"
+```
+
+Если используете HTTP: `url=http://IP_СЕРВЕРА/api/telegram-webhook` (для теста). В проде лучше HTTPS.
+
+После этого при команде /start в боте пользователь получит инструкцию и кнопку «Проверить».
 
 ---
 

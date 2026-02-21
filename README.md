@@ -51,6 +51,7 @@ cp .env.example .env
 - `TG_SESSION_STRING` или `TG_SESSION_NAME` — сессия Telethon (для работы без интерактивного входа).
 - `TG_CHATS` — список чатов через запятую (только в режиме одного пользователя); если пусто — берутся из таблицы `chats`.
 - `TG_PROXY_*` — SOCKS5-прокси при необходимости.
+- **Уведомления в Telegram:** бот **@telescopemsg_bot**. Задайте `NOTIFY_TELEGRAM_BOT_TOKEN` (токен от @BotFather). Чтобы пользователи могли нажимать /start и «Проверить», настройте webhook: `POST https://ваш-домен/api/telegram-webhook` (см. раздел «Webhook для бота» в документации).
 
 **Опционально (фронт):**
 

@@ -121,7 +121,7 @@ export function NotificationsSettings() {
                 <Label htmlFor="notify-telegram" className="text-base font-medium text-foreground">
                   Telegram
                 </Label>
-                <p className="text-sm text-muted-foreground">Сообщения в Telegram-бот</p>
+                <p className="text-sm text-muted-foreground">Сообщения в бот @telescopemsg_bot</p>
               </div>
               <Switch
                 id="notify-telegram"
@@ -140,7 +140,7 @@ export function NotificationsSettings() {
                   className="bg-background border-border"
                 />
                 <p className="text-xs text-muted-foreground">
-                  Узнать ID: напишите боту @userinfobot в Telegram или начните диалог с нашим ботом и укажите сюда ваш chat_id.
+                  Как добавить: начните диалог с ботом @telescopemsg_bot в Telegram (команда /start). Бот покажет ваш Chat ID и инструкцию. Скопируйте Chat ID сюда, сохраните настройки и в боте нажмите «Проверить».
                 </p>
               </div>
             )}

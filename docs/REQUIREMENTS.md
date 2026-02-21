@@ -252,7 +252,7 @@
 | `SEMANTIC_SIMILARITY_THRESHOLD` | Порог косинусного сходства 0.0–1.0 (по умолчанию 0.7). |
 | `FRONTEND_URL` | Базовый URL фронта для ссылок в письмах (восстановление пароля), например `https://app.example.com`. |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`, `SMTP_USE_TLS` | Настройки SMTP для отправки писем (сброс пароля, уведомления об упоминаниях). Если не заданы — письмо не отправляется. |
-| `NOTIFY_TELEGRAM_BOT_TOKEN` | Токен бота Telegram для отправки уведомлений пользователям (Bot API). |
+| `NOTIFY_TELEGRAM_BOT_TOKEN` | Токен бота **@telescopemsg_bot** для отправки уведомлений и приёма /start (Bot API). Webhook: `POST /api/telegram-webhook`. |
 
 ### 6.4. Опциональные (фронт)
 
