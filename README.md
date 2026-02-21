@@ -169,6 +169,8 @@ docker compose up -d --build
 
 ### Если бэкенд падает при старте
 
+Ошибка **`database "telegram_monitor" does not exist`** (Internal Server Error при входе): база не создана (том postgres мог быть создан до появления `POSTGRES_DB` в compose). Создайте БД: `docker compose exec postgres psql -U postgres -c 'CREATE DATABASE telegram_monitor;'`, затем `docker compose restart backend`.
+
 Ошибка `password authentication failed for user "postgres"` означает, что пароль в `DATABASE_URL` не совпадает с паролем, под которым запущен PostgreSQL (пароль задаётся при первом создании тома). Варианты:
 
 1. **Задать в `.env` тот же пароль**, с которым когда-то создавался том postgres, и перезапустить backend: `docker compose up -d --force-recreate backend`.

@@ -157,6 +157,12 @@ sudo certbot certonly --standalone -d integration-wa.ru -d www.integration-wa.ru
 
 ## Если что-то пошло не так
 
+- **Ошибка `database "telegram_monitor" does not exist` (Internal Server Error при входе)** — база не была создана (например том PostgreSQL создан до появления `POSTGRES_DB: telegram_monitor` в compose). Создайте БД вручную (данные не теряются):
+  ```bash
+  cd /opt/telegram-monitor
+  docker compose exec postgres psql -U postgres -c 'CREATE DATABASE telegram_monitor;'
+  ```
+  Затем перезапустите бэкенд: `docker compose restart backend`. Таблицы создадутся при первом запросе к API (init_db).
 - **Бэкенд падает с ошибкой про пароль PostgreSQL** — в `.env` должен быть тот же `POSTGRES_PASSWORD`, что использовался при первом запуске; иначе пересоздайте том: `docker compose down -v`, задайте пароль в `.env`, снова `docker compose up -d`.
 - **По домену не открывается** — проверьте DNS (`dig +short integration-wa.ru`), фаервол (порт 80), что порт 80 занят именно docker-proxy: `ss -tlnp | grep 80`. Локальная проверка: `curl -H 'Host: integration-wa.ru' http://127.0.0.1:80/` должен вернуть HTTP 200.
 - **По IP:3000 работает, по домену нет** — убедитесь, что в `.env` не задан `NEXT_PUBLIC_API_URL` и пересоберите фронт: `docker compose up -d --build frontend`.
