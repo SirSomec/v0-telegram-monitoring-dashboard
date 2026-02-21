@@ -182,8 +182,9 @@ def _migrate_support_ticket_user_last_read_at() -> None:
 
 
 def _migrate_user_thematic_group_subscriptions() -> None:
-    """Создать таблицу подписок на тематические группы и при необходимости заполнить из текущих подписок на каналы."""
-    from sqlalchemy import select
+    """Создать таблицу подписок на тематические группы и один раз заполнить из текущих подписок на каналы.
+    Backfill выполняется только при пустой таблице, чтобы новые пользователи не получали подписки."""
+    from sqlalchemy import func, select
     from sqlalchemy.orm import selectinload
     from models import (
         ChatGroup,
@@ -203,6 +204,9 @@ def _migrate_user_thematic_group_subscriptions() -> None:
     if not table_exists:
         Base.metadata.create_all(bind=engine)
     with SessionLocal() as db:
+        n = db.scalar(select(func.count()).select_from(user_thematic_group_subscriptions)) or 0
+        if n > 0:
+            return
         admin_ids = set(db.scalars(select(User.id).where(User.is_admin.is_(True))).all() or ())
         if not admin_ids:
             return

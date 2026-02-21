@@ -2043,7 +2043,8 @@ def list_chat_groups(user: User = Depends(get_current_user), db: Session = Depen
 
 @app.get("/api/chat-groups/available", response_model=list[ChatGroupAvailableOut])
 def list_available_chat_groups(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> list[ChatGroupAvailableOut]:
-    """Группы каналов по тематикам, созданные администраторами. Пользователь может подписаться на всю группу сразу."""
+    """Группы каналов по тематикам, созданные администраторами. Пользователь может подписаться на всю группу сразу.
+    Подписан только если есть запись в user_thematic_group_subscriptions для текущего user.id."""
     _ensure_default_user(db)
     admin_ids = set(db.scalars(select(User.id).where(User.is_admin.is_(True))).all() or ())
     if not admin_ids:
@@ -2054,13 +2055,12 @@ def list_available_chat_groups(user: User = Depends(get_current_user), db: Sessi
         .order_by(ChatGroup.id.asc())
         .options(selectinload(ChatGroup.chats))
     ).all()
-    subscribed_group_ids = set(
-        db.execute(
-            select(user_thematic_group_subscriptions.c.group_id).where(
-                user_thematic_group_subscriptions.c.user_id == user.id
-            )
-        ).scalars().all()
-    )
+    rows = db.execute(
+        select(user_thematic_group_subscriptions.c.group_id).where(
+            user_thematic_group_subscriptions.c.user_id == user.id
+        )
+    ).all()
+    subscribed_group_ids = {int(r[0]) for r in rows if r[0] is not None}
     out: list[ChatGroupAvailableOut] = []
     for g in groups:
         global_chats = [c for c in (g.chats or []) if c.is_global]
