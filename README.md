@@ -88,7 +88,9 @@ pnpm dev
 
 Для развёртывания на сервере используйте Docker и Docker Compose.
 
-**Установка на чистый Ubuntu:** пошаговая инструкция — [docs/install-ubuntu.md](docs/install-ubuntu.md).
+**Установка на сервер с нуля (порядок шагов):** [docs/INSTALL-SERVER.md](docs/INSTALL-SERVER.md) — клонирование, `.env`, запуск, доступ по домену (в т.ч. integration-wa.ru), первый вход, парсер.
+
+**Установка на чистый Ubuntu (подробно):** [docs/install-ubuntu.md](docs/install-ubuntu.md).
 
 ### Требования
 
