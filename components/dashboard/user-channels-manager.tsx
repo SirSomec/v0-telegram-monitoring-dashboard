@@ -9,7 +9,7 @@ import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Trash2, Plus, RefreshCw, UserPlus, Search } from "lucide-react"
+import { Trash2, Plus, RefreshCw, Search } from "lucide-react"
 import { apiJson } from "@/lib/api"
 
 export type ChatOut = {
@@ -64,8 +64,6 @@ export function UserChannelsManager({ canAddResources = true }: { canAddResource
   const [description, setDescription] = useState("")
   const [enabled, setEnabled] = useState(true)
 
-  const [subscribeIdentifier, setSubscribeIdentifier] = useState("")
-  const [subscribeError, setSubscribeError] = useState<string>("")
   const [channelSearchQuery, setChannelSearchQuery] = useState("")
 
   const filteredAndSortedChannels = useMemo(() => {
@@ -186,25 +184,6 @@ export function UserChannelsManager({ canAddResources = true }: { canAddResource
       setLoading(false)
     }
   }, [])
-
-  async function subscribeByIdentifier() {
-    const ident = subscribeIdentifier.trim()
-    if (!ident) return
-    setSubscribeError("")
-    setLoading(true)
-    try {
-      await apiJson<ChatOut>("/api/chats/subscribe-by-identifier", {
-        method: "POST",
-        body: JSON.stringify({ identifier: ident }),
-      })
-      setSubscribeIdentifier("")
-      await refresh()
-    } catch (e) {
-      setSubscribeError(e instanceof Error ? e.message : "Ошибка подписки")
-    } finally {
-      setLoading(false)
-    }
-  }
 
   return (
     <div className="space-y-6">
@@ -331,41 +310,15 @@ export function UserChannelsManager({ canAddResources = true }: { canAddResource
       <Card className="border-border bg-card">
         <CardHeader>
           <CardTitle className="text-base font-semibold text-card-foreground">
-            Подписаться на каналы
+            Доступные каналы
           </CardTitle>
           <p className="text-sm text-muted-foreground">
-            Вставьте ссылку (t.me/… или приглашение), @username или ID канала из доступных и нажмите «Подписаться».
+            Включите мониторинг для нужных каналов — переключатель в колонке «Мониторинг».
           </p>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="flex flex-wrap items-end gap-2">
-            <div className="min-w-[200px] flex-1">
-              <Input
-                value={subscribeIdentifier}
-                onChange={(e) => {
-                  setSubscribeIdentifier(e.target.value)
-                  setSubscribeError("")
-                }}
-                placeholder="Ссылка, @username или chat_id"
-                disabled={!canAddResources}
-                className="bg-secondary border-border"
-                onKeyDown={(e) => e.key === "Enter" && subscribeByIdentifier()}
-              />
-            </div>
-            <Button
-              onClick={subscribeByIdentifier}
-              disabled={!canAddResources || loading || !subscribeIdentifier.trim()}
-            >
-              <UserPlus className="mr-2 size-4" />
-              Подписаться
-            </Button>
-          </div>
-          {subscribeError && (
-            <p className="text-sm text-destructive">{subscribeError}</p>
-          )}
-
-          <div className="border-t border-border pt-4">
-            <h4 className="text-sm font-medium text-foreground mb-2">Доступные каналы</h4>
+          <div>
+            <h4 className="text-sm font-medium text-foreground mb-2">Каналы</h4>
             {availableChannels.length > 0 && (
               <div className="relative mb-3">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground pointer-events-none" />
@@ -391,9 +344,7 @@ export function UserChannelsManager({ canAddResources = true }: { canAddResource
                 <TableRow>
                   <TableHead>Канал</TableHead>
                   <TableHead>Описание и группы</TableHead>
-                  <TableHead>Мониторинг</TableHead>
-                  <TableHead>Статус</TableHead>
-                  <TableHead className="text-right">Действие</TableHead>
+                  <TableHead className="w-[120px]">Мониторинг</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -421,43 +372,17 @@ export function UserChannelsManager({ canAddResources = true }: { canAddResource
                       )}
                     </TableCell>
                     <TableCell>
-                      {av.subscribed && av.subscriptionEnabled !== undefined ? (
-                        <Switch
-                          checked={av.subscriptionEnabled ?? true}
-                          onCheckedChange={(v) => setSubscriptionEnabled(av.id, v)}
-                          disabled={loading}
-                        />
-                      ) : (
-                        <span className="text-xs text-muted-foreground">—</span>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      {av.subscribed ? (
-                        <Badge variant="default">Подписан</Badge>
-                      ) : (
-                        <span className="text-sm text-muted-foreground">Не подписан</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {av.subscribed ? (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => removeChannel({ id: av.id } as ChatOut)}
-                          disabled={loading}
-                        >
-                          Отписаться
-                        </Button>
-                      ) : (
-                        <Button
-                          size="sm"
-                          onClick={() => subscribe(av.id)}
-                          disabled={!canAddResources || loading}
-                        >
-                          <UserPlus className="mr-2 size-4" />
-                          Подписаться
-                        </Button>
-                      )}
+                      <Switch
+                        checked={av.subscribed && (av.subscriptionEnabled ?? true)}
+                        onCheckedChange={(v) => {
+                          if (av.subscribed) {
+                            setSubscriptionEnabled(av.id, v)
+                          } else {
+                            if (v) subscribe(av.id)
+                          }
+                        }}
+                        disabled={loading || (!canAddResources && !av.subscribed)}
+                      />
                     </TableCell>
                   </TableRow>
                 ))}
