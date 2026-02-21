@@ -73,14 +73,17 @@ services:
     depends_on:
       - backend
 
-  # Nginx — единая точка входа по порту 80 (для доступа по домену integration-wa.ru).
-  # Если используете свой Nginx на хосте — не поднимайте этот сервис и пробросьте 3000:3000, 8000:8000.
+  # Nginx — единая точка входа по портам 80 и 443 (для доступа по домену integration-wa.ru).
+  # HTTPS: после certbot на хосте смонтируйте /etc/letsencrypt (см. комментарий к volumes).
   nginx:
     image: nginx:alpine
     ports:
       - "80:80"
+      - "443:443"
     volumes:
       - ./deploy/nginx-integration-wa.ru-docker.conf:/etc/nginx/conf.d/default.conf:ro
+      # Сертификаты Let's Encrypt с хоста (после: sudo certbot certonly --standalone -d integration-wa.ru)
+      - /etc/letsencrypt:/etc/letsencrypt:ro
     depends_on:
       - frontend
       - backend

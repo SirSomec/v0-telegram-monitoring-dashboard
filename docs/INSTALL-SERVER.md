@@ -140,7 +140,23 @@ sudo certbot certonly --standalone -d integration-wa.ru
 # sudo certbot certonly --standalone -d integration-wa.ru -d www.integration-wa.ru
 ```
 
-После получения сертификатов нужно добавить в Nginx конфиг поддержку 443 и путей к сертификатам. Либо временно остановить контейнер nginx (`docker compose stop nginx`), запустить certbot с `--standalone`, затем включить в конфиг Nginx (в Docker или на хосте) блок `listen 443 ssl` и снова запустить nginx. Подробности — в [deploy/NGINX-SETUP.md](../deploy/NGINX-SETUP.md) и в документации Certbot.
+**Если Nginx в контейнере (docker compose):**
+
+1. Остановите nginx, чтобы certbot занял порт 80:
+   ```bash
+   cd /opt/telegram-monitor
+   docker compose stop nginx
+   ```
+2. Получите сертификат (только основной домен):
+   ```bash
+   sudo certbot certonly --standalone -d integration-wa.ru
+   ```
+3. В проекте уже должны быть: в `docker-compose.yml` — порт 443 и монтирование `/etc/letsencrypt:/etc/letsencrypt:ro`, в `deploy/nginx-integration-wa.ru-docker.conf` — блок `listen 443 ssl`. Если вы клонировали репозиторий недавно, они там есть. Подтяните изменения (`git pull`) или добавьте вручную (см. [deploy/NGINX-SETUP.md](../deploy/NGINX-SETUP.md)).
+4. Запустите nginx снова:
+   ```bash
+   docker compose start nginx
+   ```
+5. Проверьте: **https://integration-wa.ru** должен открываться по HTTPS. В `.env` добавьте в `CORS_ORIGINS` значение `https://integration-wa.ru` и перезапустите backend: `docker compose restart backend`.
 
 ---
 
