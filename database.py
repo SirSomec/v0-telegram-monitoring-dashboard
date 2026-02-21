@@ -181,8 +181,69 @@ def _migrate_support_ticket_user_last_read_at() -> None:
         conn.commit()
 
 
+def _migrate_user_thematic_group_subscriptions() -> None:
+    """Создать таблицу подписок на тематические группы и при необходимости заполнить из текущих подписок на каналы."""
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+    from models import (
+        ChatGroup,
+        User,
+        user_chat_subscriptions,
+        user_thematic_group_subscriptions,
+    )
+
+    with engine.connect() as conn:
+        r = conn.execute(
+            text(
+                "SELECT 1 FROM information_schema.tables "
+                "WHERE table_schema = 'public' AND table_name = 'user_thematic_group_subscriptions'"
+            )
+        )
+        table_exists = r.scalar() is not None
+    if not table_exists:
+        Base.metadata.create_all(bind=engine)
+    with SessionLocal() as db:
+        admin_ids = set(db.scalars(select(User.id).where(User.is_admin.is_(True))).all() or ())
+        if not admin_ids:
+            return
+        admin_groups = db.scalars(
+            select(ChatGroup).where(ChatGroup.user_id.in_(admin_ids)).options(selectinload(ChatGroup.chats))
+        ).all()
+        for g in admin_groups:
+            global_chats = [c for c in (g.chats or []) if getattr(c, "is_global", False)]
+            if not global_chats:
+                continue
+            chat_ids = {c.id for c in global_chats}
+            sub_rows = db.execute(
+                select(user_chat_subscriptions.c.user_id)
+                .where(user_chat_subscriptions.c.chat_id.in_(chat_ids))
+                .distinct()
+            ).all()
+            for (uid,) in sub_rows:
+                user_subs = set(
+                    db.execute(
+                        select(user_chat_subscriptions.c.chat_id).where(
+                            user_chat_subscriptions.c.user_id == uid,
+                            user_chat_subscriptions.c.chat_id.in_(chat_ids),
+                        )
+                    ).scalars().all()
+                )
+                if chat_ids.issubset(user_subs):
+                    existing = db.execute(
+                        select(user_thematic_group_subscriptions).where(
+                            user_thematic_group_subscriptions.c.user_id == uid,
+                            user_thematic_group_subscriptions.c.group_id == g.id,
+                        )
+                    ).first()
+                    if not existing:
+                        db.execute(
+                            user_thematic_group_subscriptions.insert().values(user_id=uid, group_id=g.id)
+                        )
+        db.commit()
+
+
 def init_db() -> None:
-    from models import Chat, ChatGroup, Keyword, Mention, NotificationSettings, ParserSetting, User, PasswordResetToken, PlanLimit, SupportTicket, SupportMessage, SupportAttachment  # noqa: F401
+    from models import Chat, ChatGroup, Keyword, Mention, NotificationSettings, ParserSetting, User, PasswordResetToken, PlanLimit, SupportTicket, SupportMessage, SupportAttachment, user_thematic_group_subscriptions  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
     _migrate_keywords_use_semantic()
@@ -194,6 +255,7 @@ def init_db() -> None:
     _migrate_plan_limits()
     _migrate_chats_is_global_and_invite_hash()
     _migrate_support_ticket_user_last_read_at()
+    _migrate_user_thematic_group_subscriptions()
 
 
 def drop_all_tables() -> None:

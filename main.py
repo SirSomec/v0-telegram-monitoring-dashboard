@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from auth_utils import create_token, decode_token, hash_password, verify_password
 from database import get_db, init_db
-from models import Chat, ChatGroup, Keyword, Mention, NotificationSettings, PasswordResetToken, User, user_chat_subscriptions, PlanLimit, SupportTicket, SupportMessage, SupportAttachment, CHAT_SOURCE_TELEGRAM, CHAT_SOURCE_MAX
+from models import Chat, ChatGroup, Keyword, Mention, NotificationSettings, PasswordResetToken, User, user_chat_subscriptions, user_thematic_group_subscriptions, PlanLimit, SupportTicket, SupportMessage, SupportAttachment, CHAT_SOURCE_TELEGRAM, CHAT_SOURCE_MAX
 from parser import TelegramScanner
 from parser_max import MaxScanner
 from plans import PLAN_BASIC, PLAN_FREE, PLAN_ORDER, get_effective_plan, get_limits
@@ -601,23 +601,16 @@ def _user_to_out(u: User) -> UserOut:
 
 def _usage_counts(db: Session, user_id: int) -> dict[str, int]:
     """Текущее использование: groups, channels (всего), keywords_exact, keywords_semantic, own_channels.
-    groups = свои группы + подписанные тематические (админские) группы."""
+    groups = свои группы + подписанные тематические (записи в user_thematic_group_subscriptions)."""
     own_groups = db.scalar(select(func.count(ChatGroup.id)).where(ChatGroup.user_id == user_id)) or 0
-    admin_ids = set(db.scalars(select(User.id).where(User.is_admin.is_(True))).all() or ())
-    subscribed_thematic = 0
-    if admin_ids:
-        sub_ids = set(
-            db.execute(
-                select(user_chat_subscriptions.c.chat_id).where(user_chat_subscriptions.c.user_id == user_id)
-            ).scalars().all()
+    subscribed_thematic = (
+        db.scalar(
+            select(func.count()).select_from(user_thematic_group_subscriptions).where(
+                user_thematic_group_subscriptions.c.user_id == user_id
+            )
         )
-        admin_groups = db.scalars(
-            select(ChatGroup).where(ChatGroup.user_id.in_(admin_ids)).options(selectinload(ChatGroup.chats))
-        ).all()
-        for g in admin_groups:
-            global_chats = [c for c in (g.chats or []) if c.is_global]
-            if global_chats and all(c.id in sub_ids for c in global_chats):
-                subscribed_thematic += 1
+        or 0
+    )
     groups = own_groups + subscribed_thematic
     own_chats = db.scalar(select(func.count(Chat.id)).where(Chat.user_id == user_id)) or 0
     sub_count = db.scalar(
@@ -2016,7 +2009,7 @@ def list_chat_groups(user: User = Depends(get_current_user), db: Session = Depen
 def list_available_chat_groups(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> list[ChatGroupAvailableOut]:
     """Группы каналов по тематикам, созданные администраторами. Пользователь может подписаться на всю группу сразу."""
     _ensure_default_user(db)
-    admin_ids = {u.id for u in db.scalars(select(User).where(User.is_admin.is_(True))).all()}
+    admin_ids = set(db.scalars(select(User.id).where(User.is_admin.is_(True))).all() or ())
     if not admin_ids:
         return []
     groups = db.scalars(
@@ -2025,9 +2018,11 @@ def list_available_chat_groups(user: User = Depends(get_current_user), db: Sessi
         .order_by(ChatGroup.id.asc())
         .options(selectinload(ChatGroup.chats))
     ).all()
-    sub_ids = set(
+    subscribed_group_ids = set(
         db.execute(
-            select(user_chat_subscriptions.c.chat_id).where(user_chat_subscriptions.c.user_id == user.id)
+            select(user_thematic_group_subscriptions.c.group_id).where(
+                user_thematic_group_subscriptions.c.user_id == user.id
+            )
         ).scalars().all()
     )
     out: list[ChatGroupAvailableOut] = []
@@ -2043,7 +2038,7 @@ def list_available_chat_groups(user: User = Depends(get_current_user), db: Sessi
                 or (f"t.me/joinchat/{c.invite_hash}" if getattr(c, "invite_hash", None) else "")
             ) or "—"
             channel_outs.append(ChatGroupChannelOut(id=c.id, identifier=ident, title=c.title))
-        subscribed = all(c.id in sub_ids for c in global_chats)
+        subscribed = g.id in subscribed_group_ids
         out.append(
             ChatGroupAvailableOut(
                 id=g.id,
@@ -2067,29 +2062,32 @@ def subscribe_chat_group(group_id: int, user: User = Depends(get_current_user), 
     )
     if not g:
         raise HTTPException(status_code=404, detail="group not found")
-    admin_ids = {u.id for u in db.scalars(select(User).where(User.is_admin.is_(True))).all()}
+    admin_ids = set(db.scalars(select(User.id).where(User.is_admin.is_(True))).all() or ())
     if g.user_id not in admin_ids:
         raise HTTPException(status_code=404, detail="group not available")
     global_chats = [c for c in (g.chats or []) if c.is_global]
+    already_subscribed_to_group = db.execute(
+        select(user_thematic_group_subscriptions).where(
+            user_thematic_group_subscriptions.c.user_id == user.id,
+            user_thematic_group_subscriptions.c.group_id == group_id,
+        )
+    ).first()
+    if already_subscribed_to_group:
+        return {"ok": True, "subscribedCount": len(global_chats)}
+    _check_limits(db, user, delta_groups=1)
     sub_ids = set(
         db.execute(
             select(user_chat_subscriptions.c.chat_id).where(user_chat_subscriptions.c.user_id == user.id)
         ).scalars().all()
     )
-    already_subscribed_to_group = global_chats and all(c.id in sub_ids for c in global_chats)
     new_subs = sum(1 for c in global_chats if c.id not in sub_ids)
-    if not already_subscribed_to_group:
-        _check_limits(db, user, delta_groups=1)
     if new_subs > 0:
         _check_limits(db, user, delta_channels=new_subs)
+    db.execute(
+        user_thematic_group_subscriptions.insert().values(user_id=user.id, group_id=group_id)
+    )
     for c in global_chats:
-        existing = db.execute(
-            select(user_chat_subscriptions).where(
-                user_chat_subscriptions.c.user_id == user.id,
-                user_chat_subscriptions.c.chat_id == c.id,
-            )
-        ).first()
-        if not existing:
+        if c.id not in sub_ids:
             db.execute(user_chat_subscriptions.insert().values(user_id=user.id, chat_id=c.id))
     db.commit()
     return {"ok": True, "subscribedCount": len(global_chats)}
@@ -2104,20 +2102,27 @@ def unsubscribe_chat_group(group_id: int, user: User = Depends(get_current_user)
     )
     if not g:
         raise HTTPException(status_code=404, detail="group not found")
-    admin_ids = {u.id for u in db.scalars(select(User).where(User.is_admin.is_(True))).all()}
+    admin_ids = set(db.scalars(select(User.id).where(User.is_admin.is_(True))).all() or ())
     if g.user_id not in admin_ids:
         raise HTTPException(status_code=404, detail="group not available")
     global_chat_ids = [c.id for c in (g.chats or []) if c.is_global]
-    if not global_chat_ids:
-        return {"ok": True, "unsubscribedCount": 0}
-    r = db.execute(
-        user_chat_subscriptions.delete().where(
-            user_chat_subscriptions.c.user_id == user.id,
-            user_chat_subscriptions.c.chat_id.in_(global_chat_ids),
+    db.execute(
+        user_thematic_group_subscriptions.delete().where(
+            user_thematic_group_subscriptions.c.user_id == user.id,
+            user_thematic_group_subscriptions.c.group_id == group_id,
         )
     )
+    unsub_count = 0
+    if global_chat_ids:
+        r = db.execute(
+            user_chat_subscriptions.delete().where(
+                user_chat_subscriptions.c.user_id == user.id,
+                user_chat_subscriptions.c.chat_id.in_(global_chat_ids),
+            )
+        )
+        unsub_count = r.rowcount
     db.commit()
-    return {"ok": True, "unsubscribedCount": r.rowcount}
+    return {"ok": True, "unsubscribedCount": unsub_count}
 
 
 @app.post("/api/chat-groups", response_model=ChatGroupOut)
