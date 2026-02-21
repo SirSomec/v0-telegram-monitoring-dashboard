@@ -1809,7 +1809,8 @@ def update_parser_settings(
     body: ParserSettingsUpdate,
     _: User = Depends(get_current_admin),
 ) -> ParserSettingsOut:
-    data = body.model_dump(exclude_none=True)
+    # Только ключи, реально переданные в запросе (в т.ч. null для сброса)
+    data = body.model_dump(exclude_unset=True)
     save_parser_settings(data)
     return _parser_settings_to_out()
 

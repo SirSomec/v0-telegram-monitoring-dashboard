@@ -339,6 +339,12 @@ export function ParserManager() {
     setError("")
     setSaveSuccess(false)
     try {
+      const maxPollSec =
+        form.MAX_POLL_INTERVAL_SEC ??
+        (settings.MAX_POLL_INTERVAL_SEC ? parseInt(settings.MAX_POLL_INTERVAL_SEC, 10) : undefined)
+      const userId =
+        form.TG_USER_ID ?? (settings.TG_USER_ID ? parseInt(settings.TG_USER_ID, 10) : undefined)
+      // Всегда отправляем полный объект со всеми ключами, чтобы прокси/бэкенд не получали пустое тело
       const payload: ParserSettingsUpdate = {
         TG_API_ID: (form.TG_API_ID ?? settings.TG_API_ID) ?? "",
         TG_API_HASH: (form.TG_API_HASH ?? settings.TG_API_HASH) ?? "",
@@ -350,17 +356,18 @@ export function ParserManager() {
         TG_PROXY_PORT: (form.TG_PROXY_PORT ?? settings.TG_PROXY_PORT) ?? "",
         TG_PROXY_USER: (form.TG_PROXY_USER ?? settings.TG_PROXY_USER) ?? "",
         TG_PROXY_PASS: (form.TG_PROXY_PASS ?? settings.TG_PROXY_PASS) ?? "",
-        AUTO_START_SCANNER: form.AUTO_START_SCANNER,
-        MULTI_USER_SCANNER: form.MULTI_USER_SCANNER,
-        TG_USER_ID: form.TG_USER_ID,
+        AUTO_START_SCANNER: form.AUTO_START_SCANNER ?? false,
+        MULTI_USER_SCANNER: form.MULTI_USER_SCANNER ?? true,
+        TG_USER_ID: userId ?? null,
         MAX_ACCESS_TOKEN: (form.MAX_ACCESS_TOKEN ?? settings.MAX_ACCESS_TOKEN) ?? "",
         MAX_BASE_URL: (form.MAX_BASE_URL ?? settings.MAX_BASE_URL) ?? "",
-        MAX_POLL_INTERVAL_SEC: form.MAX_POLL_INTERVAL_SEC ?? (settings.MAX_POLL_INTERVAL_SEC ? parseInt(settings.MAX_POLL_INTERVAL_SEC, 10) : undefined),
-        AUTO_START_MAX_SCANNER: form.AUTO_START_MAX_SCANNER,
+        MAX_POLL_INTERVAL_SEC: maxPollSec ?? null,
+        AUTO_START_MAX_SCANNER: form.AUTO_START_MAX_SCANNER ?? false,
         SEMANTIC_PROVIDER: (form.SEMANTIC_PROVIDER ?? settings.SEMANTIC_PROVIDER) ?? "",
         SEMANTIC_SERVICE_URL: (form.SEMANTIC_SERVICE_URL ?? settings.SEMANTIC_SERVICE_URL) ?? "",
         SEMANTIC_MODEL_NAME: (form.SEMANTIC_MODEL_NAME ?? settings.SEMANTIC_MODEL_NAME) ?? "",
-        SEMANTIC_SIMILARITY_THRESHOLD: (form.SEMANTIC_SIMILARITY_THRESHOLD ?? settings.SEMANTIC_SIMILARITY_THRESHOLD) ?? "",
+        SEMANTIC_SIMILARITY_THRESHOLD:
+          (form.SEMANTIC_SIMILARITY_THRESHOLD ?? settings.SEMANTIC_SIMILARITY_THRESHOLD) ?? "",
       }
       const data = await apiJson<ParserSettings>("/api/admin/parser/settings", {
         method: "PATCH",
