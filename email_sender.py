@@ -115,3 +115,46 @@ def send_mention_notification_email(to_email: str, keyword: str, message: str, m
     except Exception as e:
         logger.exception("Ошибка отправки email-уведомления об упоминании: %s", e)
         return False
+
+
+def send_support_reply_email(to_email: str, ticket_subject: str, reply_preview: str) -> bool:
+    """Уведомить пользователя об ответе поддержки на обращение."""
+    subject = f"TeleScope — ответ по обращению: {ticket_subject[:50]}"
+    dashboard_hint = f"Откройте раздел «Поддержка» в личном кабинете: {FRONTEND_URL.rstrip('/')}/dashboard" if FRONTEND_URL else "Откройте раздел «Поддержка» в личном кабинете."
+    body_plain = (
+        f"Здравствуйте.\n\n"
+        f"По вашему обращению «{ticket_subject}» получен ответ от поддержки.\n\n"
+        f"Фрагмент ответа:\n{reply_preview[:400]}{'...' if len(reply_preview) > 400 else ''}\n\n"
+        f"{dashboard_hint}\n\n"
+        f"— TeleScope"
+    )
+    body_html = (
+        f"<p>Здравствуйте.</p>"
+        f"<p>По вашему обращению «<strong>{ticket_subject}</strong>» получен ответ от поддержки.</p>"
+        f"<p>{reply_preview[:400].replace(chr(10), '<br>')}{'...' if len(reply_preview) > 400 else ''}</p>"
+        f"<p>{dashboard_hint}</p>"
+        f"<p>— TeleScope</p>"
+    )
+
+    if not is_configured():
+        logger.debug("SMTP не настроен, пропуск email об ответе поддержки")
+        return False
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = SMTP_FROM
+    msg["To"] = to_email
+    msg.attach(MIMEText(body_plain, "plain", "utf-8"))
+    msg.attach(MIMEText(body_html, "html", "utf-8"))
+
+    try:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as server:
+            if SMTP_USE_TLS:
+                server.starttls()
+            server.login(SMTP_USER, SMTP_PASSWORD)
+            server.sendmail(SMTP_FROM, to_email, msg.as_string())
+        logger.info("Уведомление об ответе поддержки отправлено на %s", to_email)
+        return True
+    except Exception as e:
+        logger.exception("Ошибка отправки email об ответе поддержки: %s", e)
+        return False

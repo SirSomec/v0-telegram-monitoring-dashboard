@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from auth_utils import create_token, decode_token, hash_password, verify_password
 from database import get_db, init_db
-from models import Chat, ChatGroup, Keyword, Mention, NotificationSettings, PasswordResetToken, User, user_chat_subscriptions, PlanLimit, CHAT_SOURCE_TELEGRAM, CHAT_SOURCE_MAX
+from models import Chat, ChatGroup, Keyword, Mention, NotificationSettings, PasswordResetToken, User, user_chat_subscriptions, PlanLimit, SupportTicket, SupportMessage, CHAT_SOURCE_TELEGRAM, CHAT_SOURCE_MAX
 from parser import TelegramScanner
 from parser_max import MaxScanner
 from plans import PLAN_BASIC, PLAN_FREE, PLAN_ORDER, get_effective_plan, get_limits
@@ -200,6 +200,101 @@ class NotificationSettingsUpdate(BaseModel):
     notifyTelegram: bool | None = None
     notifyMode: str | None = None  # all | leads_only | digest
     telegramChatId: str | None = None
+
+
+# --- Поддержка (обращения пользователей) ---
+
+class SupportTicketCreate(BaseModel):
+    subject: str = Field(..., min_length=1, max_length=300)
+    message: str = Field(..., min_length=1, max_length=10000)
+
+
+class SupportMessageCreate(BaseModel):
+    body: str = Field(..., min_length=1, max_length=10000)
+
+
+class SupportMessageOut(BaseModel):
+    id: int
+    ticketId: int
+    senderId: int
+    isFromStaff: bool
+    body: str
+    createdAt: str
+
+
+class SupportTicketOut(BaseModel):
+    id: int
+    userId: int
+    userEmail: str | None = None
+    userName: str | None = None
+    subject: str
+    status: str  # open | answered | closed
+    createdAt: str
+    updatedAt: str
+    messageCount: int = 0
+    lastMessageAt: str | None = None
+    hasUnread: bool = False  # у владельца есть непрочитанный ответ от поддержки
+
+
+class SupportTicketDetailOut(SupportTicketOut):
+    messages: list[SupportMessageOut] = []
+
+
+class SupportTicketStatusUpdate(BaseModel):
+    status: str = Field(..., pattern="^(open|answered|closed)$")
+
+
+def _notify_admins_support(
+    db: Session,
+    ticket_id: int,
+    user_email: str | None,
+    user_name: str | None,
+    subject: str,
+    message_preview: str,
+) -> None:
+    """Отправить уведомление в Telegram всем администраторам, у которых настроен telegram_chat_id."""
+    try:
+        admin_ids = [u.id for u in db.scalars(select(User).where(User.is_admin.is_(True))).all()]
+        for uid in admin_ids:
+            settings = db.scalar(select(NotificationSettings).where(NotificationSettings.user_id == uid))
+            if not settings or not settings.telegram_chat_id or not settings.telegram_chat_id.strip():
+                continue
+            notify_telegram.send_support_notification(
+                settings.telegram_chat_id.strip(),
+                ticket_id,
+                user_email,
+                user_name,
+                subject,
+                message_preview,
+            )
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception("Ошибка уведомления админов о поддержке")
+
+
+def _notify_user_support_reply(db: Session, ticket: SupportTicket, reply_preview: str) -> None:
+    """Уведомить владельца тикета об ответе поддержки (email + Telegram по настройкам)."""
+    try:
+        owner = db.scalar(select(User).where(User.id == ticket.user_id))
+        if not owner:
+            return
+        settings = db.scalar(select(NotificationSettings).where(NotificationSettings.user_id == ticket.user_id))
+        if settings and settings.notify_email and owner.email and owner.email.strip():
+            from email_sender import send_support_reply_email
+            send_support_reply_email(
+                owner.email.strip(),
+                ticket.subject,
+                reply_preview,
+            )
+        if settings and settings.notify_telegram and settings.telegram_chat_id and settings.telegram_chat_id.strip():
+            notify_telegram.send_support_reply_to_user(
+                settings.telegram_chat_id.strip(),
+                ticket.subject,
+                reply_preview,
+            )
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception("Ошибка уведомления пользователя об ответе поддержки")
 
 
 def _group_link(chat_username: str | None) -> str | None:
@@ -1102,6 +1197,254 @@ def update_notification_settings(
         notifyMode=(s.notify_mode or "all"),
         telegramChatId=s.telegram_chat_id,
     )
+
+
+# --- API поддержки (пользователь: свои тикеты; админ: все + ответы) ---
+
+@app.post("/api/support/tickets", response_model=SupportTicketDetailOut)
+def create_support_ticket(
+    body: SupportTicketCreate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> SupportTicketDetailOut:
+    _ensure_default_user(db)
+    ticket = SupportTicket(user_id=user.id, subject=body.subject.strip(), status="open")
+    db.add(ticket)
+    db.flush()
+    msg = SupportMessage(
+        ticket_id=ticket.id,
+        sender_id=user.id,
+        is_from_staff=False,
+        body=body.message.strip(),
+    )
+    db.add(msg)
+    db.commit()
+    db.refresh(ticket)
+    db.refresh(msg)
+    _notify_admins_support(
+        db,
+        ticket.id,
+        user.email,
+        user.name,
+        ticket.subject,
+        body.message.strip()[:300],
+    )
+    created_at = msg.created_at.replace(tzinfo=timezone.utc) if msg.created_at.tzinfo is None else msg.created_at
+    return SupportTicketDetailOut(
+        id=ticket.id,
+        userId=ticket.user_id,
+        userEmail=user.email,
+        userName=user.name,
+        subject=ticket.subject,
+        status=ticket.status,
+        createdAt=ticket.created_at.isoformat() if ticket.created_at.tzinfo else ticket.created_at.replace(tzinfo=timezone.utc).isoformat(),
+        updatedAt=ticket.updated_at.isoformat() if ticket.updated_at.tzinfo else ticket.updated_at.replace(tzinfo=timezone.utc).isoformat(),
+        messageCount=1,
+        lastMessageAt=created_at.isoformat(),
+        messages=[
+            SupportMessageOut(
+                id=msg.id,
+                ticketId=ticket.id,
+                senderId=msg.sender_id,
+                isFromStaff=msg.is_from_staff,
+                body=msg.body,
+                createdAt=created_at.isoformat(),
+            )
+        ],
+    )
+
+
+def _support_ticket_to_out(
+    t: SupportTicket, db: Session, include_user: bool = False, for_user_id: int | None = None
+) -> SupportTicketOut:
+    user = db.scalar(select(User).where(User.id == t.user_id)) if include_user else None
+    msg_count = db.scalar(select(func.count()).select_from(SupportMessage).where(SupportMessage.ticket_id == t.id)) or 0
+    last_msg = db.scalar(
+        select(SupportMessage).where(SupportMessage.ticket_id == t.id).order_by(desc(SupportMessage.created_at)).limit(1)
+    )
+    last_at = None
+    if last_msg and last_msg.created_at:
+        last_at = last_msg.created_at.isoformat() if last_msg.created_at.tzinfo else last_msg.created_at.replace(tzinfo=timezone.utc).isoformat()
+
+    has_unread = False
+    if for_user_id is not None and t.user_id == for_user_id:
+        read_at = t.user_last_read_at
+        if read_at is not None and read_at.tzinfo is None:
+            read_at = read_at.replace(tzinfo=timezone.utc)
+        threshold = read_at if read_at else datetime(1970, 1, 1, tzinfo=timezone.utc)
+        has_staff_after = db.scalar(
+            select(func.count()).select_from(SupportMessage).where(
+                SupportMessage.ticket_id == t.id,
+                SupportMessage.is_from_staff.is_(True),
+                SupportMessage.created_at > threshold,
+            )
+        ) or 0
+        has_unread = has_staff_after > 0
+
+    return SupportTicketOut(
+        id=t.id,
+        userId=t.user_id,
+        userEmail=user.email if user else None,
+        userName=user.name if user else None,
+        subject=t.subject,
+        status=t.status,
+        createdAt=t.created_at.isoformat() if t.created_at.tzinfo else t.created_at.replace(tzinfo=timezone.utc).isoformat(),
+        updatedAt=t.updated_at.isoformat() if t.updated_at.tzinfo else t.updated_at.replace(tzinfo=timezone.utc).isoformat(),
+        messageCount=msg_count,
+        lastMessageAt=last_at,
+        hasUnread=has_unread,
+    )
+
+
+@app.get("/api/support/tickets", response_model=list[SupportTicketOut])
+def list_my_support_tickets(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[SupportTicketOut]:
+    _ensure_default_user(db)
+    rows = db.scalars(select(SupportTicket).where(SupportTicket.user_id == user.id).order_by(desc(SupportTicket.updated_at))).all()
+    return [_support_ticket_to_out(t, db, include_user=False, for_user_id=user.id) for t in rows]
+
+
+@app.get("/api/support/has-any-unread")
+def support_has_any_unread(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, bool]:
+    """Есть ли у текущего пользователя непрочитанные ответы от поддержки (для индикатора в меню)."""
+    _ensure_default_user(db)
+    rows = db.scalars(select(SupportTicket).where(SupportTicket.user_id == user.id)).all()
+    for t in rows:
+        read_at = t.user_last_read_at
+        if read_at is not None and read_at.tzinfo is None:
+            read_at = read_at.replace(tzinfo=timezone.utc)
+        threshold = read_at if read_at else datetime(1970, 1, 1, tzinfo=timezone.utc)
+        has_staff_after = db.scalar(
+            select(func.count()).select_from(SupportMessage).where(
+                SupportMessage.ticket_id == t.id,
+                SupportMessage.is_from_staff.is_(True),
+                SupportMessage.created_at > threshold,
+            )
+        ) or 0
+        if has_staff_after > 0:
+            return {"hasUnread": True}
+    return {"hasUnread": False}
+
+
+@app.get("/api/support/tickets/{ticket_id}", response_model=SupportTicketDetailOut)
+def get_support_ticket(
+    ticket_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> SupportTicketDetailOut:
+    _ensure_default_user(db)
+    ticket = db.scalar(select(SupportTicket).where(SupportTicket.id == ticket_id).options(selectinload(SupportTicket.messages)))
+    if not ticket:
+        raise HTTPException(status_code=404, detail="ticket not found")
+    if ticket.user_id != user.id and not user.is_admin:
+        raise HTTPException(status_code=403, detail="forbidden")
+    if ticket.user_id == user.id:
+        ticket.user_last_read_at = _now_utc()
+        db.add(ticket)
+        db.commit()
+        db.refresh(ticket)
+    author = db.scalar(select(User).where(User.id == ticket.user_id))
+    messages_out: list[SupportMessageOut] = []
+    for m in ticket.messages:
+        created = m.created_at.replace(tzinfo=timezone.utc) if m.created_at.tzinfo is None else m.created_at
+        messages_out.append(
+            SupportMessageOut(
+                id=m.id,
+                ticketId=m.ticket_id,
+                senderId=m.sender_id,
+                isFromStaff=m.is_from_staff,
+                body=m.body,
+                createdAt=created.isoformat(),
+            )
+        )
+    return SupportTicketDetailOut(
+        **_support_ticket_to_out(ticket, db, include_user=True).model_dump(),
+        messages=messages_out,
+    )
+
+
+@app.post("/api/support/tickets/{ticket_id}/messages", response_model=SupportMessageOut)
+def add_support_message(
+    ticket_id: int,
+    body: SupportMessageCreate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> SupportMessageOut:
+    _ensure_default_user(db)
+    ticket = db.scalar(select(SupportTicket).where(SupportTicket.id == ticket_id))
+    if not ticket:
+        raise HTTPException(status_code=404, detail="ticket not found")
+    if ticket.user_id != user.id and not user.is_admin:
+        raise HTTPException(status_code=403, detail="forbidden")
+    is_staff = user.is_admin
+    msg = SupportMessage(
+        ticket_id=ticket_id,
+        sender_id=user.id,
+        is_from_staff=is_staff,
+        body=body.body.strip(),
+    )
+    db.add(msg)
+    if is_staff:
+        ticket.status = "answered"
+    db.add(ticket)
+    db.commit()
+    db.refresh(msg)
+    if not is_staff:
+        author = db.scalar(select(User).where(User.id == ticket.user_id))
+        _notify_admins_support(
+            db,
+            ticket.id,
+            author.email if author else None,
+            author.name if author else None,
+            ticket.subject,
+            body.body.strip()[:300],
+        )
+    else:
+        _notify_user_support_reply(db, ticket, body.body.strip()[:500])
+    created = msg.created_at.replace(tzinfo=timezone.utc) if msg.created_at.tzinfo is None else msg.created_at
+    return SupportMessageOut(
+        id=msg.id,
+        ticketId=msg.ticket_id,
+        senderId=msg.sender_id,
+        isFromStaff=msg.is_from_staff,
+        body=msg.body,
+        createdAt=created.isoformat(),
+    )
+
+
+@app.patch("/api/support/tickets/{ticket_id}", response_model=SupportTicketOut)
+def update_support_ticket_status(
+    ticket_id: int,
+    body: SupportTicketStatusUpdate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> SupportTicketOut:
+    _ensure_default_user(db)
+    if not user.is_admin:
+        raise HTTPException(status_code=403, detail="Admin only")
+    ticket = db.scalar(select(SupportTicket).where(SupportTicket.id == ticket_id))
+    if not ticket:
+        raise HTTPException(status_code=404, detail="ticket not found")
+    ticket.status = body.status
+    db.add(ticket)
+    db.commit()
+    db.refresh(ticket)
+    return _support_ticket_to_out(ticket, db, include_user=True)
+
+
+@app.get("/api/admin/support/tickets", response_model=list[SupportTicketOut])
+def list_all_support_tickets(
+    _: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+) -> list[SupportTicketOut]:
+    _ensure_default_user(db)
+    rows = db.scalars(select(SupportTicket).order_by(desc(SupportTicket.updated_at))).all()
+    return [_support_ticket_to_out(t, db, include_user=True) for t in rows]
 
 
 @app.get("/api/keywords", response_model=list[KeywordOut])

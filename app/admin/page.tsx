@@ -8,10 +8,11 @@ import { ChannelGroupsManager } from "@/components/admin/channel-groups-manager"
 import { AccountsManager } from "@/components/admin/accounts-manager"
 import { PlanLimitsManager } from "@/components/admin/plan-limits-manager"
 import { ParserManager } from "@/components/admin/parser-manager"
+import { SupportManager } from "@/components/admin/support-manager"
 import { Shield } from "lucide-react"
 import { useAuth } from "@/lib/auth-context"
 
-type AdminTab = "channels" | "groups" | "accounts" | "limits" | "parser"
+type AdminTab = "channels" | "groups" | "accounts" | "limits" | "parser" | "support"
 
 export default function AdminPage() {
   const router = useRouter()
@@ -41,6 +42,8 @@ export default function AdminPage() {
         return "Лимиты тарифов"
       case "parser":
         return "Парсер"
+      case "support":
+        return "Поддержка"
     }
   }, [tab])
 
@@ -76,6 +79,7 @@ export default function AdminPage() {
             <TabsTrigger value="accounts">Учётки</TabsTrigger>
             <TabsTrigger value="limits">Лимиты тарифов</TabsTrigger>
             <TabsTrigger value="parser">Парсер</TabsTrigger>
+          <TabsTrigger value="support">Поддержка</TabsTrigger>
           </TabsList>
 
           <TabsContent value="channels" className="mt-6">
@@ -101,6 +105,11 @@ export default function AdminPage() {
           <TabsContent value="parser" className="mt-6">
             <h2 className="sr-only">{title}</h2>
             <ParserManager />
+          </TabsContent>
+
+          <TabsContent value="support" className="mt-6">
+            <h2 className="sr-only">{title}</h2>
+            <SupportManager />
           </TabsContent>
         </Tabs>
       </main>

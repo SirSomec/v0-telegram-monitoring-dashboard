@@ -12,16 +12,16 @@ import {
   Users,
   Bell,
   CreditCard,
-  Hash,
+  MessageCircle,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 // visible: false — скрыто до реализации фич (ROADMAP)
 const allNavItems = [
   { icon: LayoutDashboard, label: "Панель", visible: true },
-  { icon: Hash, label: "Ключевые слова", visible: true },
   { icon: Users, label: "Группы", visible: true },
   { icon: Bell, label: "Уведомления", visible: true },
+  { icon: MessageCircle, label: "Поддержка", visible: true },
   { icon: CreditCard, label: "Оплата", visible: true },
   { icon: Settings, label: "Настройки", visible: true },
 ]
@@ -32,9 +32,10 @@ interface MobileSidebarProps {
   onOpenChange: (open: boolean) => void
   activeItem: string
   onNavigate: (item: string) => void
+  supportHasUnread?: boolean
 }
 
-export function MobileSidebar({ open, onOpenChange, activeItem, onNavigate }: MobileSidebarProps) {
+export function MobileSidebar({ open, onOpenChange, activeItem, onNavigate, supportHasUnread = false }: MobileSidebarProps) {
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="left" className="w-64 bg-sidebar border-sidebar-border p-0">
@@ -52,6 +53,7 @@ export function MobileSidebar({ open, onOpenChange, activeItem, onNavigate }: Mo
         <nav className="flex flex-col gap-1 p-3">
           {navItems.map((item) => {
             const isActive = activeItem === item.label
+            const showSupportUnread = item.label === "Поддержка" && supportHasUnread
             return (
               <button
                 key={item.label}
@@ -60,7 +62,7 @@ export function MobileSidebar({ open, onOpenChange, activeItem, onNavigate }: Mo
                   onOpenChange(false)
                 }}
                 className={cn(
-                  "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
+                  "relative flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
                   isActive
                     ? "bg-sidebar-accent text-primary"
                     : "text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground"
@@ -68,6 +70,12 @@ export function MobileSidebar({ open, onOpenChange, activeItem, onNavigate }: Mo
               >
                 <item.icon className="size-5" />
                 <span>{item.label}</span>
+                {showSupportUnread && (
+                  <span
+                    className="absolute right-3 top-2 size-2 rounded-full bg-destructive"
+                    aria-hidden
+                  />
+                )}
               </button>
             )
           })}

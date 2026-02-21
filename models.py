@@ -193,3 +193,35 @@ class Mention(Base):
 
     user: Mapped["User"] = relationship(back_populates="mentions")
 
+
+# --- Поддержка пользователей (обращения к администратору) ---
+
+class SupportTicket(Base):
+    """Обращение пользователя в поддержку (один тикет = одна тема, цепочка сообщений)."""
+    __tablename__ = "support_tickets"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    subject: Mapped[str] = mapped_column(String(300), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="open", server_default="'open'")  # open | answered | closed
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    # Когда владелец тикета последний раз открывал тикет (для индикатора «есть непрочитанный ответ»)
+    user_last_read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    messages: Mapped[list["SupportMessage"]] = relationship(back_populates="ticket", cascade="all, delete-orphan", order_by="SupportMessage.created_at")
+
+
+class SupportMessage(Base):
+    """Сообщение в тикете поддержки (от пользователя или от сотрудника)."""
+    __tablename__ = "support_messages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ticket_id: Mapped[int] = mapped_column(ForeignKey("support_tickets.id", ondelete="CASCADE"), index=True, nullable=False)
+    sender_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    is_from_staff: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+
+    ticket: Mapped["SupportTicket"] = relationship(back_populates="messages")
+

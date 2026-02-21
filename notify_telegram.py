@@ -85,3 +85,51 @@ def send_mention_notification(chat_id: str, keyword: str, message: str, message_
         logger.info("Telegram-уведомление об упоминании отправлено в chat_id=%s", chat_id)
         return True
     return False
+
+
+def send_support_notification(
+    chat_id: str | int,
+    ticket_id: int,
+    user_email: str | None,
+    user_name: str | None,
+    subject: str,
+    message_preview: str,
+) -> bool:
+    """Уведомить администратора о новом сообщении в обращении поддержки."""
+    if not is_configured():
+        logger.debug("NOTIFY_TELEGRAM_BOT_TOKEN не задан, пропуск уведомления поддержки")
+        return False
+    who = (user_name or user_email or "Пользователь").strip()
+    preview = (message_preview or "").strip()[:200]
+    if len((message_preview or "").strip()) > 200:
+        preview += "..."
+    text = (
+        "📩 Новое обращение в поддержку\n\n"
+        f"От: {who}\n"
+        f"Тема: {subject}\n\n"
+        f"{preview}"
+    )
+    if send_message(chat_id, text):
+        logger.info("Уведомление о поддержке отправлено в chat_id=%s, тикет #%s", chat_id, ticket_id)
+        return True
+    return False
+
+
+def send_support_reply_to_user(chat_id: str | int, ticket_subject: str, reply_preview: str) -> bool:
+    """Уведомить пользователя об ответе поддержки в Telegram."""
+    if not is_configured():
+        logger.debug("NOTIFY_TELEGRAM_BOT_TOKEN не задан, пропуск уведомления об ответе поддержки")
+        return False
+    preview = (reply_preview or "").strip()[:250]
+    if len((reply_preview or "").strip()) > 250:
+        preview += "..."
+    text = (
+        "📩 Ответ по обращению в поддержку\n\n"
+        f"Тема: {ticket_subject}\n\n"
+        f"{preview}\n\n"
+        "Откройте раздел «Поддержка» в личном кабинете, чтобы прочитать полный ответ."
+    )
+    if send_message(chat_id, text):
+        logger.info("Уведомление об ответе поддержки отправлено в chat_id=%s", chat_id)
+        return True
+    return False

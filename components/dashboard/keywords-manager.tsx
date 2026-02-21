@@ -7,7 +7,8 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
-import { Plus, X, Sparkles, Target, Loader2, RotateCcw, Trash2 } from "lucide-react"
+import { Plus, X, Sparkles, Target, Loader2, RotateCcw, Trash2, Info } from "lucide-react"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { apiBaseUrl, apiJson } from "@/lib/api"
 
 type KeywordItem = { id: number; text: string; useSemantic: boolean; enabled: boolean }
@@ -123,6 +124,20 @@ export function KeywordsManager({ userId = 1, canAddResources = true }: { userId
             </div>
           </div>
         </div>
+        <Alert className="mt-3 border-primary/20 bg-primary/5 text-sm">
+          <Info className="size-4 text-primary" />
+          <AlertTitle className="text-foreground font-medium">Как работает поиск</AlertTitle>
+          <AlertDescription asChild>
+            <div className="mt-1 space-y-2 text-muted-foreground">
+              <p>
+                <strong>Точное</strong> — в ленту попадают только сообщения, где есть подстрока ключевого слова. Например, слово «доставка» найдёт «доставка пиццы», «бесплатная доставка».
+              </p>
+              <p>
+                <strong>ИИ семантика</strong> — модель понимает смысл: ключевое слово сопоставляется с текстом по смыслу. Например, ключ «доставка заказа» может совпасть с сообщениями «привезём ваш заказ», «курьер приедет через час», «самовывоз в пункте выдачи». В ленте отображается процент совпадения с темой.
+              </p>
+            </div>
+          </AlertDescription>
+        </Alert>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="flex gap-2">

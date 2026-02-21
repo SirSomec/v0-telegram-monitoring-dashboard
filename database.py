@@ -166,8 +166,23 @@ def _migrate_chats_is_global_and_invite_hash() -> None:
             conn.commit()
 
 
+def _migrate_support_ticket_user_last_read_at() -> None:
+    """Добавить колонку user_last_read_at в support_tickets при отсутствии."""
+    with engine.connect() as conn:
+        r = conn.execute(
+            text(
+                "SELECT 1 FROM information_schema.columns "
+                "WHERE table_name = 'support_tickets' AND column_name = 'user_last_read_at'"
+            )
+        )
+        if r.scalar() is not None:
+            return
+        conn.execute(text("ALTER TABLE support_tickets ADD COLUMN user_last_read_at TIMESTAMP WITH TIME ZONE"))
+        conn.commit()
+
+
 def init_db() -> None:
-    from models import Chat, ChatGroup, Keyword, Mention, NotificationSettings, ParserSetting, User, PasswordResetToken, PlanLimit  # noqa: F401
+    from models import Chat, ChatGroup, Keyword, Mention, NotificationSettings, ParserSetting, User, PasswordResetToken, PlanLimit, SupportTicket, SupportMessage  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
     _migrate_keywords_use_semantic()
@@ -178,11 +193,12 @@ def init_db() -> None:
     _migrate_mentions_semantic_similarity()
     _migrate_plan_limits()
     _migrate_chats_is_global_and_invite_hash()
+    _migrate_support_ticket_user_last_read_at()
 
 
 def drop_all_tables() -> None:
     """Удаляет все таблицы (для пересоздания схемы). Все данные будут потеряны."""
-    from models import Chat, ChatGroup, Keyword, Mention, NotificationSettings, ParserSetting, User, PasswordResetToken, PlanLimit  # noqa: F401
+    from models import Chat, ChatGroup, Keyword, Mention, NotificationSettings, ParserSetting, User, PasswordResetToken, PlanLimit, SupportTicket, SupportMessage  # noqa: F401
 
     Base.metadata.drop_all(bind=engine)
 

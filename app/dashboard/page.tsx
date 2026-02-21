@@ -12,8 +12,9 @@ import { MentionFeed } from "@/components/dashboard/mention-feed"
 import { UserChannelsManager } from "@/components/dashboard/user-channels-manager"
 import { ChannelGroupsSection } from "@/components/dashboard/channel-groups-section"
 import { NotificationsSettings } from "@/components/dashboard/notifications-settings"
+import { SupportSection } from "@/components/dashboard/support-section"
 import { BillingModal } from "@/components/dashboard/billing-modal"
-import { apiBaseUrl } from "@/lib/api"
+import { apiBaseUrl, apiJson } from "@/lib/api"
 import { useAuth } from "@/lib/auth-context"
 
 export default function DashboardPage() {
@@ -26,6 +27,16 @@ export default function DashboardPage() {
   const [billingOpen, setBillingOpen] = useState(false)
   const [serviceOnline, setServiceOnline] = useState(false)
   const [channelsRefreshKey, setChannelsRefreshKey] = useState(0)
+  const [supportHasUnread, setSupportHasUnread] = useState(false)
+
+  async function fetchSupportUnread() {
+    try {
+      const data = await apiJson<{ hasUnread: boolean }>(`${apiBaseUrl()}/api/support/has-any-unread`)
+      setSupportHasUnread(data.hasUnread)
+    } catch {
+      setSupportHasUnread(false)
+    }
+  }
 
   useEffect(() => {
     if (loading) return
@@ -55,6 +66,13 @@ export default function DashboardPage() {
     }
   }, [user])
 
+  useEffect(() => {
+    if (!user) return
+    fetchSupportUnread()
+    const interval = setInterval(fetchSupportUnread, 30000)
+    return () => clearInterval(interval)
+  }, [user])
+
   function handleNavigate(item: string) {
     if (item === "Оплата") {
       setBillingOpen(true)
@@ -82,6 +100,7 @@ export default function DashboardPage() {
           onToggle={() => setSidebarCollapsed(!sidebarCollapsed)}
           activeItem={activeNav}
           onNavigate={handleNavigate}
+          supportHasUnread={supportHasUnread}
         />
       </div>
 
@@ -91,6 +110,7 @@ export default function DashboardPage() {
         onOpenChange={setMobileOpen}
         activeItem={activeNav}
         onNavigate={handleNavigate}
+        supportHasUnread={supportHasUnread}
       />
 
       {/* Main Content */}
@@ -130,6 +150,18 @@ export default function DashboardPage() {
                 </p>
               </div>
               <NotificationsSettings />
+            </>
+          ) : activeNav === "Поддержка" ? (
+            <>
+              <div>
+                <h1 className="text-2xl font-bold tracking-tight text-foreground">
+                  Поддержка
+                </h1>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Напишите администратору: создайте обращение или откройте существующую переписку.
+                </p>
+              </div>
+              <SupportSection onTicketViewed={fetchSupportUnread} />
             </>
           ) : (
             <>
