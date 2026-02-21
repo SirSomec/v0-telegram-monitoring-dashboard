@@ -134,6 +134,17 @@ pnpm dev
 
 В этом конфиге весь трафик идёт на порт 3000 (фронт), Next.js сам проксирует `/api`, `/auth`, `/ws` на бэкенд. CORS можно не настраивать.
 
+**Вариант: Nginx в Docker (integration-wa.ru, без установки Nginx на хост)**  
+В проекте есть сервис `nginx` в `docker-compose.yml` и конфиг `deploy/nginx-integration-wa.ru-docker.conf`. Он проксирует на `frontend:3000` и `backend:8000` внутри сети Docker. Запуск:
+
+```bash
+docker compose up -d --build
+```
+
+Порт 80 будет отдан контейнеру Nginx. Убедитесь, что на хосте порт 80 свободен (остановите системный Nginx: `sudo systemctl stop nginx`). Домен integration-wa.ru должен указывать на IP сервера. В `.env` оставьте `NEXT_PUBLIC_API_URL` пустым и пересоберите фронт при смене: `docker compose up -d --build frontend`.
+
+**Диагностика:** на сервере выполните `bash deploy/check-domain.sh` или `bash deploy/check-domain.sh integration-wa.ru` — скрипт проверит порты, Nginx и ответ по домену.
+
 ### CORS и URL фронта в проде
 
 Если вы **не** используете Nginx и открываете фронт по домену напрямую (например домен:3000):
