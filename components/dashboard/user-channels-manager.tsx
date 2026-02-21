@@ -268,17 +268,13 @@ export function UserChannelsManager({ canAddResources = true }: { canAddResource
                     )}
                   </TableCell>
                   <TableCell>
-                    {c.isOwner ? (
-                      <Switch
-                        checked={c.enabled}
-                        onCheckedChange={(v) => setChannelEnabled(c, v)}
-                        disabled={loading}
-                      />
-                    ) : (
-                      <span className="text-sm text-muted-foreground">
-                        {c.enabled ? "Включён" : "Выключен"}
-                      </span>
-                    )}
+                    <Switch
+                      checked={c.enabled}
+                      onCheckedChange={(v) =>
+                        c.isOwner ? setChannelEnabled(c, v) : setSubscriptionEnabled(c.id, v)
+                      }
+                      disabled={loading}
+                    />
                   </TableCell>
                   <TableCell className="text-right">
                     <Button
@@ -343,7 +339,8 @@ export function UserChannelsManager({ canAddResources = true }: { canAddResource
               <TableHeader>
                 <TableRow>
                   <TableHead>Канал</TableHead>
-                  <TableHead>Описание и группы</TableHead>
+                  <TableHead>Описание</TableHead>
+                  <TableHead>Группы</TableHead>
                   <TableHead className="w-[120px]">Мониторинг</TableHead>
                 </TableRow>
               </TableHeader>
@@ -354,11 +351,15 @@ export function UserChannelsManager({ canAddResources = true }: { canAddResource
                       <div className="font-medium">{av.title || av.identifier}</div>
                       <div className="text-xs text-muted-foreground font-mono">{av.identifier}</div>
                     </TableCell>
-                    <TableCell className="max-w-[220px]">
-                      {av.description && (
-                        <p className="text-xs text-muted-foreground line-clamp-2 mb-1">{av.description}</p>
+                    <TableCell className="max-w-[200px]">
+                      {av.description ? (
+                        <p className="text-xs text-muted-foreground line-clamp-2">{av.description}</p>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
                       )}
-                      {(av.groupNames?.length ?? 0) > 0 && (
+                    </TableCell>
+                    <TableCell className="max-w-[180px]">
+                      {(av.groupNames?.length ?? 0) > 0 ? (
                         <div className="flex flex-wrap gap-1">
                           {av.groupNames.map((name) => (
                             <Badge key={name} variant="secondary" className="text-xs font-normal">
@@ -366,8 +367,7 @@ export function UserChannelsManager({ canAddResources = true }: { canAddResource
                             </Badge>
                           ))}
                         </div>
-                      )}
-                      {!av.description && (!av.groupNames?.length) && (
+                      ) : (
                         <span className="text-xs text-muted-foreground">—</span>
                       )}
                     </TableCell>
