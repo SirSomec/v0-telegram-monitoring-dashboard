@@ -528,7 +528,7 @@ class TelegramScanner:
                             elif cid is not None:
                                 aid = abs(cid)
                                 part = aid % (10**10) if aid >= 10**10 else aid
-                                message_link = f"https://t.me/c/{part}/{msg_id}"
+                                message_link = f"tg://privatepost?channel={part}&post={msg_id}"
                         user_link = None
                         if sender_username and str(sender_username).strip():
                             user_link = f"https://t.me/{str(sender_username).strip().lstrip('@')}"
@@ -597,7 +597,7 @@ class TelegramScanner:
                     elif cid is not None:
                         aid = abs(cid)
                         part = aid % (10**10) if aid >= 10**10 else aid
-                        message_link = f"https://t.me/c/{part}/{msg_id}"
+                        message_link = f"tg://privatepost?channel={part}&post={msg_id}"
                 user_link = None
                 if sender_username and str(sender_username).strip():
                     user_link = f"https://t.me/{str(sender_username).strip().lstrip('@')}"

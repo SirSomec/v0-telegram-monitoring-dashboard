@@ -146,6 +146,26 @@ def _migrate_plan_limits() -> None:
         db.commit()
 
 
+def _migrate_chats_is_global_and_invite_hash() -> None:
+    """Добавить колонки is_global и invite_hash в chats при их отсутствии (глобальные каналы и подписки)."""
+    with engine.connect() as conn:
+        for col, col_def in (
+            ("is_global", "BOOLEAN NOT NULL DEFAULT false"),
+            ("invite_hash", "VARCHAR(128)"),
+        ):
+            r = conn.execute(
+                text(
+                    "SELECT 1 FROM information_schema.columns "
+                    "WHERE table_name = 'chats' AND column_name = :col"
+                ),
+                {"col": col},
+            )
+            if r.scalar() is not None:
+                continue
+            conn.execute(text(f"ALTER TABLE chats ADD COLUMN {col} {col_def}"))
+            conn.commit()
+
+
 def init_db() -> None:
     from models import Chat, ChatGroup, Keyword, Mention, NotificationSettings, ParserSetting, User, PasswordResetToken, PlanLimit  # noqa: F401
 
@@ -157,6 +177,7 @@ def init_db() -> None:
     _migrate_mentions_source()
     _migrate_mentions_semantic_similarity()
     _migrate_plan_limits()
+    _migrate_chats_is_global_and_invite_hash()
 
 
 def drop_all_tables() -> None:

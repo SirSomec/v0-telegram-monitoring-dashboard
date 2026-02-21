@@ -609,7 +609,10 @@ def _message_link(
     message_id: int | None,
     chat_username: str | None = None,
 ) -> str | None:
-    """Ссылка на сообщение в Telegram. Для публичных каналов — t.me/username/msg_id, иначе t.me/c/chat_part/msg_id."""
+    """Ссылка на сообщение в Telegram.
+    Публичные: https://t.me/username/msg_id (работает в браузере и в приложении).
+    Приватные: tg://privatepost (открывает приложение TG: если пользователь в группе — сообщение, иначе — чат/вступить).
+    """
     if message_id is None:
         return None
     if chat_username and str(chat_username).strip():
@@ -620,7 +623,7 @@ def _message_link(
         return None
     cid = abs(chat_id)
     part = cid % (10**10) if cid >= 10**10 else cid
-    return f"https://t.me/c/{part}/{message_id}"
+    return f"tg://privatepost?channel={part}&post={message_id}"
 
 
 def _user_profile_link(m: Mention) -> str | None:
