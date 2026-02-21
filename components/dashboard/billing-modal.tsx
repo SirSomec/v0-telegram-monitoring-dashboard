@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import {
   Dialog,
   DialogContent,
@@ -9,7 +9,9 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
+import { RefreshCw } from "lucide-react"
 import { apiJson } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
@@ -19,6 +21,8 @@ const PLAN_LABELS: Record<string, string> = {
   pro: "Про",
   business: "Бизнес",
 }
+
+const REFRESH_INTERVAL_MS = 20_000
 
 type PlanLimits = {
   maxGroups: number
@@ -49,6 +53,11 @@ function usePercent(used: number, max: number): number {
   return Math.min(100, Math.round((used / max) * 100))
 }
 
+function toNum(v: unknown): number {
+  const n = Number(v)
+  return Number.isFinite(n) ? n : 0
+}
+
 interface BillingModalProps {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -59,15 +68,29 @@ export function BillingModal({ open, onOpenChange }: BillingModalProps) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string>("")
 
+  const fetchPlan = useCallback(() => {
+    setError("")
+    return apiJson<PlanData>("/api/plan")
+      .then((d) => {
+        setData(d)
+        setError("")
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : "Ошибка загрузки"))
+  }, [])
+
   useEffect(() => {
     if (!open) return
     setLoading(true)
-    setError("")
-    apiJson<PlanData>("/api/plan")
-      .then(setData)
-      .catch((e) => setError(e instanceof Error ? e.message : "Ошибка загрузки"))
-      .finally(() => setLoading(false))
-  }, [open])
+    fetchPlan().finally(() => setLoading(false))
+  }, [open, fetchPlan])
+
+  useEffect(() => {
+    if (!open || !data) return
+    const interval = setInterval(() => {
+      fetchPlan()
+    }, REFRESH_INTERVAL_MS)
+    return () => clearInterval(interval)
+  }, [open, data, fetchPlan])
 
   const isFree = data?.plan === "free"
 
@@ -115,36 +138,50 @@ export function BillingModal({ open, onOpenChange }: BillingModalProps) {
               </div>
             )}
 
-            {!isFree && (
-              <div className="space-y-3 pt-2">
+            <div className="space-y-3 pt-2">
+              <div className="flex items-center justify-between gap-2">
                 <p className="text-sm font-medium text-foreground">Использование</p>
-                <UsageRow
-                  label="Группы каналов"
-                  used={data.usage.groups}
-                  max={data.limits.maxGroups}
-                />
-                <UsageRow
-                  label="Отслеживаемые каналы"
-                  used={data.usage.channels}
-                  max={data.limits.maxChannels}
-                />
-                <UsageRow
-                  label="Ключевые слова (точное совпадение)"
-                  used={data.usage.keywordsExact}
-                  max={data.limits.maxKeywordsExact}
-                />
-                <UsageRow
-                  label="Ключевые слова (семантика)"
-                  used={data.usage.keywordsSemantic}
-                  max={data.limits.maxKeywordsSemantic}
-                />
-                <UsageRow
-                  label="Своих каналов"
-                  used={data.usage.ownChannels}
-                  max={data.limits.maxOwnChannels}
-                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 text-xs"
+                  disabled={loading}
+                  onClick={() => {
+                    setLoading(true)
+                    fetchPlan().finally(() => setLoading(false))
+                  }}
+                >
+                  <RefreshCw className={cn("mr-1.5 size-3.5", loading && "animate-spin")} />
+                  Обновить
+                </Button>
               </div>
-            )}
+              <UsageRow
+                label="Группы каналов"
+                used={toNum(data?.usage?.groups)}
+                max={toNum(data?.limits?.maxGroups)}
+              />
+              <UsageRow
+                label="Отслеживаемые каналы"
+                used={toNum(data?.usage?.channels)}
+                max={toNum(data?.limits?.maxChannels)}
+              />
+              <UsageRow
+                label="Ключевые слова (точное совпадение)"
+                used={toNum(data?.usage?.keywordsExact)}
+                max={toNum(data?.limits?.maxKeywordsExact)}
+              />
+              <UsageRow
+                label="Ключевые слова (семантика)"
+                used={toNum(data?.usage?.keywordsSemantic)}
+                max={toNum(data?.limits?.maxKeywordsSemantic)}
+              />
+              <UsageRow
+                label="Своих каналов"
+                used={toNum(data?.usage?.ownChannels)}
+                max={toNum(data?.limits?.maxOwnChannels)}
+              />
+            </div>
           </div>
         )}
       </DialogContent>
@@ -163,12 +200,13 @@ function UsageRow({
 }) {
   const pct = usePercent(used, max)
   const atLimit = max > 0 && used >= max
+  const maxLabel = max <= 0 ? "—" : max
   return (
     <div className="space-y-1">
       <div className="flex justify-between text-xs">
         <span className="text-muted-foreground">{label}</span>
         <span className={cn(atLimit && "text-amber-600 font-medium")}>
-          {used} / {max}
+          {used} / {maxLabel}
         </span>
       </div>
       <Progress value={pct} className="h-1.5" />
