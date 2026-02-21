@@ -134,7 +134,10 @@ bash deploy/check-domain.sh integration-wa.ru
 
 ```bash
 sudo apt install -y certbot
-sudo certbot certonly --standalone -d integration-wa.ru -d www.integration-wa.ru
+# Только основной домен (если у www нет DNS-записи — не добавляйте -d www...):
+sudo certbot certonly --standalone -d integration-wa.ru
+# Либо оба, если в DNS есть A-запись и для www.integration-wa.ru:
+# sudo certbot certonly --standalone -d integration-wa.ru -d www.integration-wa.ru
 ```
 
 После получения сертификатов нужно добавить в Nginx конфиг поддержку 443 и путей к сертификатам. Либо временно остановить контейнер nginx (`docker compose stop nginx`), запустить certbot с `--standalone`, затем включить в конфиг Nginx (в Docker или на хосте) блок `listen 443 ssl` и снова запустить nginx. Подробности — в [deploy/NGINX-SETUP.md](../deploy/NGINX-SETUP.md) и в документации Certbot.
@@ -146,13 +149,18 @@ sudo certbot certonly --standalone -d integration-wa.ru -d www.integration-wa.ru
 Чтобы пользователи могли нажать /start в Telegram и получить инструкцию (или «Проверить» после добавления Chat ID в личном кабинете), настройте webhook:
 
 1. В `.env` задайте `NOTIFY_TELEGRAM_BOT_TOKEN` (токен от @BotFather для бота @telescopemsg_bot).
-2. Укажите Telegram URL для приёма обновлений (подставьте свой домен и при необходимости HTTPS):
+2. Укажите Telegram URL для приёма обновлений. **Токен подставляйте без угловых скобок** (в URL не должно быть символов `<` и `>`):
 
 ```bash
-curl -X POST "https://api.telegram.org/bot<ВАШ_ТОКЕН>/setWebhook?url=https://integration-wa.ru/api/telegram-webhook"
+# Подставьте вместо 123456:ABC... ваш реальный токен (числа:буквы от BotFather)
+curl -X POST "https://api.telegram.org/bot123456:ABC.../setWebhook?url=https://integration-wa.ru/api/telegram-webhook"
 ```
 
-Если используете HTTP: `url=http://IP_СЕРВЕРА/api/telegram-webhook` (для теста). В проде лучше HTTPS.
+**Важно:** Telegram принимает webhook только по **HTTPS** (не HTTP и не по IP). Используйте домен с настроенным SSL, например:
+```bash
+curl -X POST "https://api.telegram.org/botВАШ_ТОКЕН/setWebhook" --data-urlencode "url=https://integration-wa.ru/api/telegram-webhook"
+```
+(замените `ВАШ_ТОКЕН` на токен целиком, без `<` и `>`). Сначала настройте HTTPS для домена (раздел «HTTPS» выше).
 
 После этого при команде /start в боте пользователь получит инструкцию и кнопку «Проверить».
 
