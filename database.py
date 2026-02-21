@@ -242,6 +242,26 @@ def _migrate_user_thematic_group_subscriptions() -> None:
         db.commit()
 
 
+def _migrate_user_chat_subscriptions_via_group_id() -> None:
+    """Добавить колонку via_group_id в user_chat_subscriptions (источник подписки: группа или индивидуально)."""
+    with engine.connect() as conn:
+        r = conn.execute(
+            text(
+                "SELECT 1 FROM information_schema.columns "
+                "WHERE table_schema = 'public' AND table_name = 'user_chat_subscriptions' AND column_name = 'via_group_id'"
+            )
+        )
+        if r.scalar() is not None:
+            return
+        conn.execute(
+            text(
+                "ALTER TABLE user_chat_subscriptions "
+                "ADD COLUMN via_group_id INTEGER REFERENCES chat_groups(id) ON DELETE CASCADE"
+            )
+        )
+        conn.commit()
+
+
 def init_db() -> None:
     from models import Chat, ChatGroup, Keyword, Mention, NotificationSettings, ParserSetting, User, PasswordResetToken, PlanLimit, SupportTicket, SupportMessage, SupportAttachment, user_thematic_group_subscriptions  # noqa: F401
 
@@ -256,6 +276,7 @@ def init_db() -> None:
     _migrate_chats_is_global_and_invite_hash()
     _migrate_support_ticket_user_last_read_at()
     _migrate_user_thematic_group_subscriptions()
+    _migrate_user_chat_subscriptions_via_group_id()
 
 
 def drop_all_tables() -> None:

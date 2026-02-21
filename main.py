@@ -613,12 +613,17 @@ def _usage_counts(db: Session, user_id: int) -> dict[str, int]:
     )
     groups = own_groups + subscribed_thematic
     own_chats = db.scalar(select(func.count(Chat.id)).where(Chat.user_id == user_id)) or 0
-    sub_count = db.scalar(
-        select(func.count()).select_from(user_chat_subscriptions).where(
-            user_chat_subscriptions.c.user_id == user_id
+    # В лимит каналов входят только индивидуальные подписки (via_group_id IS NULL); подписки через группы не считаются
+    sub_count_individual = (
+        db.scalar(
+            select(func.count()).select_from(user_chat_subscriptions).where(
+                user_chat_subscriptions.c.user_id == user_id,
+                user_chat_subscriptions.c.via_group_id.is_(None),
+            )
         )
-    ) or 0
-    channels_total = own_chats + sub_count
+        or 0
+    )
+    channels_total = own_chats + sub_count_individual
     keywords_exact = (
         db.scalar(
             select(func.count(Keyword.id)).where(
@@ -1921,10 +1926,23 @@ def create_chat(body: ChatCreate, user: User = Depends(get_current_user), db: Se
                 user_chat_subscriptions.c.chat_id == existing_global.id,
             )
         ).first()
-        if not already:
+        if already:
+            if already[user_chat_subscriptions.c.via_group_id] is not None:
+                db.execute(
+                    update(user_chat_subscriptions)
+                    .where(
+                        user_chat_subscriptions.c.user_id == user_id,
+                        user_chat_subscriptions.c.chat_id == existing_global.id,
+                    )
+                    .values(via_group_id=None)
+                )
+            db.commit()
+        else:
             _check_limits(db, user, delta_channels=1)
             db.execute(
-                user_chat_subscriptions.insert().values(user_id=user_id, chat_id=existing_global.id)
+                user_chat_subscriptions.insert().values(
+                    user_id=user_id, chat_id=existing_global.id, via_group_id=None
+                )
             )
             db.commit()
         db.refresh(existing_global)
@@ -2075,20 +2093,22 @@ def subscribe_chat_group(group_id: int, user: User = Depends(get_current_user), 
     if already_subscribed_to_group:
         return {"ok": True, "subscribedCount": len(global_chats)}
     _check_limits(db, user, delta_groups=1)
+    # Каналы группы в лимит каналов не входят — проверку delta_channels не делаем
     sub_ids = set(
         db.execute(
             select(user_chat_subscriptions.c.chat_id).where(user_chat_subscriptions.c.user_id == user.id)
         ).scalars().all()
     )
-    new_subs = sum(1 for c in global_chats if c.id not in sub_ids)
-    if new_subs > 0:
-        _check_limits(db, user, delta_channels=new_subs)
     db.execute(
         user_thematic_group_subscriptions.insert().values(user_id=user.id, group_id=group_id)
     )
     for c in global_chats:
         if c.id not in sub_ids:
-            db.execute(user_chat_subscriptions.insert().values(user_id=user.id, chat_id=c.id))
+            db.execute(
+                user_chat_subscriptions.insert().values(
+                    user_id=user.id, chat_id=c.id, via_group_id=group_id
+                )
+            )
     db.commit()
     return {"ok": True, "subscribedCount": len(global_chats)}
 
@@ -2118,6 +2138,7 @@ def unsubscribe_chat_group(group_id: int, user: User = Depends(get_current_user)
             user_chat_subscriptions.delete().where(
                 user_chat_subscriptions.c.user_id == user.id,
                 user_chat_subscriptions.c.chat_id.in_(global_chat_ids),
+                user_chat_subscriptions.c.via_group_id == group_id,
             )
         )
         unsub_count = r.rowcount
@@ -2579,9 +2600,22 @@ def subscribe_by_identifier(
         )
     ).first()
     if existing:
+        if existing[user_chat_subscriptions.c.via_group_id] is not None:
+            db.execute(
+                update(user_chat_subscriptions)
+                .where(
+                    user_chat_subscriptions.c.user_id == user.id,
+                    user_chat_subscriptions.c.chat_id == c.id,
+                )
+                .values(via_group_id=None)
+            )
+        db.commit()
+        db.refresh(c)
         return _chat_to_out(c, is_owner=False)
     _check_limits(db, user, delta_channels=1)
-    db.execute(user_chat_subscriptions.insert().values(user_id=user.id, chat_id=c.id))
+    db.execute(
+        user_chat_subscriptions.insert().values(user_id=user.id, chat_id=c.id, via_group_id=None)
+    )
     db.commit()
     db.refresh(c)
     return _chat_to_out(c, is_owner=False)
@@ -2602,10 +2636,21 @@ def subscribe_chat(chat_id: int, user: User = Depends(get_current_user), db: Ses
         )
     ).first()
     if existing:
+        if existing[user_chat_subscriptions.c.via_group_id] is not None:
+            db.execute(
+                update(user_chat_subscriptions)
+                .where(
+                    user_chat_subscriptions.c.user_id == user.id,
+                    user_chat_subscriptions.c.chat_id == chat_id,
+                )
+                .values(via_group_id=None)
+            )
+        db.commit()
+        db.refresh(c)
         return _chat_to_out(c, is_owner=False)
     _check_limits(db, user, delta_channels=1)
     db.execute(
-        user_chat_subscriptions.insert().values(user_id=user.id, chat_id=chat_id)
+        user_chat_subscriptions.insert().values(user_id=user.id, chat_id=chat_id, via_group_id=None)
     )
     db.commit()
     db.refresh(c)
