@@ -12,6 +12,7 @@ import { MentionFeed } from "@/components/dashboard/mention-feed"
 import { UserChannelsManager } from "@/components/dashboard/user-channels-manager"
 import { ChannelGroupsSection } from "@/components/dashboard/channel-groups-section"
 import { NotificationsSettings } from "@/components/dashboard/notifications-settings"
+import { SemanticSearchSettings } from "@/components/dashboard/semantic-search-settings"
 import { SupportSection } from "@/components/dashboard/support-section"
 import { BillingModal } from "@/components/dashboard/billing-modal"
 import { apiBaseUrl, apiJson } from "@/lib/api"
@@ -177,6 +178,9 @@ export default function DashboardPage() {
 
               {/* Stats */}
               <StatsCards />
+
+              {/* Семантический поиск */}
+              <SemanticSearchSettings />
 
               {/* Keywords + Feed */}
               <div className="grid gap-6 xl:grid-cols-5">

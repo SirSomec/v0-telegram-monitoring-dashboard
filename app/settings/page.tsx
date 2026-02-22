@@ -7,14 +7,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { ArrowLeft, Settings, Loader2, LogOut, Search } from "lucide-react"
+import { ArrowLeft, Settings, Loader2, LogOut } from "lucide-react"
 import { useAuth } from "@/lib/auth-context"
 import { apiBaseUrl, apiJson } from "@/lib/api"
-
-type SemanticSettings = {
-  semanticThreshold: number | null
-  semanticMinTopicPercent: number | null
-}
 
 export default function SettingsPage() {
   const router = useRouter()
@@ -25,9 +20,6 @@ export default function SettingsPage() {
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState("")
   const [success, setSuccess] = useState(false)
-  const [semantic, setSemantic] = useState<SemanticSettings>({ semanticThreshold: null, semanticMinTopicPercent: null })
-  const [semanticDirty, setSemanticDirty] = useState(false)
-  const [semanticSaving, setSemanticSaving] = useState(false)
 
   useEffect(() => {
     if (loading) return
@@ -36,16 +28,6 @@ export default function SettingsPage() {
       return
     }
   }, [loading, user, router])
-
-  useEffect(() => {
-    if (!user) return
-    apiJson<SemanticSettings>(`${apiBaseUrl()}/api/settings/semantic`)
-      .then((data) => setSemantic({
-        semanticThreshold: data.semanticThreshold ?? null,
-        semanticMinTopicPercent: data.semanticMinTopicPercent ?? null,
-      }))
-      .catch(() => {})
-  }, [user])
 
   async function handleChangePassword(e: React.FormEvent) {
     e.preventDefault()
@@ -124,92 +106,6 @@ export default function SettingsPage() {
               <Label className="text-muted-foreground text-xs">Имя</Label>
               <p className="text-sm font-medium text-foreground">{user.name || "—"}</p>
             </div>
-          </CardContent>
-        </Card>
-
-        <Card className="border-border bg-card">
-          <CardHeader>
-            <CardTitle className="text-base flex items-center gap-2">
-              <Search className="size-4" />
-              Семантический поиск
-            </CardTitle>
-            <CardDescription>
-              Порог срабатывания и минимальный % совпадения с темой. Пусто — используются общие настройки системы.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div>
-              <Label htmlFor="threshold" className="text-muted-foreground text-xs">
-                Порог срабатывания, % (0–100). Выше — строже отбор совпадений.
-              </Label>
-              <Input
-                id="threshold"
-                type="number"
-                min={0}
-                max={100}
-                step={1}
-                placeholder="например 55"
-                value={semantic.semanticThreshold != null ? Math.round(semantic.semanticThreshold * 100) : ""}
-                onChange={(e) => {
-                  const v = e.target.value
-                  setSemantic((s) => ({
-                    ...s,
-                    semanticThreshold: v === "" ? null : Math.min(100, Math.max(0, Number(v))) / 100,
-                  }))
-                  setSemanticDirty(true)
-                }}
-                className="mt-1 bg-secondary border-border max-w-[8rem]"
-              />
-            </div>
-            <div>
-              <Label htmlFor="minTopic" className="text-muted-foreground text-xs">
-                Мин. % совпадения с темой (0–100). Сообщения ниже этого процента не попадают в ленту.
-              </Label>
-              <Input
-                id="minTopic"
-                type="number"
-                min={0}
-                max={100}
-                step={1}
-                placeholder="например 50"
-                value={semantic.semanticMinTopicPercent ?? ""}
-                onChange={(e) => {
-                  const v = e.target.value
-                  setSemantic((s) => ({
-                    ...s,
-                    semanticMinTopicPercent: v === "" ? null : Math.min(100, Math.max(0, Number(v))),
-                  }))
-                  setSemanticDirty(true)
-                }}
-                className="mt-1 bg-secondary border-border max-w-[8rem]"
-              />
-            </div>
-            {semanticDirty && (
-              <Button
-                type="button"
-                disabled={semanticSaving}
-                className="gap-2"
-                onClick={async () => {
-                  setSemanticSaving(true)
-                  try {
-                    const res = await apiJson<SemanticSettings>(`${apiBaseUrl()}/api/settings/semantic`, {
-                      method: "PATCH",
-                      body: JSON.stringify({
-                        semanticThreshold: semantic.semanticThreshold,
-                        semanticMinTopicPercent: semantic.semanticMinTopicPercent,
-                      }),
-                    })
-                    setSemantic(res)
-                    setSemanticDirty(false)
-                  } finally {
-                    setSemanticSaving(false)
-                  }
-                }}
-              >
-                {semanticSaving && <Loader2 className="size-4 animate-spin" />}
-                Сохранить настройки поиска
-              </Button>
-            )}
           </CardContent>
         </Card>
 

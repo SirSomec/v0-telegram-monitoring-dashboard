@@ -520,8 +520,10 @@ class TelegramScanner:
             for uid in user_ids:
                 items = keywords_by_user.get(uid, [])
                 thresh = get_user_semantic_threshold(uid)
-                thresh = float(thresh) if thresh is not None else (similarity_threshold() or 0.55)
+                thresh = float(thresh) if thresh is not None else 0.6  # стандартный порог 60%
                 min_topic = get_user_semantic_min_topic_percent(uid)
+                if min_topic is None:
+                    min_topic = 70.0  # стандартный мин. % совпадения с темой 70%
                 matches = self._match_keywords(items, text, text_cf, threshold=thresh, min_topic_percent=min_topic)
                 for kw, sim, span in matches:
                     with db_session() as db:
@@ -587,8 +589,10 @@ class TelegramScanner:
         if not items:
             return
         thresh = get_user_semantic_threshold(self.user_id)
-        thresh = float(thresh) if thresh is not None else (similarity_threshold() or 0.55)
+        thresh = float(thresh) if thresh is not None else 0.6  # стандартный порог 60%
         min_topic = get_user_semantic_min_topic_percent(self.user_id)
+        if min_topic is None:
+            min_topic = 70.0  # стандартный мин. % совпадения с темой 70%
         matches = self._match_keywords(items, text, text_cf, threshold=thresh, min_topic_percent=min_topic)
         if not matches:
             return
