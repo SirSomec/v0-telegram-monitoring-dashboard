@@ -210,6 +210,17 @@ class NotificationSettingsUpdate(BaseModel):
     telegramChatId: str | None = None
 
 
+class SemanticSettingsOut(BaseModel):
+    """Настройки семантического поиска пользователя."""
+    semanticThreshold: float | None = None  # 0–1, порог срабатывания; None = глобальный
+    semanticMinTopicPercent: float | None = None  # 0–100, ниже — не учитывать; None = не фильтровать
+
+
+class SemanticSettingsUpdate(BaseModel):
+    semanticThreshold: float | None = None  # 0–1
+    semanticMinTopicPercent: float | None = None  # 0–100
+
+
 # --- Поддержка (обращения пользователей) ---
 
 class SupportTicketCreate(BaseModel):
@@ -1247,6 +1258,40 @@ def update_notification_settings(
         notifyTelegram=bool(s.notify_telegram),
         notifyMode=(s.notify_mode or "all"),
         telegramChatId=s.telegram_chat_id,
+    )
+
+
+@app.get("/api/settings/semantic", response_model=SemanticSettingsOut)
+def get_semantic_settings(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> SemanticSettingsOut:
+    _ensure_default_user(db)
+    db.refresh(user)
+    return SemanticSettingsOut(
+        semanticThreshold=user.semantic_threshold,
+        semanticMinTopicPercent=user.semantic_min_topic_percent,
+    )
+
+
+@app.patch("/api/settings/semantic", response_model=SemanticSettingsOut)
+def update_semantic_settings(
+    body: SemanticSettingsUpdate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> SemanticSettingsOut:
+    _ensure_default_user(db)
+    # Обновляем только переданные поля; null означает сброс на глобальные настройки
+    sent = body.model_dump(exclude_unset=True)
+    if "semanticThreshold" in sent:
+        v = sent["semanticThreshold"]
+        user.semantic_threshold = None if v is None else (float(v) if 0 <= float(v) <= 1 else user.semantic_threshold)
+    if "semanticMinTopicPercent" in sent:
+        v = sent["semanticMinTopicPercent"]
+        user.semantic_min_topic_percent = None if v is None else (float(v) if 0 <= float(v) <= 100 else user.semantic_min_topic_percent)
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return SemanticSettingsOut(
+        semanticThreshold=user.semantic_threshold,
+        semanticMinTopicPercent=user.semantic_min_topic_percent,
     )
 
 
@@ -2824,7 +2869,7 @@ def _row_to_group_out(row) -> MentionGroupOut:
         user_link = f"https://t.me/{str(row.sender_username).strip().lstrip('@')}"
     elif getattr(row, "sender_id", None) is not None:
         user_link = f"tg://user?id={row.sender_id}"
-    keywords = list(row.keywords) if row.keywords else []
+    keywords = list(dict.fromkeys(row.keywords or []))  # без дубликатов, порядок сохранён
     src = getattr(row, "source", None) or CHAT_SOURCE_TELEGRAM
     max_sim = getattr(row, "max_semantic_similarity", None)
     topic_pct = round(max_sim * 100) if max_sim is not None else None

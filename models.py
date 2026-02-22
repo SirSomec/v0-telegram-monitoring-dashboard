@@ -60,6 +60,10 @@ class User(Base):
     # Тариф: free | basic | pro | business; при истечении plan_expires_at эффективный план = free
     plan_slug: Mapped[str] = mapped_column(String(32), nullable=False, default="free", server_default="'free'")
     plan_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Семантический поиск: порог срабатывания (0–1); при None — глобальная настройка
+    semantic_threshold: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Минимальный % совпадения с темой (0–100), ниже которого сообщения не учитываются; при None — не фильтровать
+    semantic_min_topic_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     keywords: Mapped[list["Keyword"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     mentions: Mapped[list["Mention"]] = relationship(back_populates="user", cascade="all, delete-orphan")

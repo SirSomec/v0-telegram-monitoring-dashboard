@@ -8,7 +8,7 @@ import os
 from typing import Any
 
 from database import db_session
-from models import ParserSetting
+from models import ParserSetting, User
 
 
 def get_parser_setting(key: str, env_fallback: str | None = None) -> str | None:
@@ -54,6 +54,26 @@ def get_parser_setting_float(key: str, default: float = 0.0) -> float:
         return float(v.strip())
     except ValueError:
         return default
+
+
+def get_user_semantic_threshold(user_id: int) -> float | None:
+    """Порог срабатывания семантического поиска для пользователя (0–1). None = использовать глобальный."""
+    with db_session() as db:
+        u = db.get(User, user_id)
+        if u is None or u.semantic_threshold is None:
+            return None
+        t = float(u.semantic_threshold)
+        return t if 0 <= t <= 1 else None
+
+
+def get_user_semantic_min_topic_percent(user_id: int) -> float | None:
+    """Минимальный % совпадения с темой для пользователя (0–100). None = не фильтровать по минимуму."""
+    with db_session() as db:
+        u = db.get(User, user_id)
+        if u is None or u.semantic_min_topic_percent is None:
+            return None
+        p = float(u.semantic_min_topic_percent)
+        return p if 0 <= p <= 100 else None
 
 
 def set_parser_setting(key: str, value: str | None) -> None:

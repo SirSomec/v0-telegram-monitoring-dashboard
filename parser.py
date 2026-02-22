@@ -24,6 +24,8 @@ from parser_config import (
     get_parser_setting_bool,
     get_parser_setting_int,
     get_parser_setting,
+    get_user_semantic_threshold,
+    get_user_semantic_min_topic_percent,
 )
 
 try:
@@ -517,7 +519,10 @@ class TelegramScanner:
             cid = int(chat_id) if chat_id is not None else None
             for uid in user_ids:
                 items = keywords_by_user.get(uid, [])
-                matches = self._match_keywords(items, text, text_cf)
+                thresh = get_user_semantic_threshold(uid)
+                thresh = float(thresh) if thresh is not None else (similarity_threshold() or 0.55)
+                min_topic = get_user_semantic_min_topic_percent(uid)
+                matches = self._match_keywords(items, text, text_cf, threshold=thresh, min_topic_percent=min_topic)
                 for kw, sim in matches:
                     with db_session() as db:
                         mention = Mention(
@@ -580,7 +585,10 @@ class TelegramScanner:
         items = self._load_keywords()
         if not items:
             return
-        matches = self._match_keywords(items, text, text_cf)
+        thresh = get_user_semantic_threshold(self.user_id)
+        thresh = float(thresh) if thresh is not None else (similarity_threshold() or 0.55)
+        min_topic = get_user_semantic_min_topic_percent(self.user_id)
+        matches = self._match_keywords(items, text, text_cf, threshold=thresh, min_topic_percent=min_topic)
         if not matches:
             return
 
@@ -736,31 +744,45 @@ class TelegramScanner:
                 break
         return out
 
-    def _match_keywords(self, items: list[KeywordItem], text: str, text_cf: str) -> list[tuple[str, float | None]]:
+    def _match_keywords(
+        self,
+        items: list[KeywordItem],
+        text: str,
+        text_cf: str,
+        threshold: float | None = None,
+        min_topic_percent: float | None = None,
+    ) -> list[tuple[str, float | None]]:
         """
         Совпадение по смыслу: общая тема сообщения, перефразирование (фразы), отдельные слова (синонимы, другой язык).
         Учитывается максимум из: тема (весь текст), фрагменты (чанки), слова. Если любой >= порог — считаем совпадением.
+        threshold: порог срабатывания (0–1); при None — глобальный. min_topic_percent: ниже этого % сообщения не учитываются.
+        Возвращает список без дубликатов по ключевому слову (одно совпадение на ключ).
         """
         exact_items = [kw for kw in items if not kw.use_semantic]
         semantic_items = [kw for kw in items if kw.use_semantic]
-        matches: list[tuple[str, float | None]] = [
-            (kw.text, None) for kw in exact_items if kw.text.casefold() in text_cf
-        ]
+        # Один результат на ключевое слово: ключ -> (sim или None для точного)
+        by_kw: dict[str, float | None] = {}
+        for kw in exact_items:
+            if kw.text.casefold() in text_cf:
+                by_kw[kw.text] = None
         if not semantic_items:
-            return matches
+            return [(k, v) for k, v in by_kw.items()]
+        thresh = (float(threshold) if threshold is not None else None) or (
+            similarity_threshold() if similarity_threshold else 0.55
+        )
         cache = self._embedding_cache
-        if cache is None or embed is None or cosine_similarity is None or similarity_threshold is None:
+        if cache is None or embed is None or cosine_similarity is None:
             for kw in semantic_items:
-                if kw.text.casefold() in text_cf:
-                    matches.append((kw.text, None))
-            return matches
+                if kw.text.casefold() in text_cf and kw.text not in by_kw:
+                    by_kw[kw.text] = None
+            return [(k, v) for k, v in by_kw.items()]
         cache.update([kw.text for kw in semantic_items])
         if not cache.is_available():
             for kw in semantic_items:
                 if kw.text.casefold() in text_cf:
-                    matches.append((kw.text, None))
-            return matches
-        # Один батч: [тема] + фрагменты + отдельные слова — для совпадения по смыслу, перефразу, языку, теме
+                    if kw.text not in by_kw:
+                        by_kw[kw.text] = None
+            return [(k, v) for k, v in by_kw.items()]
         chunks = self._message_chunks(text)
         words = self._message_words(text)
         to_embed: list[str] = [text]
@@ -769,35 +791,36 @@ class TelegramScanner:
         all_vectors = embed(to_embed)
         if not all_vectors or len(all_vectors) < 1:
             for kw in semantic_items:
-                if kw.text.casefold() in text_cf:
-                    matches.append((kw.text, None))
-            return matches
+                if kw.text.casefold() in text_cf and kw.text not in by_kw:
+                    by_kw[kw.text] = None
+            return [(k, v) for k, v in by_kw.items()]
         msg_vec = all_vectors[0]
         n_chunks = len(chunks)
         chunk_vecs = all_vectors[1 : 1 + n_chunks] if n_chunks else []
         word_vecs = all_vectors[1 + n_chunks :] if words else []
-        thresh = similarity_threshold()
         for kw in semantic_items:
             kw_vec = cache.get(kw.text)
             if kw_vec is None:
-                if kw.text.casefold() in text_cf:
-                    matches.append((kw.text, None))
+                if kw.text.casefold() in text_cf and kw.text not in by_kw:
+                    by_kw[kw.text] = None
                 continue
-            # Тема всего сообщения
             sim = cosine_similarity(msg_vec, kw_vec)
-            # Фрагменты (перефразирование, тема в части сообщения)
             for cvec in chunk_vecs:
                 s = cosine_similarity(cvec, kw_vec)
                 if s > sim:
                     sim = s
-            # Отдельные слова (синонимы, другой язык)
             for wvec in word_vecs:
                 s = cosine_similarity(wvec, kw_vec)
                 if s > sim:
                     sim = s
             if sim >= thresh:
-                matches.append((kw.text, sim))
-            elif kw.text.casefold() in text_cf:
-                matches.append((kw.text, None))
-        return matches
+                if min_topic_percent is not None and sim * 100 < min_topic_percent:
+                    continue
+                # сохраняем лучшее совпадение по ключу (предпочитаем семантику с большим sim)
+                cur = by_kw.get(kw.text)
+                if cur is None or (sim is not None and (cur is None or sim > cur)):
+                    by_kw[kw.text] = sim
+            elif kw.text.casefold() in text_cf and kw.text not in by_kw:
+                by_kw[kw.text] = None
+        return [(k, v) for k, v in by_kw.items()]
 
