@@ -2475,20 +2475,27 @@ def update_parser_settings(
 def start_parser(_: User = Depends(get_current_admin)) -> ParserStatusOut:
     global scanner
     from parser_log import append as parser_log_append
-    if scanner is not None and scanner.is_running:
+    try:
+        if scanner is not None and scanner.is_running:
+            return _parser_status()
+        parser_log_append("Запуск парсера по запросу из админки.")
+        multi = get_parser_setting_bool("MULTI_USER_SCANNER", True)
+        if multi:
+            scanner = TelegramScanner(on_mention=_on_mention_callback)
+        else:
+            scanner = TelegramScanner(
+                user_id=get_parser_setting_int("TG_USER_ID", 1),
+                on_mention=_on_mention_callback,
+            )
+        scanner.start()
+        parser_log_append("Парсер запущен.")
         return _parser_status()
-    parser_log_append("Запуск парсера по запросу из админки.")
-    multi = get_parser_setting_bool("MULTI_USER_SCANNER", True)
-    if multi:
-        scanner = TelegramScanner(on_mention=_on_mention_callback)
-    else:
-        scanner = TelegramScanner(
-            user_id=get_parser_setting_int("TG_USER_ID", 1),
-            on_mention=_on_mention_callback,
-        )
-    scanner.start()
-    parser_log_append("Парсер запущен.")
-    return _parser_status()
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).exception("Ошибка запуска парсера")
+        raise HTTPException(status_code=400, detail=f"Ошибка запуска парсера: {e}")
 
 
 @app.post("/api/admin/parser/stop", response_model=ParserStatusOut)
@@ -2507,13 +2514,20 @@ def start_max_parser(_: User = Depends(get_current_admin)) -> ParserStatusOut:
     """Запустить парсер MAX (Long Polling)."""
     global max_scanner
     from parser_log import append as parser_log_append
-    if max_scanner is not None and max_scanner.is_running:
+    try:
+        if max_scanner is not None and max_scanner.is_running:
+            return _parser_status()
+        parser_log_append("[MAX] Запуск парсера MAX по запросу из админки.")
+        max_scanner = MaxScanner(on_mention=_on_mention_callback)
+        max_scanner.start()
+        parser_log_append("[MAX] Парсер MAX запущен.")
         return _parser_status()
-    parser_log_append("[MAX] Запуск парсера MAX по запросу из админки.")
-    max_scanner = MaxScanner(on_mention=_on_mention_callback)
-    max_scanner.start()
-    parser_log_append("[MAX] Парсер MAX запущен.")
-    return _parser_status()
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).exception("Ошибка запуска парсера MAX")
+        raise HTTPException(status_code=400, detail=f"Ошибка запуска парсера MAX: {e}")
 
 
 @app.post("/api/admin/parser/max/stop", response_model=ParserStatusOut)
