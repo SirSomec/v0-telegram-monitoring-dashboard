@@ -204,6 +204,8 @@ class Mention(Base):
 
     # Косинусное сходство 0.0–1.0 при семантическом совпадении; NULL при точном совпадении.
     semantic_similarity: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Фрагмент сообщения, давший лучшее семантическое сходство (для подсветки в ленте).
+    semantic_matched_span: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
 

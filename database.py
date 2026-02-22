@@ -120,6 +120,21 @@ def _migrate_mentions_semantic_similarity() -> None:
         conn.commit()
 
 
+def _migrate_mentions_semantic_matched_span() -> None:
+    """Добавить колонку semantic_matched_span в mentions (фрагмент сообщения для подсветки семантического совпадения)."""
+    with engine.connect() as conn:
+        r = conn.execute(
+            text(
+                "SELECT 1 FROM information_schema.columns "
+                "WHERE table_schema = 'public' AND table_name = 'mentions' AND column_name = 'semantic_matched_span'"
+            )
+        )
+        if r.scalar() is not None:
+            return
+        conn.execute(text("ALTER TABLE mentions ADD COLUMN semantic_matched_span TEXT"))
+        conn.commit()
+
+
 def _migrate_plan_limits() -> None:
     """Заполнить plan_limits значениями по умолчанию из plans.LIMITS, если таблица пуста."""
     from sqlalchemy import func, select
@@ -285,6 +300,22 @@ def _migrate_user_chat_subscriptions_enabled() -> None:
         conn.commit()
 
 
+def _migrate_user_semantic_settings() -> None:
+    """Добавить колонки semantic_threshold и semantic_min_topic_percent в users (настройки семантического поиска)."""
+    with engine.connect() as conn:
+        r = conn.execute(
+            text(
+                "SELECT 1 FROM information_schema.columns "
+                "WHERE table_schema = 'public' AND table_name = 'users' AND column_name = 'semantic_threshold'"
+            )
+        )
+        if r.scalar() is not None:
+            return
+        conn.execute(text("ALTER TABLE users ADD COLUMN semantic_threshold FLOAT"))
+        conn.execute(text("ALTER TABLE users ADD COLUMN semantic_min_topic_percent FLOAT"))
+        conn.commit()
+
+
 def init_db() -> None:
     from models import Chat, ChatGroup, Keyword, Mention, NotificationSettings, ParserSetting, User, PasswordResetToken, PlanLimit, SupportTicket, SupportMessage, SupportAttachment, user_thematic_group_subscriptions  # noqa: F401
 
@@ -295,12 +326,14 @@ def init_db() -> None:
     _migrate_chats_source_and_max_chat_id()
     _migrate_mentions_source()
     _migrate_mentions_semantic_similarity()
+    _migrate_mentions_semantic_matched_span()
     _migrate_plan_limits()
     _migrate_chats_is_global_and_invite_hash()
     _migrate_support_ticket_user_last_read_at()
     _migrate_user_thematic_group_subscriptions()
     _migrate_user_chat_subscriptions_via_group_id()
     _migrate_user_chat_subscriptions_enabled()
+    _migrate_user_semantic_settings()
 
 
 def drop_all_tables() -> None:

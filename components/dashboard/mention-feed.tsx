@@ -1,5 +1,6 @@
 "use client"
 
+import type { ReactNode } from "react"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -21,6 +22,8 @@ export interface MentionGroup {
   userLink?: string | null
   message: string
   keywords: string[]
+  /** Фрагменты сообщения, давшие семантическое совпадение (для подсветки). */
+  matchedSpans?: (string | null)[] | null
   timestamp: string
   isLead: boolean
   isRead?: boolean
@@ -51,6 +54,55 @@ function highlightKeywords(text: string, keywords: string[]) {
       )}
     </>
   )
+}
+
+/** Подсветка фрагментов сообщения, совпавших по семантике (слово/фраза с лучшим сходством). */
+function highlightSemanticSpans(message: string, matchedSpans: (string | null)[] | null | undefined): ReactNode {
+  if (!matchedSpans?.length) return <span>{message}</span>
+  const spans = matchedSpans.filter((s): s is string => Boolean(s?.trim()))
+  if (!spans.length) return <span>{message}</span>
+  const ranges: [number, number][] = []
+  for (const span of spans) {
+    let idx = 0
+    let i: number
+    while ((i = message.indexOf(span, idx)) !== -1) {
+      ranges.push([i, i + span.length])
+      idx = i + 1
+    }
+  }
+  if (!ranges.length) return <span>{message}</span>
+  ranges.sort((a, b) => a[0] - b[0])
+  const merged: [number, number][] = []
+  for (const [s, e] of ranges) {
+    if (merged.length && s <= merged[merged.length - 1][1]) {
+      merged[merged.length - 1][1] = Math.max(merged[merged.length - 1][1], e)
+    } else {
+      merged.push([s, e])
+    }
+  }
+  const out: ReactNode[] = []
+  let last = 0
+  for (const [s, e] of merged) {
+    if (s > last) out.push(<span key={`${last}-${s}`}>{message.slice(last, s)}</span>)
+    out.push(
+      <mark key={`${s}-${e}`} className="rounded bg-amber-500/25 px-0.5 text-amber-700 dark:text-amber-300 font-medium">
+        {message.slice(s, e)}
+      </mark>
+    )
+    last = e
+  }
+  if (last < message.length) out.push(<span key={`${last}-tail`}>{message.slice(last)}</span>)
+  return <>{out}</>
+}
+
+/** Подсветка сообщения: при наличии семантических фрагментов — по ним, иначе по ключевым словам. */
+function highlightMessage(mention: MentionGroup): ReactNode {
+  const hasSemantic =
+    mention.matchedSpans?.some((s) => s?.trim() && mention.message.includes(s as string))
+  if (hasSemantic && mention.matchedSpans?.length) {
+    return highlightSemanticSpans(mention.message, mention.matchedSpans)
+  }
+  return highlightKeywords(mention.message, mention.keywords)
 }
 
 type KeywordOption = { id: number; text: string }
@@ -358,7 +410,7 @@ export function MentionFeed({ userId }: { userId?: number }) {
                   </div>
 
                   <p className="mt-2 text-sm leading-relaxed text-secondary-foreground whitespace-pre-wrap">
-                    {highlightKeywords(mention.message, mention.keywords)}
+                    {highlightMessage(mention)}
                   </p>
 
                   <div className="mt-3 flex items-center gap-2 flex-wrap">

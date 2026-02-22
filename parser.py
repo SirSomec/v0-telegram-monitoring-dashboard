@@ -523,7 +523,7 @@ class TelegramScanner:
                 thresh = float(thresh) if thresh is not None else (similarity_threshold() or 0.55)
                 min_topic = get_user_semantic_min_topic_percent(uid)
                 matches = self._match_keywords(items, text, text_cf, threshold=thresh, min_topic_percent=min_topic)
-                for kw, sim in matches:
+                for kw, sim, span in matches:
                     with db_session() as db:
                         mention = Mention(
                             user_id=uid,
@@ -539,6 +539,7 @@ class TelegramScanner:
                             is_read=False,
                             is_lead=False,
                             semantic_similarity=sim,
+                            semantic_matched_span=(span or None),
                             created_at=created_at,
                         )
                         db.add(mention)
@@ -593,7 +594,7 @@ class TelegramScanner:
             return
 
         # Записываем mention для каждого совпавшего keyword (можно поменять на “первое совпадение” при желании)
-        for kw, sim in matches:
+        for kw, sim, span in matches:
             with db_session() as db:
                 mention = Mention(
                     user_id=self.user_id,
@@ -609,6 +610,7 @@ class TelegramScanner:
                     is_read=False,
                     is_lead=False,
                     semantic_similarity=sim,
+                    semantic_matched_span=(span or None),
                     created_at=created_at,
                 )
                 db.add(mention)
@@ -751,22 +753,20 @@ class TelegramScanner:
         text_cf: str,
         threshold: float | None = None,
         min_topic_percent: float | None = None,
-    ) -> list[tuple[str, float | None]]:
+    ) -> list[tuple[str, float | None, str | None]]:
         """
         Совпадение по смыслу: общая тема сообщения, перефразирование (фразы), отдельные слова (синонимы, другой язык).
-        Учитывается максимум из: тема (весь текст), фрагменты (чанки), слова. Если любой >= порог — считаем совпадением.
-        threshold: порог срабатывания (0–1); при None — глобальный. min_topic_percent: ниже этого % сообщения не учитываются.
-        Возвращает список без дубликатов по ключевому слову (одно совпадение на ключ).
+        Возвращает (keyword, similarity, matched_span): matched_span — фрагмент сообщения, давший лучшее сходство (для подсветки).
         """
         exact_items = [kw for kw in items if not kw.use_semantic]
         semantic_items = [kw for kw in items if kw.use_semantic]
-        # Один результат на ключевое слово: ключ -> (sim или None для точного)
-        by_kw: dict[str, float | None] = {}
+        # ключ -> (sim, matched_span)
+        by_kw: dict[str, tuple[float | None, str | None]] = {}
         for kw in exact_items:
             if kw.text.casefold() in text_cf:
-                by_kw[kw.text] = None
+                by_kw[kw.text] = (None, kw.text)  # точное: подсвечиваем сам ключ
         if not semantic_items:
-            return [(k, v) for k, v in by_kw.items()]
+            return [(k, sim, span) for k, (sim, span) in by_kw.items()]
         thresh = (float(threshold) if threshold is not None else None) or (
             similarity_threshold() if similarity_threshold else 0.55
         )
@@ -774,15 +774,14 @@ class TelegramScanner:
         if cache is None or embed is None or cosine_similarity is None:
             for kw in semantic_items:
                 if kw.text.casefold() in text_cf and kw.text not in by_kw:
-                    by_kw[kw.text] = None
-            return [(k, v) for k, v in by_kw.items()]
+                    by_kw[kw.text] = (None, kw.text)
+            return [(k, sim, span) for k, (sim, span) in by_kw.items()]
         cache.update([kw.text for kw in semantic_items])
         if not cache.is_available():
             for kw in semantic_items:
-                if kw.text.casefold() in text_cf:
-                    if kw.text not in by_kw:
-                        by_kw[kw.text] = None
-            return [(k, v) for k, v in by_kw.items()]
+                if kw.text.casefold() in text_cf and kw.text not in by_kw:
+                    by_kw[kw.text] = (None, kw.text)
+            return [(k, sim, span) for k, (sim, span) in by_kw.items()]
         chunks = self._message_chunks(text)
         words = self._message_words(text)
         to_embed: list[str] = [text]
@@ -792,8 +791,8 @@ class TelegramScanner:
         if not all_vectors or len(all_vectors) < 1:
             for kw in semantic_items:
                 if kw.text.casefold() in text_cf and kw.text not in by_kw:
-                    by_kw[kw.text] = None
-            return [(k, v) for k, v in by_kw.items()]
+                    by_kw[kw.text] = (None, kw.text)
+            return [(k, sim, span) for k, (sim, span) in by_kw.items()]
         msg_vec = all_vectors[0]
         n_chunks = len(chunks)
         chunk_vecs = all_vectors[1 : 1 + n_chunks] if n_chunks else []
@@ -802,25 +801,27 @@ class TelegramScanner:
             kw_vec = cache.get(kw.text)
             if kw_vec is None:
                 if kw.text.casefold() in text_cf and kw.text not in by_kw:
-                    by_kw[kw.text] = None
+                    by_kw[kw.text] = (None, kw.text)
                 continue
-            sim = cosine_similarity(msg_vec, kw_vec)
-            for cvec in chunk_vecs:
+            best_sim = cosine_similarity(msg_vec, kw_vec)
+            best_span: str = text.strip()  # по умолчанию — всё сообщение
+            for i, cvec in enumerate(chunk_vecs):
                 s = cosine_similarity(cvec, kw_vec)
-                if s > sim:
-                    sim = s
-            for wvec in word_vecs:
+                if s > best_sim:
+                    best_sim = s
+                    best_span = chunks[i] if i < len(chunks) else best_span
+            for i, wvec in enumerate(word_vecs):
                 s = cosine_similarity(wvec, kw_vec)
-                if s > sim:
-                    sim = s
-            if sim >= thresh:
-                if min_topic_percent is not None and sim * 100 < min_topic_percent:
+                if s > best_sim:
+                    best_sim = s
+                    best_span = words[i] if i < len(words) else best_span
+            if best_sim >= thresh:
+                if min_topic_percent is not None and best_sim * 100 < min_topic_percent:
                     continue
-                # сохраняем лучшее совпадение по ключу (предпочитаем семантику с большим sim)
                 cur = by_kw.get(kw.text)
-                if cur is None or (sim is not None and (cur is None or sim > cur)):
-                    by_kw[kw.text] = sim
+                if cur is None or (cur[0] is None or (best_sim is not None and best_sim > cur[0])):
+                    by_kw[kw.text] = (best_sim, best_span.strip() or text.strip()[:200])
             elif kw.text.casefold() in text_cf and kw.text not in by_kw:
-                by_kw[kw.text] = None
-        return [(k, v) for k, v in by_kw.items()]
+                by_kw[kw.text] = (None, kw.text)
+        return [(k, sim, span) for k, (sim, span) in by_kw.items()]
 

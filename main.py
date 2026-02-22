@@ -363,6 +363,8 @@ class MentionGroupOut(BaseModel):
     userLink: str | None = None
     message: str
     keywords: list[str]
+    """Фрагменты сообщения, давшие семантическое совпадение (в том же порядке, что и keywords); для подсветки."""
+    matchedSpans: list[str | None] | None = None
     timestamp: str
     isLead: bool
     isRead: bool
@@ -2869,7 +2871,16 @@ def _row_to_group_out(row) -> MentionGroupOut:
         user_link = f"https://t.me/{str(row.sender_username).strip().lstrip('@')}"
     elif getattr(row, "sender_id", None) is not None:
         user_link = f"tg://user?id={row.sender_id}"
-    keywords = list(dict.fromkeys(row.keywords or []))  # без дубликатов, порядок сохранён
+    kws = list(row.keywords or [])
+    spans = list(getattr(row, "matched_spans", None) or [])
+    seen: set[str] = set()
+    keywords = []
+    matched_spans_out: list[str | None] = []
+    for i, kw in enumerate(kws):
+        if kw not in seen:
+            seen.add(kw)
+            keywords.append(kw)
+            matched_spans_out.append(spans[i] if i < len(spans) else None)
     src = getattr(row, "source", None) or CHAT_SOURCE_TELEGRAM
     max_sim = getattr(row, "max_semantic_similarity", None)
     topic_pct = round(max_sim * 100) if max_sim is not None else None
@@ -2882,6 +2893,7 @@ def _row_to_group_out(row) -> MentionGroupOut:
         userLink=user_link,
         message=(row.message_text or ""),
         keywords=keywords,
+        matchedSpans=matched_spans_out if matched_spans_out else None,
         timestamp=_humanize_ru(created_at),
         isLead=bool(row.is_lead),
         isRead=bool(row.is_read),
@@ -2949,7 +2961,8 @@ def list_mentions(
             Mention.sender_name,
             Mention.sender_username,
             Mention.source,
-            func.array_agg(Mention.keyword_text).label("keywords"),
+            func.array_agg(Mention.keyword_text).within_group(Mention.keyword_text.asc()).label("keywords"),
+            func.array_agg(Mention.semantic_matched_span).within_group(Mention.keyword_text.asc()).label("matched_spans"),
             func.bool_or(Mention.is_lead).label("is_lead"),
             func.bool_and(Mention.is_read).label("is_read"),
             func.max(Mention.semantic_similarity).label("max_semantic_similarity"),
