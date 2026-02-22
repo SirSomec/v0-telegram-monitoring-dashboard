@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import desc, func, select, update
+from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.orm import Session, selectinload
 
 from auth_utils import create_token, decode_token, hash_password, verify_password
@@ -2961,8 +2962,8 @@ def list_mentions(
             Mention.sender_name,
             Mention.sender_username,
             Mention.source,
-            func.array_agg(Mention.keyword_text).within_group(Mention.keyword_text.asc()).label("keywords"),
-            func.array_agg(Mention.semantic_matched_span).within_group(Mention.keyword_text.asc()).label("matched_spans"),
+            func.array_agg(Mention.keyword_text).label("keywords"),
+            func.array_agg(Mention.semantic_matched_span).label("matched_spans"),
             func.bool_or(Mention.is_lead).label("is_lead"),
             func.bool_and(Mention.is_read).label("is_read"),
             func.max(Mention.semantic_similarity).label("max_semantic_similarity"),
@@ -2971,7 +2972,32 @@ def list_mentions(
         stmt = stmt.group_by(*_group_keys())
         order = desc(Mention.created_at) if sortOrder == "desc" else Mention.created_at
         stmt = stmt.order_by(order).offset(offset).limit(limit)
-        rows = db.execute(stmt).all()
+        try:
+            rows = db.execute(stmt).all()
+        except (OperationalError, ProgrammingError):
+            # Колонка semantic_matched_span может отсутствовать до выполнения миграции
+            stmt_fallback = select(
+                func.min(Mention.id).label("id"),
+                Mention.user_id,
+                Mention.chat_id,
+                Mention.message_id,
+                Mention.created_at,
+                Mention.message_text,
+                Mention.chat_name,
+                Mention.chat_username,
+                Mention.sender_id,
+                Mention.sender_name,
+                Mention.sender_username,
+                Mention.source,
+                func.array_agg(Mention.keyword_text).label("keywords"),
+                func.bool_or(Mention.is_lead).label("is_lead"),
+                func.bool_and(Mention.is_read).label("is_read"),
+                func.max(Mention.semantic_similarity).label("max_semantic_similarity"),
+            )
+            stmt_fallback = _mentions_filter_stmt(stmt_fallback, user.id, unreadOnly, keyword, search, source)
+            stmt_fallback = stmt_fallback.group_by(*_group_keys()).order_by(order).offset(offset).limit(limit)
+            rows = db.execute(stmt_fallback).all()
+            # у fallback-строк нет matched_spans — _row_to_group_out возьмёт getattr(..., None)
         return [_row_to_group_out(row) for row in rows]
     stmt = select(Mention)
     stmt = _mentions_filter_stmt(stmt, user.id, unreadOnly, keyword, search, source)
