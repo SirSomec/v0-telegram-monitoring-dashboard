@@ -447,14 +447,6 @@ export function MentionFeed({ userId }: { userId?: number }) {
                           <ExternalLink className="size-3" />
                           К сообщению
                         </a>
-                      ) : mention.messageLink ? (
-                        <a
-                          href="/dashboard"
-                          className="inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground"
-                        >
-                          <ExternalLink className="size-3" />
-                          В дашборде
-                        </a>
                       ) : null}
                       {!mention.isRead ? (
                         <Button
