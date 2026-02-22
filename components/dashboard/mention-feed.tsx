@@ -426,15 +426,34 @@ export function MentionFeed({ userId }: { userId?: number }) {
                     )}
 
                     <div className="ml-auto flex items-center gap-2 flex-wrap">
-                      {(mention.groupLink || mention.messageLink) ? (
+                      {mention.groupLink ? (
                         <a
-                          href={mention.groupLink || mention.messageLink || "#"}
+                          href={mention.groupLink}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground"
                         >
                           <ExternalLink className="size-3" />
-                          {mention.groupLink ? "В группу" : "К сообщению"}
+                          В группу
+                        </a>
+                      ) : null}
+                      {mention.messageLink?.startsWith("https://t.me/") ? (
+                        <a
+                          href={mention.messageLink}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground"
+                        >
+                          <ExternalLink className="size-3" />
+                          К сообщению
+                        </a>
+                      ) : mention.messageLink ? (
+                        <a
+                          href="/dashboard"
+                          className="inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground"
+                        >
+                          <ExternalLink className="size-3" />
+                          В дашборде
                         </a>
                       ) : null}
                       {!mention.isRead ? (

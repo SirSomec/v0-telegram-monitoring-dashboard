@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 TELEGRAM_BOT_USERNAME = "telescopemsg_bot"
 
 NOTIFY_TELEGRAM_BOT_TOKEN = os.getenv("NOTIFY_TELEGRAM_BOT_TOKEN", "").strip()
+FRONTEND_URL = os.getenv("FRONTEND_URL", "").strip()
 
 
 def is_configured() -> bool:
@@ -74,14 +75,21 @@ def answer_callback_query(callback_query_id: str, text: str | None = None) -> bo
 
 
 def send_mention_notification(chat_id: str, keyword: str, message: str, message_link: str | None) -> bool:
-    """Отправить уведомление о новом упоминании в Telegram (Bot API sendMessage)."""
+    """Отправить уведомление о новом упоминании в Telegram (Bot API sendMessage).
+    Ссылки tg://privatepost не используются — у получателя часто «нет доступа».
+    Для публичных чатов — кнопка «Открыть сообщение» (t.me/...), иначе — «Открыть в дашборде».
+    """
     if not is_configured():
         logger.debug("NOTIFY_TELEGRAM_BOT_TOKEN не задан, пропуск Telegram-уведомления")
         return False
     text = f"🔔 Упоминание: {keyword}\n\n{message[:400]}{'...' if len(message) > 400 else ''}"
-    if message_link:
-        text += f"\n\n{message_link}"
-    if send_message(chat_id, text):
+    reply_markup = None
+    if message_link and message_link.startswith("https://t.me/"):
+        reply_markup = {"inline_keyboard": [[{"text": "Открыть сообщение", "url": message_link}]]}
+    elif FRONTEND_URL:
+        dashboard_url = f"{FRONTEND_URL.rstrip('/')}/dashboard"
+        reply_markup = {"inline_keyboard": [[{"text": "Открыть в дашборде", "url": dashboard_url}]]}
+    if send_message(chat_id, text, reply_markup=reply_markup):
         logger.info("Telegram-уведомление об упоминании отправлено в chat_id=%s", chat_id)
         return True
     return False
