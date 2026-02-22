@@ -392,14 +392,9 @@ export function MentionFeed({ userId }: { userId?: number }) {
                     <span className="text-muted-foreground">{"/"}</span>
                     {mention.userLink ? (
                       <a
-                        href={
-                          mention.userLink.startsWith("tg://")
-                            ? `/open-tg?u=${encodeURIComponent(mention.userLink)}`
-                            : mention.userLink
-                        }
-                        {...(mention.userLink.startsWith("tg://")
-                          ? {}
-                          : { target: "_blank", rel: "noopener noreferrer" })}
+                        href={mention.userLink}
+                        target="_blank"
+                        rel="noopener noreferrer"
                         className="text-sm text-primary hover:underline"
                       >
                         {mention.userName}
