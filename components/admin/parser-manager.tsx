@@ -157,6 +157,7 @@ export function ParserManager() {
         AUTO_START_SCANNER: settingsData.AUTO_START_SCANNER === "1" || settingsData.AUTO_START_SCANNER?.toLowerCase() === "true",
         MULTI_USER_SCANNER: settingsData.MULTI_USER_SCANNER !== "0" && (settingsData.MULTI_USER_SCANNER === "1" || settingsData.MULTI_USER_SCANNER?.toLowerCase() === "true"),
         TG_USER_ID: settingsData.TG_USER_ID ? parseInt(settingsData.TG_USER_ID, 10) : undefined,
+        MAX_POLL_INTERVAL_SEC: settingsData.MAX_POLL_INTERVAL_SEC ? parseInt(settingsData.MAX_POLL_INTERVAL_SEC, 10) : undefined,
         AUTO_START_MAX_SCANNER: settingsData.AUTO_START_MAX_SCANNER === "1" || settingsData.AUTO_START_MAX_SCANNER?.toLowerCase() === "true",
       })
     } catch (e) {
@@ -340,10 +341,17 @@ export function ParserManager() {
     setSaveSuccess(false)
     try {
       const maxPollSec =
-        form.MAX_POLL_INTERVAL_SEC ??
-        (settings.MAX_POLL_INTERVAL_SEC ? parseInt(settings.MAX_POLL_INTERVAL_SEC, 10) : undefined)
+        typeof form.MAX_POLL_INTERVAL_SEC === "number"
+          ? form.MAX_POLL_INTERVAL_SEC
+          : settings.MAX_POLL_INTERVAL_SEC
+            ? parseInt(settings.MAX_POLL_INTERVAL_SEC, 10)
+            : undefined
       const userId =
-        form.TG_USER_ID ?? (settings.TG_USER_ID ? parseInt(settings.TG_USER_ID, 10) : undefined)
+        typeof form.TG_USER_ID === "number"
+          ? form.TG_USER_ID
+          : settings.TG_USER_ID
+            ? parseInt(settings.TG_USER_ID, 10)
+            : undefined
       // Всегда отправляем полный объект со всеми ключами, чтобы прокси/бэкенд не получали пустое тело
       const payload: ParserSettingsUpdate = {
         TG_API_ID: (form.TG_API_ID ?? settings.TG_API_ID) ?? "",

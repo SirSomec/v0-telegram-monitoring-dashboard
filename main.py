@@ -11,7 +11,7 @@ from typing import Any, Literal
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import desc, func, select, update
 from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.orm import Session, selectinload
@@ -527,6 +527,22 @@ class ParserSettingsUpdate(BaseModel):
     SEMANTIC_SERVICE_URL: str | None = None
     SEMANTIC_MODEL_NAME: str | None = None
     SEMANTIC_SIMILARITY_THRESHOLD: str | None = None
+
+    @field_validator("TG_USER_ID", "MAX_POLL_INTERVAL_SEC", mode="before")
+    @classmethod
+    def coerce_int(cls, v: Any) -> int | None:
+        if v is None:
+            return None
+        if isinstance(v, int):
+            return v
+        if isinstance(v, str) and v.strip() == "":
+            return None
+        if isinstance(v, str):
+            try:
+                return int(v.strip())
+            except ValueError:
+                return None
+        return None
 
 
 class ConnectionManager:
