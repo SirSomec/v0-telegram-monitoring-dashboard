@@ -179,13 +179,11 @@ export default function DashboardPage() {
               {/* Stats */}
               <StatsCards />
 
-              {/* Семантический поиск */}
-              <SemanticSearchSettings />
-
               {/* Keywords + Feed */}
               <div className="grid gap-6 xl:grid-cols-5">
-                <div className="xl:col-span-2">
+                <div className="xl:col-span-2 space-y-6">
                   <KeywordsManager userId={user.id} canAddResources={user.plan !== "free"} />
+                  <SemanticSearchSettings />
                 </div>
                 <div className="xl:col-span-3">
                   <MentionFeed userId={user.id} />
