@@ -59,6 +59,8 @@ export type ParserSettings = {
   SEMANTIC_SERVICE_URL: string
   SEMANTIC_MODEL_NAME: string
   SEMANTIC_SIMILARITY_THRESHOLD: string
+  MESSAGE_CONCURRENCY: string
+  SEMANTIC_EXECUTOR_WORKERS: string
 }
 
 export type ParserSettingsUpdate = Partial<{
@@ -83,6 +85,8 @@ export type ParserSettingsUpdate = Partial<{
   SEMANTIC_SERVICE_URL: string
   SEMANTIC_MODEL_NAME: string
   SEMANTIC_SIMILARITY_THRESHOLD: string
+  MESSAGE_CONCURRENCY: number
+  SEMANTIC_EXECUTOR_WORKERS: number
 }>
 
 export type EmailStatus = {

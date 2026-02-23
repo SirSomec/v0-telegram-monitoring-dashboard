@@ -513,6 +513,9 @@ class ParserSettingsOut(BaseModel):
     SEMANTIC_SERVICE_URL: str = ""
     SEMANTIC_MODEL_NAME: str = ""
     SEMANTIC_SIMILARITY_THRESHOLD: str = ""
+    # Производительность
+    MESSAGE_CONCURRENCY: str = ""
+    SEMANTIC_EXECUTOR_WORKERS: str = ""
 
 
 class ParserSettingsUpdate(BaseModel):
@@ -540,8 +543,11 @@ class ParserSettingsUpdate(BaseModel):
     SEMANTIC_SERVICE_URL: str | None = None
     SEMANTIC_MODEL_NAME: str | None = None
     SEMANTIC_SIMILARITY_THRESHOLD: str | None = None
+    # Производительность
+    MESSAGE_CONCURRENCY: int | None = None
+    SEMANTIC_EXECUTOR_WORKERS: int | None = None
 
-    @field_validator("TG_USER_ID", "MAX_POLL_INTERVAL_SEC", mode="before")
+    @field_validator("TG_USER_ID", "MAX_POLL_INTERVAL_SEC", "MESSAGE_CONCURRENCY", "SEMANTIC_EXECUTOR_WORKERS", mode="before")
     @classmethod
     def coerce_int(cls, v: Any) -> int | None:
         if v is None:
@@ -2644,6 +2650,8 @@ def _parser_settings_to_out() -> ParserSettingsOut:
         SEMANTIC_SERVICE_URL=raw.get("SEMANTIC_SERVICE_URL", ""),
         SEMANTIC_MODEL_NAME=raw.get("SEMANTIC_MODEL_NAME", ""),
         SEMANTIC_SIMILARITY_THRESHOLD=raw.get("SEMANTIC_SIMILARITY_THRESHOLD", ""),
+        MESSAGE_CONCURRENCY=raw.get("MESSAGE_CONCURRENCY", ""),
+        SEMANTIC_EXECUTOR_WORKERS=raw.get("SEMANTIC_EXECUTOR_WORKERS", ""),
     )
 
 

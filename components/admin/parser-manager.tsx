@@ -64,6 +64,10 @@ const PARSER_HINTS: Record<string, string> = {
     "Имя модели sentence-transformers. По умолчанию paraphrase-multilingual-mpnet-base-v2 (тема сообщения, EN+RU). Для смены модели в контейнере перезапустите сервис semantic с этим значением в env.",
   SEMANTIC_SIMILARITY_THRESHOLD:
     "Порог косинусного сходства 0.0–1.0. Ниже — больше срабатываний (например 0.5–0.55). Выше — строже совпадение (0.65–0.75).",
+  MESSAGE_CONCURRENCY:
+    "Сколько сообщений обрабатывать одновременно (1–50). Больше — быстрее вывод в дашборд, выше нагрузка на CPU и память. Рекомендуется 10–20.",
+  SEMANTIC_EXECUTOR_WORKERS:
+    "Число потоков для расчёта семантики (1–16). Больше — быстрее сравнение с ключевыми словами при высокой нагрузке. Рекомендуется 4–8.",
 }
 
 function SettingRow({
@@ -144,6 +148,9 @@ export function ParserManager() {
       MULTI_USER_SCANNER?: boolean
       TG_USER_ID?: number
       AUTO_START_MAX_SCANNER?: boolean
+      MAX_POLL_INTERVAL_SEC?: number
+      MESSAGE_CONCURRENCY?: number
+      SEMANTIC_EXECUTOR_WORKERS?: number
     }
   >({})
 
@@ -174,6 +181,8 @@ export function ParserManager() {
         TG_USER_ID: settingsData.TG_USER_ID ? parseInt(settingsData.TG_USER_ID, 10) : undefined,
         MAX_POLL_INTERVAL_SEC: settingsData.MAX_POLL_INTERVAL_SEC ? parseInt(settingsData.MAX_POLL_INTERVAL_SEC, 10) : undefined,
         AUTO_START_MAX_SCANNER: settingsData.AUTO_START_MAX_SCANNER === "1" || settingsData.AUTO_START_MAX_SCANNER?.toLowerCase() === "true",
+        MESSAGE_CONCURRENCY: settingsData.MESSAGE_CONCURRENCY ? parseInt(settingsData.MESSAGE_CONCURRENCY, 10) : undefined,
+        SEMANTIC_EXECUTOR_WORKERS: settingsData.SEMANTIC_EXECUTOR_WORKERS ? parseInt(settingsData.SEMANTIC_EXECUTOR_WORKERS, 10) : undefined,
       })
     } catch (e) {
       setError(e instanceof Error ? e.message : "Ошибка загрузки статуса")
@@ -385,6 +394,18 @@ export function ParserManager() {
           : settings.MAX_POLL_INTERVAL_SEC
             ? parseInt(settings.MAX_POLL_INTERVAL_SEC, 10)
             : undefined
+      const messageConcurrency =
+        typeof form.MESSAGE_CONCURRENCY === "number"
+          ? form.MESSAGE_CONCURRENCY
+          : settings.MESSAGE_CONCURRENCY
+            ? parseInt(settings.MESSAGE_CONCURRENCY, 10)
+            : undefined
+      const semanticWorkers =
+        typeof form.SEMANTIC_EXECUTOR_WORKERS === "number"
+          ? form.SEMANTIC_EXECUTOR_WORKERS
+          : settings.SEMANTIC_EXECUTOR_WORKERS
+            ? parseInt(settings.SEMANTIC_EXECUTOR_WORKERS, 10)
+            : undefined
       const userId =
         typeof form.TG_USER_ID === "number"
           ? form.TG_USER_ID
@@ -415,6 +436,8 @@ export function ParserManager() {
         SEMANTIC_MODEL_NAME: (form.SEMANTIC_MODEL_NAME ?? settings.SEMANTIC_MODEL_NAME) ?? "",
         SEMANTIC_SIMILARITY_THRESHOLD:
           (form.SEMANTIC_SIMILARITY_THRESHOLD ?? settings.SEMANTIC_SIMILARITY_THRESHOLD) ?? "",
+        MESSAGE_CONCURRENCY: messageConcurrency ?? null,
+        SEMANTIC_EXECUTOR_WORKERS: semanticWorkers ?? null,
       }
       const data = await apiJson<ParserSettings>("/api/admin/parser/settings", {
         method: "PATCH",
@@ -426,7 +449,10 @@ export function ParserManager() {
         AUTO_START_SCANNER: data.AUTO_START_SCANNER === "1" || data.AUTO_START_SCANNER?.toLowerCase() === "true",
         MULTI_USER_SCANNER: data.MULTI_USER_SCANNER !== "0" && (data.MULTI_USER_SCANNER === "1" || data.MULTI_USER_SCANNER?.toLowerCase() === "true"),
         TG_USER_ID: data.TG_USER_ID ? parseInt(data.TG_USER_ID, 10) : undefined,
+        MAX_POLL_INTERVAL_SEC: data.MAX_POLL_INTERVAL_SEC ? parseInt(data.MAX_POLL_INTERVAL_SEC, 10) : undefined,
         AUTO_START_MAX_SCANNER: data.AUTO_START_MAX_SCANNER === "1" || data.AUTO_START_MAX_SCANNER?.toLowerCase() === "true",
+        MESSAGE_CONCURRENCY: data.MESSAGE_CONCURRENCY ? parseInt(data.MESSAGE_CONCURRENCY, 10) : undefined,
+        SEMANTIC_EXECUTOR_WORKERS: data.SEMANTIC_EXECUTOR_WORKERS ? parseInt(data.SEMANTIC_EXECUTOR_WORKERS, 10) : undefined,
       })
       setSaveSuccess(true)
       setTimeout(() => setSaveSuccess(false), 3000)
@@ -954,6 +980,79 @@ export function ParserManager() {
                       onChange={(e) => updateForm("SEMANTIC_SIMILARITY_THRESHOLD", e.target.value)}
                       placeholder="0.55"
                       className="font-mono text-sm w-24"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="border-t pt-4">
+                <h4 className="mb-3 text-sm font-medium text-muted-foreground">Производительность</h4>
+                <p className="mb-3 text-muted-foreground text-xs">
+                  Настройки параллельной обработки. Применяются при следующем запуске парсера. Увеличение ускоряет появление сообщений в дашборде и повышает нагрузку на сервер.
+                </p>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="grid gap-2">
+                    <div className="flex items-center gap-2">
+                      <Label htmlFor="MESSAGE_CONCURRENCY">Одновременная обработка сообщений</Label>
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button type="button" className="inline-flex text-muted-foreground hover:text-foreground" aria-label="Подсказка">
+                              <HelpCircle className="size-4" />
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent side="right" className="max-w-xs">
+                            {PARSER_HINTS.MESSAGE_CONCURRENCY}
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    </div>
+                    <Input
+                      id="MESSAGE_CONCURRENCY"
+                      type="number"
+                      min={1}
+                      max={50}
+                      value={form.MESSAGE_CONCURRENCY ?? settings.MESSAGE_CONCURRENCY ?? ""}
+                      onChange={(e) =>
+                        setForm((p) => ({
+                          ...p,
+                          MESSAGE_CONCURRENCY: e.target.value ? parseInt(e.target.value, 10) : undefined,
+                        }))
+                      }
+                      placeholder="10"
+                      className="font-mono text-sm w-28"
+                    />
+                  </div>
+                  <div className="grid gap-2">
+                    <div className="flex items-center gap-2">
+                      <Label htmlFor="SEMANTIC_EXECUTOR_WORKERS">Воркеры семантики</Label>
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button type="button" className="inline-flex text-muted-foreground hover:text-foreground" aria-label="Подсказка">
+                              <HelpCircle className="size-4" />
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent side="right" className="max-w-xs">
+                            {PARSER_HINTS.SEMANTIC_EXECUTOR_WORKERS}
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    </div>
+                    <Input
+                      id="SEMANTIC_EXECUTOR_WORKERS"
+                      type="number"
+                      min={1}
+                      max={16}
+                      value={form.SEMANTIC_EXECUTOR_WORKERS ?? settings.SEMANTIC_EXECUTOR_WORKERS ?? ""}
+                      onChange={(e) =>
+                        setForm((p) => ({
+                          ...p,
+                          SEMANTIC_EXECUTOR_WORKERS: e.target.value ? parseInt(e.target.value, 10) : undefined,
+                        }))
+                      }
+                      placeholder="6"
+                      className="font-mono text-sm w-28"
                     />
                   </div>
                 </div>

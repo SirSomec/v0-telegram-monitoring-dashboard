@@ -117,6 +117,9 @@ def get_all_parser_settings() -> dict[str, str]:
         "SEMANTIC_SERVICE_URL",
         "SEMANTIC_MODEL_NAME",
         "SEMANTIC_SIMILARITY_THRESHOLD",
+        # Производительность
+        "MESSAGE_CONCURRENCY",
+        "SEMANTIC_EXECUTOR_WORKERS",
     ]
     with db_session() as db:
         out: dict[str, str] = {}

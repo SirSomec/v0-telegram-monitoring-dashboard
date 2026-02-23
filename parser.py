@@ -38,11 +38,8 @@ except ImportError:
     similarity_threshold = None
     KeywordEmbeddingCache = None
 
-# Потоки для embed(): не блокируют event loop; несколько воркеров — параллельная обработка сообщений
+# Потоки для embed(): значение по умолчанию; при запуске парсера используется настройка SEMANTIC_EXECUTOR_WORKERS
 _SEMANTIC_EXECUTOR = ThreadPoolExecutor(max_workers=6) if embed else None
-
-# Сколько сообщений обрабатывать параллельно (ограничение очереди)
-_MESSAGE_CONCURRENCY = 10
 
 
 def _run_semantic_embed(cache: Any, keyword_texts: list[str], to_embed: list[str]) -> list[list[float]] | None:
@@ -173,6 +170,7 @@ class TelegramScanner:
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
         self._client: TelegramClient | None = None
+        self._semantic_executor: ThreadPoolExecutor | None = None
         self._chat_ids_to_users: dict[int, set[int]] = {}
         self._chat_usernames_to_users: dict[str, set[int]] = {}
         self._embedding_cache: KeywordEmbeddingCache | None = (
@@ -195,6 +193,13 @@ class TelegramScanner:
 
     def stop(self) -> None:
         self._stop_event.set()
+        exc = getattr(self, "_semantic_executor", None)
+        if exc is not None:
+            try:
+                exc.shutdown(wait=False)
+            except Exception:
+                pass
+            self._semantic_executor = None
         client = self._client
         if client:
             try:
@@ -250,7 +255,10 @@ class TelegramScanner:
 
         chats_filter = await self._load_chats_filter(client)
         state: dict = {"filter": chats_filter, "handler": None}
-        msg_semaphore = asyncio.Semaphore(_MESSAGE_CONCURRENCY)
+        concurrency = max(1, min(50, get_parser_setting_int("MESSAGE_CONCURRENCY", 10)))
+        msg_semaphore = asyncio.Semaphore(concurrency)
+        workers = max(1, min(16, get_parser_setting_int("SEMANTIC_EXECUTOR_WORKERS", 6)))
+        self._semantic_executor = ThreadPoolExecutor(max_workers=workers) if embed else None
 
         async def on_message(event: events.NewMessage.Event) -> None:
             async def process_one() -> None:
@@ -549,73 +557,78 @@ class TelegramScanner:
             keywords_by_user = self._load_keywords_multi()
             msg_id = int(msg.id) if getattr(msg, "id", None) is not None else None
             cid = int(chat_id) if chat_id is not None else None
+            message_link = None
+            if msg_id is not None:
+                if chat_username and str(chat_username).strip():
+                    uname = str(chat_username).strip().lstrip("@")
+                    if uname:
+                        message_link = f"https://t.me/{uname}/{msg_id}"
+                elif cid is not None:
+                    aid = abs(cid)
+                    part = aid % (10**10) if aid >= 10**10 else aid
+                    message_link = f"tg://privatepost?channel={part}&post={msg_id}"
+            user_link = None
+            if sender_username and str(sender_username).strip():
+                user_link = f"https://t.me/{str(sender_username).strip().lstrip('@')}"
+            elif sender_id is not None:
+                user_link = f"tg://user?id={sender_id}"
+            to_add: list[tuple[int, str, float | None, str | None]] = []
             for uid in user_ids:
                 items = keywords_by_user.get(uid, [])
                 exclusion_map = {item.text: list(item.exclusion_words) for item in items}
                 thresh = get_user_semantic_threshold(uid)
-                thresh = float(thresh) if thresh is not None else 0.6  # стандартный порог 60%
+                thresh = float(thresh) if thresh is not None else 0.6
                 min_topic = get_user_semantic_min_topic_percent(uid)
                 if min_topic is None:
-                    min_topic = 70.0  # стандартный мин. % совпадения с темой 70%
+                    min_topic = 70.0
                 matches = await self._match_keywords(items, text, text_cf, threshold=thresh, min_topic_percent=min_topic)
                 for kw, sim, span in matches:
                     if _message_has_exclusion(text_cf, exclusion_map.get(kw, [])):
                         continue
-                    with db_session() as db:
-                        mention = Mention(
-                            user_id=uid,
-                            keyword_text=kw,
-                            message_text=text_raw,
-                            chat_id=cid,
-                            chat_name=chat_title,
-                            chat_username=chat_username,
-                            message_id=msg_id,
-                            sender_id=int(sender_id) if sender_id is not None else None,
-                            sender_name=sender_name,
-                            sender_username=sender_username,
-                            is_read=False,
-                            is_lead=False,
-                            semantic_similarity=sim,
-                            semantic_matched_span=(span or None),
-                            created_at=created_at,
-                        )
-                        db.add(mention)
-                        db.flush()
-                        message_link = None
-                        if msg_id is not None:
-                            if chat_username and str(chat_username).strip():
-                                uname = str(chat_username).strip().lstrip("@")
-                                if uname:
-                                    message_link = f"https://t.me/{uname}/{msg_id}"
-                            elif cid is not None:
-                                aid = abs(cid)
-                                part = aid % (10**10) if aid >= 10**10 else aid
-                                message_link = f"tg://privatepost?channel={part}&post={msg_id}"
-                        user_link = None
-                        if sender_username and str(sender_username).strip():
-                            user_link = f"https://t.me/{str(sender_username).strip().lstrip('@')}"
-                        elif sender_id is not None:
-                            user_link = f"tg://user?id={sender_id}"
-                        payload = {
-                            "type": "mention",
-                            "data": {
-                                "id": str(mention.id),
-                                "userId": uid,
-                                "groupName": (chat_title or chat_username or "Неизвестный чат"),
-                                "groupIcon": _initials(chat_title or chat_username),
-                                "userName": (sender_name or "Неизвестный пользователь"),
-                                "userInitials": _initials(sender_name),
-                                "userLink": user_link,
-                                "message": text_raw,
-                                "keyword": kw,
-                                "timestamp": _humanize_ru(created_at),
-                                "isLead": False,
-                                "isRead": False,
-                                "createdAt": created_at.isoformat(),
-                                "messageLink": message_link,
-                                "topicMatchPercent": round(sim * 100) if sim is not None else None,
-                            },
-                        }
+                    to_add.append((uid, kw, sim, span))
+            if not to_add:
+                return
+            with db_session() as db:
+                for uid, kw, sim, span in to_add:
+                    mention = Mention(
+                        user_id=uid,
+                        keyword_text=kw,
+                        message_text=text_raw,
+                        chat_id=cid,
+                        chat_name=chat_title,
+                        chat_username=chat_username,
+                        message_id=msg_id,
+                        sender_id=int(sender_id) if sender_id is not None else None,
+                        sender_name=sender_name,
+                        sender_username=sender_username,
+                        is_read=False,
+                        is_lead=False,
+                        semantic_similarity=sim,
+                        semantic_matched_span=(span or None),
+                        created_at=created_at,
+                    )
+                    db.add(mention)
+                    db.flush()
+                    payload = {
+                        "type": "mention",
+                        "data": {
+                            "id": str(mention.id),
+                            "userId": uid,
+                            "groupName": (chat_title or chat_username or "Неизвестный чат"),
+                            "groupIcon": _initials(chat_title or chat_username),
+                            "userName": (sender_name or "Неизвестный пользователь"),
+                            "userInitials": _initials(sender_name),
+                            "userLink": user_link,
+                            "message": text_raw,
+                            "keyword": kw,
+                            "timestamp": _humanize_ru(created_at),
+                            "isLead": False,
+                            "isRead": False,
+                            "createdAt": created_at.isoformat(),
+                            "messageLink": message_link,
+                            "topicMatchPercent": round(sim * 100) if sim is not None else None,
+                        },
+                    }
                     if self.on_mention:
                         self.on_mention(payload)
                     mention_notifications.enqueue_mention_notification(mention.id)
@@ -635,18 +648,40 @@ class TelegramScanner:
             return
 
         # Записываем mention для каждого совпавшего keyword (можно поменять на “первое совпадение” при желании)
+        to_add_single: list[tuple[str, float | None, str | None]] = []
         for kw, sim, span in matches:
             if _message_has_exclusion(text_cf, exclusion_map.get(kw, [])):
                 continue
-            with db_session() as db:
+            to_add_single.append((kw, sim, span))
+        if not to_add_single:
+            return
+        msg_id = int(msg.id) if getattr(msg, "id", None) is not None else None
+        cid = int(chat_id) if chat_id is not None else None
+        message_link = None
+        if msg_id is not None:
+            if chat_username and str(chat_username).strip():
+                uname = str(chat_username).strip().lstrip("@")
+                if uname:
+                    message_link = f"https://t.me/{uname}/{msg_id}"
+            elif cid is not None:
+                aid = abs(cid)
+                part = aid % (10**10) if aid >= 10**10 else aid
+                message_link = f"tg://privatepost?channel={part}&post={msg_id}"
+        user_link = None
+        if sender_username and str(sender_username).strip():
+            user_link = f"https://t.me/{str(sender_username).strip().lstrip('@')}"
+        elif sender_id is not None:
+            user_link = f"tg://user?id={sender_id}"
+        with db_session() as db:
+            for kw, sim, span in to_add_single:
                 mention = Mention(
                     user_id=self.user_id,
                     keyword_text=kw,
                     message_text=text_raw,
-                    chat_id=int(chat_id) if chat_id is not None else None,
+                    chat_id=cid,
                     chat_name=chat_title,
                     chat_username=chat_username,
-                    message_id=int(msg.id) if getattr(msg, "id", None) is not None else None,
+                    message_id=msg_id,
                     sender_id=int(sender_id) if sender_id is not None else None,
                     sender_name=sender_name,
                     sender_username=sender_username,
@@ -658,23 +693,6 @@ class TelegramScanner:
                 )
                 db.add(mention)
                 db.flush()
-                msg_id = int(msg.id) if getattr(msg, "id", None) is not None else None
-                cid = int(chat_id) if chat_id is not None else None
-                message_link = None
-                if msg_id is not None:
-                    if chat_username and str(chat_username).strip():
-                        uname = str(chat_username).strip().lstrip("@")
-                        if uname:
-                            message_link = f"https://t.me/{uname}/{msg_id}"
-                    elif cid is not None:
-                        aid = abs(cid)
-                        part = aid % (10**10) if aid >= 10**10 else aid
-                        message_link = f"tg://privatepost?channel={part}&post={msg_id}"
-                user_link = None
-                if sender_username and str(sender_username).strip():
-                    user_link = f"https://t.me/{str(sender_username).strip().lstrip('@')}"
-                elif sender_id is not None:
-                    user_link = f"tg://user?id={sender_id}"
                 payload = {
                     "type": "mention",
                     "data": {
@@ -695,10 +713,9 @@ class TelegramScanner:
                         "topicMatchPercent": round(sim * 100) if sim is not None else None,
                     },
                 }
-
-            if self.on_mention:
-                self.on_mention(payload)
-            mention_notifications.enqueue_mention_notification(mention.id)
+                if self.on_mention:
+                    self.on_mention(payload)
+                mention_notifications.enqueue_mention_notification(mention.id)
 
     def _load_keywords(self) -> list[KeywordItem]:
         with db_session() as db:
@@ -859,11 +876,12 @@ class TelegramScanner:
         to_embed.extend(chunks)
         to_embed.extend(words)
         all_vectors = None
+        executor = getattr(self, "_semantic_executor", None) or _SEMANTIC_EXECUTOR
         try:
-            if _SEMANTIC_EXECUTOR:
+            if executor:
                 loop = asyncio.get_running_loop()
                 all_vectors = await loop.run_in_executor(
-                    _SEMANTIC_EXECUTOR,
+                    executor,
                     _run_semantic_embed,
                     cache,
                     [kw.text for kw in semantic_items],
