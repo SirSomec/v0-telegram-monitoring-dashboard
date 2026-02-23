@@ -102,9 +102,10 @@ def _message_has_exclusion(text_cf: str, exclusion_words: list[str]) -> bool:
 
 @dataclass(frozen=True)
 class KeywordItem:
-    """Ключевое слово с флагом режима поиска."""
+    """Ключевое слово с флагом режима поиска и своими словами-исключениями."""
     text: str
     use_semantic: bool
+    exclusion_words: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -540,13 +541,11 @@ class TelegramScanner:
             if not user_ids:
                 return
             keywords_by_user = self._load_keywords_multi()
-            exclusion_by_user = self._load_exclusion_words_multi()
             msg_id = int(msg.id) if getattr(msg, "id", None) is not None else None
             cid = int(chat_id) if chat_id is not None else None
             for uid in user_ids:
-                if _message_has_exclusion(text_cf, exclusion_by_user.get(uid, [])):
-                    continue
                 items = keywords_by_user.get(uid, [])
+                exclusion_map = {item.text: list(item.exclusion_words) for item in items}
                 thresh = get_user_semantic_threshold(uid)
                 thresh = float(thresh) if thresh is not None else 0.6  # стандартный порог 60%
                 min_topic = get_user_semantic_min_topic_percent(uid)
@@ -554,6 +553,8 @@ class TelegramScanner:
                     min_topic = 70.0  # стандартный мин. % совпадения с темой 70%
                 matches = await self._match_keywords(items, text, text_cf, threshold=thresh, min_topic_percent=min_topic)
                 for kw, sim, span in matches:
+                    if _message_has_exclusion(text_cf, exclusion_map.get(kw, [])):
+                        continue
                     with db_session() as db:
                         mention = Mention(
                             user_id=uid,
@@ -617,8 +618,7 @@ class TelegramScanner:
         items = self._load_keywords()
         if not items:
             return
-        if _message_has_exclusion(text_cf, self._load_exclusion_words()):
-            return
+        exclusion_map = {item.text: list(item.exclusion_words) for item in items}
         thresh = get_user_semantic_threshold(self.user_id)
         thresh = float(thresh) if thresh is not None else 0.6  # стандартный порог 60%
         min_topic = get_user_semantic_min_topic_percent(self.user_id)
@@ -630,6 +630,8 @@ class TelegramScanner:
 
         # Записываем mention для каждого совпавшего keyword (можно поменять на “первое совпадение” при желании)
         for kw, sim, span in matches:
+            if _message_has_exclusion(text_cf, exclusion_map.get(kw, [])):
+                continue
             with db_session() as db:
                 mention = Mention(
                     user_id=self.user_id,
@@ -703,12 +705,27 @@ class TelegramScanner:
                 .order_by(Keyword.id.asc())
                 .all()
             )
+            if not rows:
+                return []
+            kw_ids = [r.id for r in rows]
+            excl_rows = db.query(ExclusionWord).filter(ExclusionWord.keyword_id.in_(kw_ids)).all()
+            excl_by_kw: dict[int, list[str]] = {}
+            for e in excl_rows:
+                t = (e.text or "").strip()
+                if t:
+                    excl_by_kw.setdefault(e.keyword_id, []).append(t)
             out: list[KeywordItem] = []
             for r in rows:
                 t = (r.text or "").strip()
                 if t:
                     use_sem = getattr(r, "use_semantic", False)
-                    out.append(KeywordItem(text=t, use_semantic=use_sem))
+                    out.append(
+                        KeywordItem(
+                            text=t,
+                            use_semantic=use_sem,
+                            exclusion_words=tuple(excl_by_kw.get(r.id, [])),
+                        )
+                    )
             return out
 
     def _load_keywords_multi(self) -> dict[int, list[KeywordItem]]:
@@ -721,6 +738,15 @@ class TelegramScanner:
                 .order_by(Keyword.user_id, Keyword.id.asc())
                 .all()
             )
+            if not rows:
+                return {}
+            kw_ids = [r.id for r in rows]
+            excl_rows = db.query(ExclusionWord).filter(ExclusionWord.keyword_id.in_(kw_ids)).all()
+            excl_by_kw: dict[int, list[str]] = {}
+            for e in excl_rows:
+                t = (e.text or "").strip()
+                if t:
+                    excl_by_kw.setdefault(e.keyword_id, []).append(t)
             out: dict[int, list[KeywordItem]] = {}
             for r in rows:
                 if r.user_id not in allowed_user_ids:
@@ -728,28 +754,13 @@ class TelegramScanner:
                 t = (r.text or "").strip()
                 if t:
                     use_sem = getattr(r, "use_semantic", False)
-                    out.setdefault(r.user_id, []).append(KeywordItem(text=t, use_semantic=use_sem))
-            return out
-
-    def _load_exclusion_words(self) -> list[str]:
-        """Слова-исключения текущего пользователя (однопользовательский режим)."""
-        with db_session() as db:
-            rows = (
-                db.query(ExclusionWord)
-                .filter(ExclusionWord.user_id == self.user_id)
-                .all()
-            )
-            return [(r.text or "").strip() for r in rows if (r.text or "").strip()]
-
-    def _load_exclusion_words_multi(self) -> dict[int, list[str]]:
-        """Слова-исключения по user_id (мультипользовательский режим)."""
-        with db_session() as db:
-            rows = db.query(ExclusionWord).order_by(ExclusionWord.user_id, ExclusionWord.id).all()
-            out: dict[int, list[str]] = {}
-            for r in rows:
-                t = (r.text or "").strip()
-                if t:
-                    out.setdefault(r.user_id, []).append(t)
+                    out.setdefault(r.user_id, []).append(
+                        KeywordItem(
+                            text=t,
+                            use_semantic=use_sem,
+                            exclusion_words=tuple(excl_by_kw.get(r.id, [])),
+                        )
+                    )
             return out
 
     def _message_chunks(self, text: str, max_chunks: int = 6) -> list[str]:

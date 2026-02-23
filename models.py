@@ -66,7 +66,6 @@ class User(Base):
     semantic_min_topic_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     keywords: Mapped[list["Keyword"]] = relationship(back_populates="user", cascade="all, delete-orphan")
-    exclusion_words: Mapped[list["ExclusionWord"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     mentions: Mapped[list["Mention"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     chats: Mapped[list["Chat"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     subscribed_chats: Mapped[list["Chat"]] = relationship(
@@ -86,19 +85,22 @@ class Keyword(Base):
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
+    exclusion_words: Mapped[list["ExclusionWord"]] = relationship(
+        back_populates="keyword", cascade="all, delete-orphan"
+    )
     user: Mapped["User"] = relationship(back_populates="keywords")
 
 
 class ExclusionWord(Base):
-    """Слово-исключение: если оно есть в сообщении вместе с ключевым словом, упоминание не создаётся."""
+    """Слово-исключение для ключевого слова: если оно есть в сообщении вместе с этим ключом, упоминание не создаётся."""
     __tablename__ = "exclusion_words"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    keyword_id: Mapped[int] = mapped_column(ForeignKey("keywords.id", ondelete="CASCADE"), index=True, nullable=False)
     text: Mapped[str] = mapped_column(String(400), nullable=False, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
-    user: Mapped["User"] = relationship(back_populates="exclusion_words")
+    keyword: Mapped["Keyword"] = relationship(back_populates="exclusion_words")
 
 
 # Источник чата/упоминания: telegram | max

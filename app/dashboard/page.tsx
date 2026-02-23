@@ -13,7 +13,6 @@ import { UserChannelsManager } from "@/components/dashboard/user-channels-manage
 import { ChannelGroupsSection } from "@/components/dashboard/channel-groups-section"
 import { NotificationsSettings } from "@/components/dashboard/notifications-settings"
 import { SemanticSearchSettings } from "@/components/dashboard/semantic-search-settings"
-import { ExclusionWordsSettings } from "@/components/dashboard/exclusion-words-settings"
 import { SupportSection } from "@/components/dashboard/support-section"
 import { BillingModal } from "@/components/dashboard/billing-modal"
 import { apiBaseUrl, apiJson } from "@/lib/api"
@@ -185,7 +184,6 @@ export default function DashboardPage() {
                 <div className="xl:col-span-2 space-y-6">
                   <KeywordsManager userId={user.id} canAddResources={user.plan !== "free"} />
                   <SemanticSearchSettings />
-                  <ExclusionWordsSettings />
                 </div>
                 <div className="xl:col-span-3">
                   <MentionFeed userId={user.id} />

@@ -66,10 +66,11 @@ def _humanize_ru(dt: datetime) -> str:
 class KeywordItem:
     text: str
     use_semantic: bool
+    exclusion_words: tuple[str, ...] = ()
 
 
 def _load_keywords_multi() -> dict[int, list[KeywordItem]]:
-    """Ключевые слова по user_id (только включённые, пользователи с правом трекинга)."""
+    """Ключевые слова по user_id (только включённые, пользователи с правом трекинга), с их словами-исключениями."""
     with db_session() as db:
         users = db.scalars(select(User)).all()
         allowed_user_ids = {u.id for u in users if can_track(get_effective_plan(u), db)}
@@ -78,6 +79,15 @@ def _load_keywords_multi() -> dict[int, list[KeywordItem]]:
             .where(Keyword.enabled.is_(True))
             .order_by(Keyword.user_id, Keyword.id.asc())
         ).all()
+        if not rows:
+            return {}
+        kw_ids = [r.id for r in rows]
+        excl_rows = db.scalars(select(ExclusionWord).where(ExclusionWord.keyword_id.in_(kw_ids))).all()
+        excl_by_kw: dict[int, list[str]] = {}
+        for e in excl_rows:
+            t = (e.text or "").strip()
+            if t:
+                excl_by_kw.setdefault(e.keyword_id, []).append(t)
         out: dict[int, list[KeywordItem]] = {}
         for r in rows:
             if r.user_id not in allowed_user_ids:
@@ -85,7 +95,13 @@ def _load_keywords_multi() -> dict[int, list[KeywordItem]]:
             t = (r.text or "").strip()
             if t:
                 use_sem = getattr(r, "use_semantic", False)
-                out.setdefault(r.user_id, []).append(KeywordItem(text=t, use_semantic=use_sem))
+                out.setdefault(r.user_id, []).append(
+                    KeywordItem(
+                        text=t,
+                        use_semantic=use_sem,
+                        exclusion_words=tuple(excl_by_kw.get(r.id, [])),
+                    )
+                )
         return out
 
 
@@ -103,18 +119,6 @@ def _message_has_exclusion(text_cf: str, exclusion_words: list[str]) -> bool:
         if t and t.casefold() in text_cf:
             return True
     return False
-
-
-def _load_exclusion_words_multi() -> dict[int, list[str]]:
-    """Слова-исключения по user_id."""
-    with db_session() as db:
-        rows = db.scalars(select(ExclusionWord).order_by(ExclusionWord.user_id, ExclusionWord.id)).all()
-        out: dict[int, list[str]] = {}
-        for r in rows:
-            t = (r.text or "").strip()
-            if t:
-                out.setdefault(r.user_id, []).append(t)
-        return out
 
 
 class MaxScanner:
@@ -189,7 +193,6 @@ class MaxScanner:
             return
 
         keywords_by_user = _load_keywords_multi()
-        exclusion_by_user = _load_exclusion_words_multi()
         url = f"{base_url}/messages"
 
         for max_chat_id, (chat_title, user_ids) in chats_map.items():
@@ -278,11 +281,12 @@ class MaxScanner:
                         pass
 
                 for uid in user_ids:
-                    if _message_has_exclusion(text_cf, exclusion_by_user.get(uid, [])):
-                        continue
                     items = keywords_by_user.get(uid, [])
+                    exclusion_map = {item.text: list(item.exclusion_words) for item in items}
                     matches = _match_keywords_exact(items, text, text_cf)
                     for kw in matches:
+                        if _message_has_exclusion(text_cf, exclusion_map.get(kw, [])):
+                            continue
                         with db_session() as db:
                             if msg_id is not None:
                                 existing = db.scalar(

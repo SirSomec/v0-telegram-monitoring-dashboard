@@ -82,6 +82,7 @@ class KeywordOut(BaseModel):
     userId: int
     createdAt: str
     enabled: bool = True
+    exclusionWords: list[ExclusionWordOut] = Field(default_factory=list)
 
 
 class ExclusionWordCreate(BaseModel):
@@ -1777,6 +1778,24 @@ def list_keywords(user: User = Depends(get_current_user), db: Session = Depends(
             .order_by(Keyword.enabled.desc(), Keyword.id.asc())
         )
     ).all()
+    if not rows:
+        return []
+    kw_ids = [k.id for k in rows]
+    excl_rows = (
+        db.scalars(
+            select(ExclusionWord)
+            .where(ExclusionWord.keyword_id.in_(kw_ids))
+            .order_by(ExclusionWord.keyword_id, ExclusionWord.id)
+        )
+    ).all()
+    excl_by_kw: dict[int, list[ExclusionWordOut]] = {}
+    for e in excl_rows:
+        created_at = e.created_at
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        excl_by_kw.setdefault(e.keyword_id, []).append(
+            ExclusionWordOut(id=e.id, text=e.text, createdAt=created_at.isoformat())
+        )
     out: list[KeywordOut] = []
     for k in rows:
         created_at = k.created_at
@@ -1790,6 +1809,7 @@ def list_keywords(user: User = Depends(get_current_user), db: Session = Depends(
                 userId=k.user_id,
                 createdAt=created_at.isoformat(),
                 enabled=getattr(k, "enabled", True),
+                exclusionWords=excl_by_kw.get(k.id, []),
             )
         )
     return out
@@ -1828,6 +1848,12 @@ def create_keyword(body: KeywordCreate, user: User = Depends(get_current_user), 
         created_at = existing.created_at
         if created_at.tzinfo is None:
             created_at = created_at.replace(tzinfo=timezone.utc)
+        excl_list: list[ExclusionWordOut] = []
+        for e in db.scalars(select(ExclusionWord).where(ExclusionWord.keyword_id == existing.id)).all():
+            ct = e.created_at
+            if ct.tzinfo is None:
+                ct = ct.replace(tzinfo=timezone.utc)
+            excl_list.append(ExclusionWordOut(id=e.id, text=e.text, createdAt=ct.isoformat()))
         return KeywordOut(
             id=existing.id,
             text=existing.text,
@@ -1835,6 +1861,7 @@ def create_keyword(body: KeywordCreate, user: User = Depends(get_current_user), 
             userId=existing.user_id,
             createdAt=created_at.isoformat(),
             enabled=getattr(existing, "enabled", True),
+            exclusionWords=excl_list,
         )
 
     use_semantic = getattr(body, "useSemantic", False)
@@ -1852,6 +1879,7 @@ def create_keyword(body: KeywordCreate, user: User = Depends(get_current_user), 
         userId=k.user_id,
         createdAt=created_at.isoformat(),
         enabled=True,
+        exclusionWords=[],
     )
 
 
@@ -1891,6 +1919,12 @@ def restore_keyword(keyword_id: int, user: User = Depends(get_current_user), db:
         created_at = k.created_at
         if created_at.tzinfo is None:
             created_at = created_at.replace(tzinfo=timezone.utc)
+        excl_list = []
+        for e in db.scalars(select(ExclusionWord).where(ExclusionWord.keyword_id == k.id)).all():
+            ct = e.created_at
+            if ct.tzinfo is None:
+                ct = ct.replace(tzinfo=timezone.utc)
+            excl_list.append(ExclusionWordOut(id=e.id, text=e.text, createdAt=ct.isoformat()))
         return KeywordOut(
             id=k.id,
             text=k.text,
@@ -1898,6 +1932,7 @@ def restore_keyword(keyword_id: int, user: User = Depends(get_current_user), db:
             userId=k.user_id,
             createdAt=created_at.isoformat(),
             enabled=True,
+            exclusionWords=excl_list,
         )
     _check_limits(
         db,
@@ -1911,6 +1946,12 @@ def restore_keyword(keyword_id: int, user: User = Depends(get_current_user), db:
     created_at = k.created_at
     if created_at.tzinfo is None:
         created_at = created_at.replace(tzinfo=timezone.utc)
+    excl_list = []
+    for e in db.scalars(select(ExclusionWord).where(ExclusionWord.keyword_id == k.id)).all():
+        ct = e.created_at
+        if ct.tzinfo is None:
+            ct = ct.replace(tzinfo=timezone.utc)
+        excl_list.append(ExclusionWordOut(id=e.id, text=e.text, createdAt=ct.isoformat()))
     return KeywordOut(
         id=k.id,
         text=k.text,
@@ -1918,19 +1959,27 @@ def restore_keyword(keyword_id: int, user: User = Depends(get_current_user), db:
         userId=k.user_id,
         createdAt=created_at.isoformat(),
         enabled=True,
+        exclusionWords=excl_list,
     )
 
 
-# --- Слова-исключения ---
+# --- Слова-исключения (уникальные для каждого ключевого слова) ---
 
 
-@app.get("/api/exclusion-words", response_model=list[ExclusionWordOut])
-def list_exclusion_words(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> list[ExclusionWordOut]:
+@app.get("/api/keywords/{keyword_id}/exclusion-words", response_model=list[ExclusionWordOut])
+def list_keyword_exclusion_words(
+    keyword_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[ExclusionWordOut]:
     _ensure_default_user(db)
+    k = db.scalar(select(Keyword).where(Keyword.id == keyword_id))
+    if not k or k.user_id != user.id:
+        raise HTTPException(status_code=404, detail="keyword not found")
     rows = (
         db.scalars(
             select(ExclusionWord)
-            .where(ExclusionWord.user_id == user.id)
+            .where(ExclusionWord.keyword_id == keyword_id)
             .order_by(ExclusionWord.id.asc())
         )
     ).all()
@@ -1943,19 +1992,29 @@ def list_exclusion_words(user: User = Depends(get_current_user), db: Session = D
     return out
 
 
-@app.post("/api/exclusion-words", response_model=ExclusionWordOut)
-def create_exclusion_word(body: ExclusionWordCreate, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> ExclusionWordOut:
+@app.post("/api/keywords/{keyword_id}/exclusion-words", response_model=ExclusionWordOut)
+def create_keyword_exclusion_word(
+    keyword_id: int,
+    body: ExclusionWordCreate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ExclusionWordOut:
     _ensure_default_user(db)
+    k = db.scalar(select(Keyword).where(Keyword.id == keyword_id))
+    if not k or k.user_id != user.id:
+        raise HTTPException(status_code=404, detail="keyword not found")
     text = body.text.strip()
     if not text:
         raise HTTPException(status_code=400, detail="text is required")
-    existing = db.scalar(select(ExclusionWord).where(ExclusionWord.user_id == user.id, ExclusionWord.text == text))
+    existing = db.scalar(
+        select(ExclusionWord).where(ExclusionWord.keyword_id == keyword_id, ExclusionWord.text == text)
+    )
     if existing:
         created_at = existing.created_at
         if created_at.tzinfo is None:
             created_at = created_at.replace(tzinfo=timezone.utc)
         return ExclusionWordOut(id=existing.id, text=existing.text, createdAt=created_at.isoformat())
-    w = ExclusionWord(user_id=user.id, text=text)
+    w = ExclusionWord(keyword_id=keyword_id, text=text)
     db.add(w)
     db.commit()
     db.refresh(w)
@@ -1967,10 +2026,12 @@ def create_exclusion_word(body: ExclusionWordCreate, user: User = Depends(get_cu
 
 @app.delete("/api/exclusion-words/{word_id}")
 def delete_exclusion_word(word_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
-    w = db.scalar(select(ExclusionWord).where(ExclusionWord.id == word_id))
-    if not w:
+    w = db.scalar(
+        select(ExclusionWord).where(ExclusionWord.id == word_id).options(selectinload(ExclusionWord.keyword))
+    )
+    if not w or not w.keyword:
         raise HTTPException(status_code=404, detail="exclusion word not found")
-    if w.user_id != user.id:
+    if w.keyword.user_id != user.id:
         raise HTTPException(status_code=403, detail="forbidden")
     db.delete(w)
     db.commit()

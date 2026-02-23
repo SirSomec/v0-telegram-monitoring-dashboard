@@ -7,11 +7,19 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
-import { Plus, X, Sparkles, Target, Loader2, RotateCcw, Trash2, Info } from "lucide-react"
+import { Plus, X, Sparkles, Target, Loader2, RotateCcw, Trash2, Info, ShieldOff, ChevronDown, ChevronRight } from "lucide-react"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { apiBaseUrl, apiJson } from "@/lib/api"
 
-type KeywordItem = { id: number; text: string; useSemantic: boolean; enabled: boolean }
+type ExclusionWordItem = { id: number; text: string; createdAt: string }
+
+type KeywordItem = {
+  id: number
+  text: string
+  useSemantic: boolean
+  enabled: boolean
+  exclusionWords?: ExclusionWordItem[]
+}
 
 export function KeywordsManager({ userId = 1, canAddResources = true }: { userId?: number; canAddResources?: boolean }) {
   const [keywords, setKeywords] = useState<KeywordItem[]>([])
@@ -20,6 +28,9 @@ export function KeywordsManager({ userId = 1, canAddResources = true }: { userId
   const [newKeyword, setNewKeyword] = useState("")
   const [semanticMode, setSemanticMode] = useState(false)
   const [adding, setAdding] = useState(false)
+  const [expandedKeywordId, setExpandedKeywordId] = useState<number | null>(null)
+  const [newExclusionWord, setNewExclusionWord] = useState("")
+  const [addingExclusionForId, setAddingExclusionForId] = useState<number | null>(null)
 
   const fetchKeywords = useCallback(async () => {
     setLoading(true)
@@ -82,6 +93,47 @@ export function KeywordsManager({ userId = 1, canAddResources = true }: { userId
     try {
       await apiJson<{ ok: boolean }>(`${apiBaseUrl()}/api/keywords/${item.id}?permanent=1`, { method: "DELETE" })
       setKeywords((prev) => prev.filter((k) => k.id !== item.id))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Ошибка удаления")
+    }
+  }
+
+  async function addExclusionWord(keywordId: number, text: string) {
+    const trimmed = text.trim()
+    if (!trimmed) return
+    setAddingExclusionForId(keywordId)
+    setError("")
+    try {
+      const created = await apiJson<ExclusionWordItem>(`${apiBaseUrl()}/api/keywords/${keywordId}/exclusion-words`, {
+        method: "POST",
+        body: JSON.stringify({ text: trimmed }),
+      })
+      setKeywords((prev) =>
+        prev.map((k) =>
+          k.id === keywordId
+            ? { ...k, exclusionWords: [...(k.exclusionWords ?? []), created] }
+            : k
+        )
+      )
+      setNewExclusionWord("")
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Ошибка добавления исключения")
+    } finally {
+      setAddingExclusionForId(null)
+    }
+  }
+
+  async function removeExclusionWord(keywordId: number, exclusion: ExclusionWordItem) {
+    setError("")
+    try {
+      await apiJson<{ ok: boolean }>(`${apiBaseUrl()}/api/exclusion-words/${exclusion.id}`, { method: "DELETE" })
+      setKeywords((prev) =>
+        prev.map((k) =>
+          k.id === keywordId
+            ? { ...k, exclusionWords: (k.exclusionWords ?? []).filter((w) => w.id !== exclusion.id) }
+            : k
+        )
+      )
     } catch (e) {
       setError(e instanceof Error ? e.message : "Ошибка удаления")
     }
@@ -169,28 +221,102 @@ export function KeywordsManager({ userId = 1, canAddResources = true }: { userId
           </div>
         ) : (
           <>
-            <div className="flex flex-wrap gap-2">
-              {keywords.filter((k) => k.enabled).map((item) => (
-                <Badge
-                  key={item.id}
-                  variant="secondary"
-                  className="gap-1.5 bg-secondary text-secondary-foreground border border-border px-3 py-1.5 text-sm"
-                >
-                  {item.useSemantic ? (
-                    <Sparkles className="size-3 shrink-0" aria-label="Семантика" />
-                  ) : (
-                    <Target className="size-3 shrink-0" aria-label="Точное" />
-                  )}
-                  {item.text}
-                  <button
-                    onClick={() => removeKeyword(item)}
-                    className="ml-0.5 rounded-full p-0.5 hover:bg-muted transition-colors"
-                    aria-label={`Удалить ${item.text}`}
-                  >
-                    <X className="size-3" />
-                  </button>
-                </Badge>
-              ))}
+            <div className="space-y-3">
+              {keywords.filter((k) => k.enabled).map((item) => {
+                const exclusions = item.exclusionWords ?? []
+                const isExpanded = expandedKeywordId === item.id
+                return (
+                  <div key={item.id} className="rounded-lg border border-border bg-muted/30 p-2.5 space-y-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge
+                        variant="secondary"
+                        className="gap-1.5 bg-secondary text-secondary-foreground border border-border px-3 py-1.5 text-sm"
+                      >
+                        {item.useSemantic ? (
+                          <Sparkles className="size-3 shrink-0" aria-label="Семантика" />
+                        ) : (
+                          <Target className="size-3 shrink-0" aria-label="Точное" />
+                        )}
+                        {item.text}
+                        <button
+                          onClick={() => removeKeyword(item)}
+                          className="ml-0.5 rounded-full p-0.5 hover:bg-muted transition-colors"
+                          aria-label={`Удалить ${item.text}`}
+                        >
+                          <X className="size-3" />
+                        </button>
+                      </Badge>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setExpandedKeywordId(isExpanded ? null : item.id)
+                          if (!isExpanded) setNewExclusionWord("")
+                        }}
+                        className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                      >
+                        {isExpanded ? (
+                          <ChevronDown className="size-3.5" />
+                        ) : (
+                          <ChevronRight className="size-3.5" />
+                        )}
+                        <ShieldOff className="size-3.5" />
+                        Исключения ({exclusions.length})
+                      </button>
+                    </div>
+                    {isExpanded && (
+                      <div className="pl-1 space-y-2 border-l-2 border-border ml-1">
+                        <p className="text-xs text-muted-foreground">
+                          Если в сообщении есть одно из этих слов вместе с ключом «{item.text}», упоминание не создаётся.
+                        </p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {exclusions.map((w) => (
+                            <Badge
+                              key={w.id}
+                              variant="outline"
+                              className="gap-1 border-dashed text-xs font-normal"
+                            >
+                              {w.text}
+                              <button
+                                type="button"
+                                onClick={() => removeExclusionWord(item.id, w)}
+                                className="rounded-full p-0.5 hover:bg-muted"
+                                aria-label={`Удалить ${w.text}`}
+                              >
+                                <X className="size-3" />
+                              </button>
+                            </Badge>
+                          ))}
+                        </div>
+                        <div className="flex gap-2">
+                          <Input
+                            placeholder="Добавить слово-исключение..."
+                            value={expandedKeywordId === item.id ? newExclusionWord : ""}
+                            onChange={(e) => setNewExclusionWord(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault()
+                                addExclusionWord(item.id, newExclusionWord)
+                              }
+                            }}
+                            className="h-8 text-sm max-w-[200px] bg-background border-border"
+                          />
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="secondary"
+                            className="h-8"
+                            disabled={addingExclusionForId === item.id || !newExclusionWord.trim()}
+                            onClick={() => addExclusionWord(item.id, newExclusionWord)}
+                          >
+                            {addingExclusionForId === item.id ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
+                            Добавить
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
             </div>
 
             {keywords.some((k) => !k.enabled) && (

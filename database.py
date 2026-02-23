@@ -316,6 +316,37 @@ def _migrate_user_semantic_settings() -> None:
         conn.commit()
 
 
+def _migrate_exclusion_words_to_keyword() -> None:
+    """Привязать слова-исключения к ключевым словам: заменить user_id на keyword_id."""
+    with engine.connect() as conn:
+        r = conn.execute(
+            text(
+                "SELECT 1 FROM information_schema.columns "
+                "WHERE table_schema = 'public' AND table_name = 'exclusion_words' AND column_name = 'user_id'"
+            )
+        )
+        if r.scalar() is None:
+            return
+        conn.execute(
+            text(
+                "ALTER TABLE exclusion_words ADD COLUMN keyword_id INTEGER REFERENCES keywords(id) ON DELETE CASCADE"
+            )
+        )
+        conn.commit()
+        conn.execute(
+            text(
+                "UPDATE exclusion_words SET keyword_id = (SELECT MIN(k.id) FROM keywords k WHERE k.user_id = exclusion_words.user_id)"
+            )
+        )
+        conn.commit()
+        conn.execute(text("DELETE FROM exclusion_words WHERE keyword_id IS NULL"))
+        conn.commit()
+        conn.execute(text("ALTER TABLE exclusion_words ALTER COLUMN keyword_id SET NOT NULL"))
+        conn.commit()
+        conn.execute(text("ALTER TABLE exclusion_words DROP COLUMN user_id"))
+        conn.commit()
+
+
 def init_db() -> None:
     from models import Chat, ChatGroup, ExclusionWord, Keyword, Mention, NotificationSettings, ParserSetting, User, PasswordResetToken, PlanLimit, SupportTicket, SupportMessage, SupportAttachment, user_thematic_group_subscriptions  # noqa: F401
 
@@ -334,6 +365,7 @@ def init_db() -> None:
     _migrate_user_chat_subscriptions_via_group_id()
     _migrate_user_chat_subscriptions_enabled()
     _migrate_user_semantic_settings()
+    _migrate_exclusion_words_to_keyword()
 
 
 def drop_all_tables() -> None:
