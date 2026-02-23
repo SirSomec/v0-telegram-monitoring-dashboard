@@ -983,19 +983,26 @@ def _do_notify_mention_sync(payload: dict[str, Any]) -> None:
             message_link = data.get("messageLink") or None
 
             if settings.notify_email:
-                user = db.scalar(select(User).where(User.id == user_id))
-                if user and user.email and user.email.strip():
-                    send_mention_notification_email(
-                        user.email.strip(),
-                        keyword or "—",
-                        message,
-                        message_link,
-                    )
+                try:
+                    user = db.scalar(select(User).where(User.id == user_id))
+                    if user and user.email and user.email.strip():
+                        send_mention_notification_email(
+                            user.email.strip(),
+                            keyword or "—",
+                            message,
+                            message_link,
+                        )
+                except Exception:
+                    log.exception("Ошибка отправки уведомления об упоминании по email")
+
             if settings.notify_telegram and settings.telegram_chat_id and settings.telegram_chat_id.strip():
-                chat_id = settings.telegram_chat_id.strip()
-                ok = send_telegram_mention(chat_id, keyword or "—", message, message_link)
-                if not ok:
-                    log.warning("Уведомление об упоминании: Telegram не доставлено user_id=%s, chat_id=%s", user_id, chat_id)
+                try:
+                    chat_id = settings.telegram_chat_id.strip()
+                    ok = send_telegram_mention(chat_id, keyword or "—", message, message_link)
+                    if not ok:
+                        log.warning("Уведомление об упоминании: Telegram не доставлено user_id=%s, chat_id=%s", user_id, chat_id)
+                except Exception:
+                    log.exception("Ошибка отправки уведомления об упоминании в Telegram")
     except Exception:
         log.exception("Ошибка отправки уведомления об упоминании")
 
