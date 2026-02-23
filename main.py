@@ -948,21 +948,15 @@ def _schedule_ws_broadcast(payload: dict[str, Any]) -> None:
 def _do_notify_mention_sync(payload: dict[str, Any]) -> None:
     """Отправить уведомления о упоминании (email/Telegram) по настройкам пользователя."""
     import logging
-    import sys
     log = logging.getLogger(__name__)
-    data = payload.get("data") or {}
-    raw_uid = data.get("userId")
-    sys.stderr.write(f"[mention-notify] начало обработки userId={raw_uid}\n")
-    sys.stderr.flush()
     try:
-        log.warning("Уведомление об упоминании: начало обработки, userId=%s", raw_uid)
+        data = payload.get("data") or {}
+        raw_uid = data.get("userId")
         if raw_uid is None:
-            log.warning("Уведомление об упоминании: в payload нет userId, пропуск")
             return
         try:
             user_id = int(raw_uid)
         except (TypeError, ValueError):
-            log.warning("Уведомление об упоминании: некорректный userId=%s, пропуск", raw_uid)
             return
         from database import SessionLocal
         from email_sender import send_mention_notification_email
@@ -971,21 +965,18 @@ def _do_notify_mention_sync(payload: dict[str, Any]) -> None:
         with SessionLocal() as db:
             settings = db.scalar(select(NotificationSettings).where(NotificationSettings.user_id == user_id))
             if not settings:
-                log.warning("Уведомление об упоминании: нет настроек для user_id=%s — пропуск", user_id)
                 return
             if not settings.notify_telegram and not settings.notify_email:
-                log.warning("Уведомление об упоминании: у user_id=%s отключены и Telegram, и Email — пропуск", user_id)
                 return
             notify_mode = (settings.notify_mode or "all").strip()
             is_lead = data.get("isLead") is True
             if notify_mode == "leads_only" and not is_lead:
-                log.warning("Уведомление об упоминании: режим «только лиды», упоминание не лид — пропуск user_id=%s", user_id)
                 return
             if notify_mode == "digest":
-                log.warning("Уведомление об упоминании: режим «дайджест» — мгновенные не шлём, user_id=%s", user_id)
                 return
             if settings.notify_telegram and (not settings.telegram_chat_id or not settings.telegram_chat_id.strip()):
-                log.warning("Уведомление об упоминании: user_id=%s включил Telegram, но Chat ID не задан — укажите в настройках «Уведомления»", user_id)
+                log.warning("Уведомление об упоминании: user_id=%s включил Telegram, но Chat ID не задан", user_id)
+                return
 
             keyword = (data.get("keyword") or "").strip()
             message = (data.get("message") or "").strip()
@@ -1002,26 +993,20 @@ def _do_notify_mention_sync(payload: dict[str, Any]) -> None:
                     )
             if settings.notify_telegram and settings.telegram_chat_id and settings.telegram_chat_id.strip():
                 chat_id = settings.telegram_chat_id.strip()
-                log.warning("Уведомление об упоминании: отправка в Telegram user_id=%s, chat_id=%s", user_id, chat_id)
                 ok = send_telegram_mention(chat_id, keyword or "—", message, message_link)
                 if not ok:
                     log.warning("Уведомление об упоминании: Telegram не доставлено user_id=%s, chat_id=%s", user_id, chat_id)
-                else:
-                    log.warning("Уведомление об упоминании: Telegram отправлено user_id=%s", user_id)
-    except Exception:  # не ломаем парсер из-за уведомлений
+    except Exception:
         log.exception("Ошибка отправки уведомления об упоминании")
 
 
 def _schedule_notify_mention(payload: dict[str, Any]) -> None:
-    """Отправить уведомления о упоминании (вызов в потоке парсера, как у поддержки)."""
-    import sys
+    """Отправить уведомления о упоминании (вызов в потоке парсера)."""
     data_raw = payload.get("data")
     if isinstance(data_raw, dict):
         payload_copy: dict[str, Any] = {"type": payload.get("type"), "data": dict(data_raw)}
     else:
         payload_copy = {"type": payload.get("type"), "data": {}}
-    sys.stderr.write("[mention-notify] вызов _do_notify_mention_sync\n")
-    sys.stderr.flush()
     try:
         _do_notify_mention_sync(payload_copy)
     except Exception:
@@ -1030,11 +1015,7 @@ def _schedule_notify_mention(payload: dict[str, Any]) -> None:
 
 
 def _on_mention_callback(payload: dict[str, Any]) -> None:
-    """Единый callback при новом упоминании: уведомления сначала, затем WebSocket (чтобы lock WS не блокировал отправку в TG)."""
-    import logging
-    _log = logging.getLogger(__name__)
-    _uid = (payload.get("data") or {}).get("userId")
-    _log.warning("Упоминание: callback вызван, user_id=%s", _uid)
+    """Единый callback при новом упоминании: уведомления сначала, затем WebSocket."""
     _schedule_notify_mention(payload)
     _schedule_ws_broadcast(payload)
 

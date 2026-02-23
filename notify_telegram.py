@@ -34,7 +34,7 @@ def send_message(
 ) -> bool:
     """Отправить сообщение от бота (Bot API sendMessage). reply_markup — например inline_keyboard."""
     if not is_configured():
-        logger.warning("NOTIFY_TELEGRAM_BOT_TOKEN не задан — уведомления в Telegram отключены")
+        logger.debug("NOTIFY_TELEGRAM_BOT_TOKEN не задан, пропуск отправки")
         return False
     url = f"https://api.telegram.org/bot{NOTIFY_TELEGRAM_BOT_TOKEN}/sendMessage"
     payload: dict[str, str | int | bool] = {
@@ -91,7 +91,7 @@ def send_mention_notification(chat_id: str, keyword: str, message: str, message_
     Для публичных чатов — кнопка «Открыть сообщение» (t.me/...), иначе — «Открыть в дашборде».
     """
     if not is_configured():
-        logger.warning("NOTIFY_TELEGRAM_BOT_TOKEN не задан, пропуск Telegram-уведомления об упоминании")
+        logger.debug("NOTIFY_TELEGRAM_BOT_TOKEN не задан, пропуск Telegram-уведомления об упоминании")
         return False
     text = f"🔔 Упоминание: {keyword}\n\n{message[:400]}{'...' if len(message) > 400 else ''}"
     reply_markup = None
