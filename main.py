@@ -936,6 +936,7 @@ async def _ws_broadcast_flush() -> None:
 
 def _schedule_ws_broadcast(payload: dict[str, Any]) -> None:
     # Callback из фонового потока (Telethon) -> отправляем в WS асинхронно (с троттлингом).
+    global _ws_flush_scheduled  # noqa: PLW0603
     loop = main_loop
     if loop and loop.is_running():
         with _ws_lock:
