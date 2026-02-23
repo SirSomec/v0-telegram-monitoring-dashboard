@@ -210,7 +210,8 @@ export function MentionFeed({ userId }: { userId?: number }) {
             const data = payload.data as { userId?: number }
             if (data.userId === undefined || data.userId === userId) {
               setTotalCount((c) => c + 1)
-              fetchPageRef.current()
+              setPage(1)
+              // Переход на страницу 1 вызовет пересчёт fetchPage и эффект загрузки — лента обновится с новым сообщением
             }
           }
         } catch {

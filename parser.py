@@ -652,6 +652,7 @@ class TelegramScanner:
                     "type": "mention",
                     "data": {
                         "id": str(mention.id),
+                        "userId": self.user_id,
                         "groupName": (chat_title or chat_username or "Неизвестный чат"),
                         "groupIcon": _initials(chat_title or chat_username),
                         "userName": (sender_name or "Неизвестный пользователь"),
