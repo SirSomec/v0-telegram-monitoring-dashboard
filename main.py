@@ -210,6 +210,7 @@ class NotificationSettingsUpdate(BaseModel):
     notifyTelegram: bool | None = None
     notifyMode: str | None = None  # all | leads_only | digest
     telegramChatId: str | None = None
+    clearTelegramChatId: bool | None = None  # true — сбросить Chat ID (вместе с пустым telegramChatId)
 
 
 class SemanticSettingsOut(BaseModel):
@@ -1343,10 +1344,14 @@ def update_notification_settings(
         s.notify_telegram = bool(body.notifyTelegram)
     if body.notifyMode is not None and body.notifyMode.strip() in ("all", "leads_only", "digest"):
         s.notify_mode = body.notifyMode.strip()
-    # Обновлять chat_id при переданном поле. Очистка — передать null или пустую строку.
+    # Обновлять chat_id только при непустом значении, чтобы случайная пустая отправка (напр. при включении только Email) не затирала его.
+    # Очистить можно через кнопку «Очистить»: фронт отправляет clearTelegramChatId: true вместе с пустым telegramChatId.
     if "telegramChatId" in body.model_fields_set:
         raw = body.telegramChatId
-        s.telegram_chat_id = (raw.strip() or None) if raw and str(raw).strip() else None
+        if raw is not None and str(raw).strip():
+            s.telegram_chat_id = str(raw).strip()
+        elif getattr(body, "clearTelegramChatId", False) is True:
+            s.telegram_chat_id = None
     db.add(s)
     db.commit()
     db.refresh(s)

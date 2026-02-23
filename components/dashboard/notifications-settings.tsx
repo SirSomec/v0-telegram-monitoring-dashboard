@@ -71,6 +71,7 @@ export function NotificationsSettings() {
       const serverChatId = settings?.telegramChatId ?? null
       if (notifyTelegram && currentChatId !== serverChatId) {
         body.telegramChatId = currentChatId
+        if (currentChatId === null) body.clearTelegramChatId = true
       }
       const data = await apiJson<NotificationSettings>(`${apiBaseUrl()}/api/notifications/settings`, {
         method: "PATCH",
@@ -196,9 +197,12 @@ export function NotificationsSettings() {
 
       {error && <p className="text-sm text-destructive">{error}</p>}
 
-      <Button onClick={handleSave} disabled={saving}>
+      <Button onClick={handleSave} disabled={saving || settings === null}>
         {saving ? <Loader2 className="size-4 animate-spin" /> : "Сохранить настройки"}
       </Button>
+      {settings === null && !loading && (
+        <p className="text-sm text-muted-foreground">Загрузите настройки (обновите страницу), чтобы сохранять изменения.</p>
+      )}
     </div>
   )
 }
