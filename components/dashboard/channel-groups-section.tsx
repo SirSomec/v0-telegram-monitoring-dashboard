@@ -5,6 +5,14 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
+import { Switch } from "@/components/ui/switch"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { RefreshCw, Search, Users, UserPlus, UserMinus, ChevronLeft, ChevronRight } from "lucide-react"
 import { apiJson } from "@/lib/api"
 
@@ -41,26 +49,42 @@ function scoreGroupMatch(g: ChatGroupAvailableOut, q: string): number {
 }
 
 type PlanUsage = { groups: number; limits: { maxGroups: number } }
+type AvailableChannelDetails = {
+  id: number
+  title: string | null
+  identifier: string
+  description: string | null
+  subscribed: boolean
+}
 
 export function ChannelGroupsSection({ onSubscribedChange, canAddResources = true }: { onSubscribedChange?: () => void; canAddResources?: boolean }) {
   const [groups, setGroups] = useState<ChatGroupAvailableOut[]>([])
   const [planData, setPlanData] = useState<PlanUsage | null>(null)
+  const [channelsMap, setChannelsMap] = useState<Record<number, AvailableChannelDetails>>({})
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string>("")
   const [actingId, setActingId] = useState<number | null>(null)
+  const [actingChannelId, setActingChannelId] = useState<number | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
   const [page, setPage] = useState(1)
+  const [openedGroupId, setOpenedGroupId] = useState<number | null>(null)
 
   const refresh = useCallback(async () => {
     setLoading(true)
     setError("")
     try {
-      const [groupsData, plan] = await Promise.all([
+      const [groupsData, plan, availableChannels] = await Promise.all([
         apiJson<ChatGroupAvailableOut[]>("/api/chat-groups/available"),
         apiJson<{ usage: { groups: number }; limits: { maxGroups: number } }>("/api/plan"),
+        apiJson<AvailableChannelDetails[]>("/api/chats/available"),
       ])
       setGroups(groupsData)
       setPlanData({ groups: plan.usage.groups, limits: plan.limits })
+      setChannelsMap(
+        Object.fromEntries(
+          availableChannels.map((channel) => [channel.id, channel])
+        )
+      )
     } catch (e) {
       setError(e instanceof Error ? e.message : "Ошибка загрузки групп")
     } finally {
@@ -131,6 +155,39 @@ export function ChannelGroupsSection({ onSubscribedChange, canAddResources = tru
     }
   }
 
+  async function subscribeChannel(chatId: number) {
+    setActingChannelId(chatId)
+    setError("")
+    try {
+      await apiJson(`/api/chats/${chatId}/subscribe`, { method: "POST" })
+      await refresh()
+      onSubscribedChange?.()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Ошибка подписки на канал")
+    } finally {
+      setActingChannelId(null)
+    }
+  }
+
+  async function unsubscribeChannel(chatId: number) {
+    setActingChannelId(chatId)
+    setError("")
+    try {
+      await apiJson(`/api/chats/${chatId}`, { method: "DELETE" })
+      await refresh()
+      onSubscribedChange?.()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Ошибка отписки от канала")
+    } finally {
+      setActingChannelId(null)
+    }
+  }
+
+  const openedGroup = useMemo(
+    () => groups.find((group) => group.id === openedGroupId) || null,
+    [groups, openedGroupId]
+  )
+
   return (
     <Card className="border-border bg-card">
       <CardHeader className="flex-row flex-wrap items-center justify-between gap-2">
@@ -184,7 +241,7 @@ export function ChannelGroupsSection({ onSubscribedChange, canAddResources = tru
           <>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {paginatedGroups.map((g) => (
-              <Card key={g.id} className="border-border bg-secondary/30">
+              <Card key={g.id} className="border-border bg-secondary/30 h-full flex flex-col">
                 <CardHeader className="pb-2">
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <CardTitle className="text-sm font-semibold leading-tight">{g.name}</CardTitle>
@@ -192,23 +249,23 @@ export function ChannelGroupsSection({ onSubscribedChange, canAddResources = tru
                       {g.channelCount} каналов
                     </Badge>
                   </div>
-                  {g.description && (
-                    <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{g.description}</p>
-                  )}
+                  <div className="min-h-10 mt-1">
+                    {g.description ? (
+                      <p className="text-xs text-muted-foreground line-clamp-2">{g.description}</p>
+                    ) : (
+                      <p className="text-xs text-muted-foreground/70">Описание не добавлено</p>
+                    )}
+                  </div>
                 </CardHeader>
-                <CardContent className="space-y-3">
-                  {g.channels.length > 0 && (
-                    <ul className="text-xs text-muted-foreground space-y-0.5 max-h-24 overflow-y-auto">
-                      {g.channels.slice(0, 8).map((c) => (
-                        <li key={c.id} className="truncate" title={c.title || c.identifier}>
-                          {c.title || c.identifier}
-                        </li>
-                      ))}
-                      {g.channels.length > 8 && (
-                        <li className="text-muted-foreground/80">… и ещё {g.channels.length - 8}</li>
-                      )}
-                    </ul>
-                  )}
+                <CardContent className="space-y-2 mt-auto">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="w-full"
+                    onClick={() => setOpenedGroupId(g.id)}
+                  >
+                    Посмотреть каналы
+                  </Button>
                   <Button
                     size="sm"
                     variant={g.subscribed ? "outline" : "default"}
@@ -261,6 +318,64 @@ export function ChannelGroupsSection({ onSubscribedChange, canAddResources = tru
           </>
         )}
       </CardContent>
+
+      <Dialog open={openedGroupId !== null} onOpenChange={(open) => !open && setOpenedGroupId(null)}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{openedGroup?.name || "Каналы группы"}</DialogTitle>
+            <DialogDescription>
+              Переключатель управляет подпиской на канал. После подписки на группу можно отключить отдельные каналы.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[60vh] overflow-y-auto pr-1 space-y-2">
+            {openedGroup?.channels.length ? (
+              openedGroup.channels.map((channel) => {
+                const details = channelsMap[channel.id]
+                const title = details?.title || channel.title || channel.identifier
+                const identifier = details?.identifier || channel.identifier
+                const description = details?.description
+                const isSubscribed = Boolean(details?.subscribed)
+                return (
+                  <div
+                    key={channel.id}
+                    className="flex items-start gap-3 rounded-md border border-border bg-secondary/30 p-3"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium truncate" title={title}>
+                        {title}
+                      </p>
+                      <p className="text-xs text-muted-foreground font-mono truncate" title={identifier}>
+                        {identifier}
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
+                        {description || "Описание отсутствует"}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 pt-1 shrink-0">
+                      <span className="text-xs text-muted-foreground hidden sm:inline">
+                        {isSubscribed ? "Подписан" : "Не подписан"}
+                      </span>
+                      <Switch
+                        checked={isSubscribed}
+                        disabled={actingChannelId !== null || (!canAddResources && !isSubscribed)}
+                        onCheckedChange={(checked) => {
+                          if (checked) {
+                            subscribeChannel(channel.id)
+                          } else {
+                            unsubscribeChannel(channel.id)
+                          }
+                        }}
+                      />
+                    </div>
+                  </div>
+                )
+              })
+            ) : (
+              <p className="text-sm text-muted-foreground py-3">В этой группе пока нет каналов.</p>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </Card>
   )
 }
