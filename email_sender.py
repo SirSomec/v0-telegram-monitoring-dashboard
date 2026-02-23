@@ -13,6 +13,15 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
+
+def _log_email_error_to_parser(message: str) -> None:
+    """Дублировать ошибку отправки email в лог парсера (для отображения в админке)."""
+    try:
+        from parser_log import append as parser_log_append
+        parser_log_append(f"Email: {message}")
+    except Exception:
+        pass
+
 SMTP_HOST = os.getenv("SMTP_HOST", "").strip()
 SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
 SMTP_USER = os.getenv("SMTP_USER", "").strip()
@@ -71,7 +80,52 @@ def send_password_reset_email(to_email: str, reset_link: str) -> bool:
         logger.info("Письмо для сброса пароля отправлено на %s", to_email)
         return True
     except Exception as e:
-        logger.exception("Ошибка отправки email для сброса пароля: %s", e)
+        err_msg = f"Ошибка отправки email для сброса пароля: {e}"
+        logger.exception("%s", err_msg)
+        _log_email_error_to_parser(err_msg)
+        return False
+
+
+def send_test_email(to_email: str) -> bool:
+    """
+    Отправить тестовое письмо на указанный адрес (для проверки настройки SMTP).
+    Возвращает True при успехе, False при ошибке. Ошибки пишутся в лог парсера.
+    """
+    if not is_configured():
+        _log_email_error_to_parser("SMTP не настроен (SMTP_HOST, SMTP_USER, SMTP_PASSWORD). Тестовое письмо не отправлено.")
+        return False
+
+    subject = "TeleScope — тестовое письмо"
+    body_plain = (
+        "Здравствуйте.\n\n"
+        "Это тестовое письмо от TeleScope. Отправка почты настроена корректно.\n\n"
+        "— TeleScope"
+    )
+    body_html = (
+        "<p>Здравствуйте.</p>"
+        "<p>Это тестовое письмо от TeleScope. Отправка почты настроена корректно.</p>"
+        "<p>— TeleScope</p>"
+    )
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = SMTP_FROM
+    msg["To"] = to_email
+    msg.attach(MIMEText(body_plain, "plain", "utf-8"))
+    msg.attach(MIMEText(body_html, "html", "utf-8"))
+
+    try:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as server:
+            if SMTP_USE_TLS:
+                server.starttls()
+            server.login(SMTP_USER, SMTP_PASSWORD)
+            server.sendmail(SMTP_FROM, to_email, msg.as_string())
+        logger.info("Тестовое письмо отправлено на %s", to_email)
+        return True
+    except Exception as e:
+        err_msg = f"Ошибка отправки тестового письма на {to_email}: {e}"
+        logger.exception("%s", err_msg)
+        _log_email_error_to_parser(err_msg)
         return False
 
 
@@ -113,7 +167,9 @@ def send_mention_notification_email(to_email: str, keyword: str, message: str, m
         logger.info("Уведомление об упоминании отправлено на %s", to_email)
         return True
     except Exception as e:
-        logger.exception("Ошибка отправки email-уведомления об упоминании: %s", e)
+        err_msg = f"Ошибка отправки email-уведомления об упоминании: {e}"
+        logger.exception("%s", err_msg)
+        _log_email_error_to_parser(err_msg)
         return False
 
 
@@ -156,5 +212,7 @@ def send_support_reply_email(to_email: str, ticket_subject: str, reply_preview: 
         logger.info("Уведомление об ответе поддержки отправлено на %s", to_email)
         return True
     except Exception as e:
-        logger.exception("Ошибка отправки email об ответе поддержки: %s", e)
+        err_msg = f"Ошибка отправки email об ответе поддержки: {e}"
+        logger.exception("%s", err_msg)
+        _log_email_error_to_parser(err_msg)
         return False

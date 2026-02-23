@@ -13,12 +13,13 @@ import {
   TooltipTrigger,
   TooltipProvider,
 } from "@/components/ui/tooltip"
-import { RefreshCw, Play, Square, RotateCw, HelpCircle, Save, FileText } from "lucide-react"
+import { RefreshCw, Play, Square, RotateCw, HelpCircle, Save, FileText, Mail } from "lucide-react"
 import { apiJson } from "@/components/admin/api"
 import type {
   ParserStatus,
   ParserSettings,
   ParserSettingsUpdate,
+  EmailStatus,
 } from "@/components/admin/types"
 
 const PARSER_HINTS: Record<string, string> = {
@@ -131,6 +132,10 @@ export function ParserManager() {
   const [authPassword, setAuthPassword] = useState("")
   const [authLoading, setAuthLoading] = useState(false)
   const [authError, setAuthError] = useState("")
+  const [emailStatus, setEmailStatus] = useState<EmailStatus | null>(null)
+  const [emailTestLoading, setEmailTestLoading] = useState(false)
+  const [emailTestMessage, setEmailTestMessage] = useState<string>("")
+  const [emailTestOk, setEmailTestOk] = useState<boolean | null>(null)
 
   // Локальное состояние формы настроек (для редактирования)
   const [form, setForm] = useState<
@@ -142,6 +147,15 @@ export function ParserManager() {
     }
   >({})
 
+  async function fetchEmailStatus() {
+    try {
+      const data = await apiJson<EmailStatus>("/api/admin/email/status")
+      setEmailStatus(data)
+    } catch {
+      setEmailStatus(null)
+    }
+  }
+
   async function refresh() {
     setLoading(true)
     setError("")
@@ -152,6 +166,7 @@ export function ParserManager() {
       ])
       setStatus(statusData)
       setSettings(settingsData)
+      await fetchEmailStatus()
       setForm({
         ...settingsData,
         AUTO_START_SCANNER: settingsData.AUTO_START_SCANNER === "1" || settingsData.AUTO_START_SCANNER?.toLowerCase() === "true",
@@ -205,6 +220,30 @@ export function ParserManager() {
   useEffect(() => {
     fetchAuthStatus()
   }, [])
+
+  useEffect(() => {
+    fetchEmailStatus()
+  }, [])
+
+  async function sendTestEmail() {
+    setEmailTestLoading(true)
+    setEmailTestMessage("")
+    setEmailTestOk(null)
+    try {
+      const res = await apiJson<{ ok: boolean; message?: string }>("/api/admin/email/test", {
+        method: "POST",
+      })
+      setEmailTestOk(res.ok)
+      setEmailTestMessage(res.message ?? (res.ok ? "Письмо отправлено." : "Ошибка отправки."))
+      await fetchLogs()
+    } catch (e) {
+      setEmailTestOk(false)
+      setEmailTestMessage(e instanceof Error ? e.message : "Ошибка запроса")
+      await fetchLogs()
+    } finally {
+      setEmailTestLoading(false)
+    }
+  }
 
   async function requestAuthCode() {
     const phone = authPhone.trim()
@@ -532,6 +571,68 @@ export function ParserManager() {
               Остановить
             </Button>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <Mail className="size-5" />
+                Почта (SMTP)
+              </CardTitle>
+              <CardDescription>
+                Проверка настройки отправки писем (сброс пароля, уведомления). Ошибки отправки выводятся в лог парсера ниже.
+              </CardDescription>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={fetchEmailStatus}
+              disabled={loading}
+              aria-label="Обновить статус почты"
+            >
+              <RefreshCw className={`size-4 ${loading ? "animate-spin" : ""}`} />
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex flex-wrap items-center gap-2">
+            {emailStatus ? (
+              <>
+                <Badge variant={emailStatus.configured ? "default" : "secondary"}>
+                  {emailStatus.configured ? "Настроено" : "Не настроено"}
+                </Badge>
+                {emailStatus.configured && (
+                  <span className="text-muted-foreground text-sm">
+                    {emailStatus.smtpHost} : {emailStatus.smtpPort}, от: {emailStatus.smtpFrom}
+                  </span>
+                )}
+              </>
+            ) : (
+              <span className="text-muted-foreground text-sm">Загрузка…</span>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              onClick={sendTestEmail}
+              disabled={!emailStatus?.configured || emailTestLoading}
+              aria-label="Отправить тестовое письмо на почту администратора"
+            >
+              {emailTestLoading ? "Отправка…" : "Отправить тестовое письмо"}
+            </Button>
+            {emailTestMessage && (
+              <span className={emailTestOk === true ? "text-muted-foreground text-sm" : emailTestOk === false ? "text-destructive text-sm" : "text-muted-foreground text-sm"}>
+                {emailTestMessage}
+              </span>
+            )}
+          </div>
+          {emailStatus && !emailStatus.configured && (
+            <p className="text-muted-foreground text-xs">
+              Задайте SMTP_HOST, SMTP_USER и SMTP_PASSWORD в переменных окружения или в настройках развёртывания.
+            </p>
+          )}
         </CardContent>
       </Card>
 

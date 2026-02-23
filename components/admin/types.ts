@@ -85,3 +85,10 @@ export type ParserSettingsUpdate = Partial<{
   SEMANTIC_SIMILARITY_THRESHOLD: string
 }>
 
+export type EmailStatus = {
+  configured: boolean
+  smtpHost: string
+  smtpPort: number
+  smtpFrom: string
+}
+

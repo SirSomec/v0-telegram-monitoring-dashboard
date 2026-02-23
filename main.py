@@ -2531,6 +2531,41 @@ def get_parser_logs(_: User = Depends(get_current_admin)) -> list[str]:
     return get_parser_log_lines()
 
 
+# --- Email (SMTP) для админки: статус и тестовое письмо ---
+
+@app.get("/api/admin/email/status")
+def get_email_status(_: User = Depends(get_current_admin)) -> dict[str, Any]:
+    """Статус настройки SMTP (без паролей)."""
+    from email_sender import is_configured
+    import email_sender as es
+    configured = is_configured()
+    host = (es.SMTP_HOST or "") if configured else ""
+    # Маскируем хост для отображения (показываем только начало)
+    if len(host) > 8:
+        host_display = host[:4] + "…" + host[-4:] if len(host) > 10 else host
+    else:
+        host_display = host or "—"
+    return {
+        "configured": configured,
+        "smtpHost": host_display,
+        "smtpPort": es.SMTP_PORT,
+        "smtpFrom": es.SMTP_FROM or "—",
+    }
+
+
+@app.post("/api/admin/email/test")
+def send_test_email_to_admin(admin: User = Depends(get_current_admin)) -> dict[str, Any]:
+    """Отправить тестовое письмо на почту текущего администратора. Ошибки попадают в лог парсера."""
+    from email_sender import send_test_email
+    to = (admin.email or "").strip()
+    if not to:
+        raise HTTPException(status_code=400, detail="У учётной записи администратора не указан email. Укажите email во вкладке «Учётки».")
+    ok = send_test_email(to)
+    if ok:
+        return {"ok": True, "message": f"Тестовое письмо отправлено на {to}. Проверьте почту и лог парсера при ошибках."}
+    return {"ok": False, "message": "Не удалось отправить письмо. Подробности — в логе парсера ниже."}
+
+
 class ParserAuthRequestCodeBody(BaseModel):
     phone: str = Field(..., min_length=1, description="Номер телефона в формате +79...")
 
