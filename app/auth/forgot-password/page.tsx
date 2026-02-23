@@ -9,11 +9,11 @@ import { Label } from "@/components/ui/label"
 import { ArrowLeft, Loader2 } from "lucide-react"
 import { apiJson } from "@/lib/api"
 
-/** При том же origin — POST идёт в Next.js /api/auth/forgot-password (прокси на бэкенд). Иначе — напрямую на бэкенд. */
+/** При том же origin — POST в /auth-api/forgot-password (Next.js проксирует на бэкенд; путь не под /api, чтобы Nginx не слал запрос на бэкенд). */
 function forgotPasswordApiUrl(): string {
   if (typeof window === "undefined") return ""
   const env = (process.env.NEXT_PUBLIC_API_URL ?? "").trim()
-  if (env === "." || env.toLowerCase() === "same_origin" || !env) return "/api/auth/forgot-password"
+  if (env === "." || env.toLowerCase() === "same_origin" || !env) return "/auth-api/forgot-password"
   return `${env}/auth/forgot-password`
 }
 

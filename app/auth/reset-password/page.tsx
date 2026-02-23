@@ -10,11 +10,11 @@ import { Label } from "@/components/ui/label"
 import { ArrowLeft, Eye, EyeOff, Loader2 } from "lucide-react"
 import { apiJson } from "@/lib/api"
 
-/** При том же origin — POST идёт в Next.js /api/auth/reset-password (прокси на бэкенд). Иначе — напрямую на бэкенд. */
+/** При том же origin — POST в /auth-api/reset-password (Next.js проксирует на бэкенд; путь не под /api, чтобы Nginx не слал запрос на бэкенд). */
 function resetPasswordApiUrl(): string {
   if (typeof window === "undefined") return ""
   const env = (process.env.NEXT_PUBLIC_API_URL ?? "").trim()
-  if (env === "." || env.toLowerCase() === "same_origin" || !env) return "/api/auth/reset-password"
+  if (env === "." || env.toLowerCase() === "same_origin" || !env) return "/auth-api/reset-password"
   return `${env}/auth/reset-password`
 }
 
