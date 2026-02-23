@@ -238,7 +238,8 @@ class TelegramScanner:
         async def on_message(event: events.NewMessage.Event) -> None:
             try:
                 await self._handle_message(event)
-            except Exception:
+            except Exception as e:
+                log_exception(e)
                 return
 
         state["handler"] = client.add_event_handler(

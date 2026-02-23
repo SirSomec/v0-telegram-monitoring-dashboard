@@ -6,6 +6,7 @@ import io
 import os
 import secrets
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
@@ -32,6 +33,9 @@ from parser_config import (
 from parser_log import get_lines as get_parser_log_lines
 import notify_telegram
 import support_uploads
+
+# Отдельный пул потоков для отправки уведомлений, чтобы не зависеть от контекста потока парсера
+_notify_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="notify")
 
 
 def _now_utc() -> datetime:
@@ -1021,7 +1025,7 @@ def _do_notify_mention_sync(payload: dict[str, Any]) -> None:
 
 
 def _schedule_notify_mention(payload: dict[str, Any]) -> None:
-    """Отправить уведомления о упоминании (вызов в потоке парсера)."""
+    """Отправить уведомления о упоминании (вызов из потока парсера; работа выполняется в отдельном потоке)."""
     import logging
     log = logging.getLogger(__name__)
     data_raw = payload.get("data")
@@ -1031,16 +1035,34 @@ def _schedule_notify_mention(payload: dict[str, Any]) -> None:
         payload_copy = {"type": payload.get("type"), "data": {}}
     user_id = (payload_copy.get("data") or {}).get("userId")
     log.info("Уведомление об упоминании: запуск type=%s userId=%s", payload_copy.get("type"), user_id)
+
+    def _run() -> None:
+        try:
+            _do_notify_mention_sync(payload_copy)
+        except Exception:
+            log.exception("Ошибка при отправке уведомления об упоминании")
+
     try:
-        _do_notify_mention_sync(payload_copy)
-    except Exception:
-        log.exception("Ошибка при отправке уведомления об упоминании")
+        _notify_executor.submit(_run)
+    except Exception as e:
+        log.exception("Не удалось поставить отправку уведомления в очередь: %s", e)
+        _run()
 
 
 def _on_mention_callback(payload: dict[str, Any]) -> None:
     """Единый callback при новом упоминании: уведомления сначала, затем WebSocket."""
-    _schedule_notify_mention(payload)
-    _schedule_ws_broadcast(payload)
+    import logging
+    log = logging.getLogger(__name__)
+    try:
+        _schedule_notify_mention(payload)
+        _schedule_ws_broadcast(payload)
+    except Exception as e:
+        log.exception("Ошибка в callback упоминания (уведомления/WebSocket): %s", e)
+        try:
+            from parser_log import append as parser_log_append
+            parser_log_append(f"Уведомление: ошибка — {type(e).__name__}: {e}")
+        except Exception:
+            pass
 
 
 @app.get("/health")
