@@ -1092,13 +1092,20 @@ def auth_register(body: RegisterRequest, db: Session = Depends(get_db)) -> AuthR
 
 @app.post("/auth/login", response_model=AuthResponse)
 def auth_login(body: LoginRequest, db: Session = Depends(get_db)) -> AuthResponse:
-    _ensure_default_user(db)
-    user = db.scalar(select(User).where(User.email == body.email.strip()))
-    if not user or not user.password_hash:
-        raise HTTPException(status_code=401, detail="Invalid email or password")
-    if not verify_password(body.password, user.password_hash):
-        raise HTTPException(status_code=401, detail="Invalid email or password")
-    return AuthResponse(token=create_token(user.id), user=_user_to_out(user))
+    import logging
+    try:
+        _ensure_default_user(db)
+        user = db.scalar(select(User).where(User.email == body.email.strip()))
+        if not user or not user.password_hash:
+            raise HTTPException(status_code=401, detail="Invalid email or password")
+        if not verify_password(body.password, user.password_hash):
+            raise HTTPException(status_code=401, detail="Invalid email or password")
+        return AuthResponse(token=create_token(user.id), user=_user_to_out(user))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.getLogger(__name__).exception("auth/login error: %s", e)
+        raise HTTPException(status_code=500, detail="Ошибка входа. Проверьте логи бэкенда.")
 
 
 @app.get("/auth/me", response_model=UserOut)
