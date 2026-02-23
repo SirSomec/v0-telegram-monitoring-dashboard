@@ -1030,13 +1030,13 @@ def _schedule_notify_mention(payload: dict[str, Any]) -> None:
 
 
 def _on_mention_callback(payload: dict[str, Any]) -> None:
-    """Единый callback при новом упоминании: WebSocket + уведомления."""
+    """Единый callback при новом упоминании: уведомления сначала, затем WebSocket (чтобы lock WS не блокировал отправку в TG)."""
     import logging
     _log = logging.getLogger(__name__)
     _uid = (payload.get("data") or {}).get("userId")
     _log.warning("Упоминание: callback вызван, user_id=%s", _uid)
-    _schedule_ws_broadcast(payload)
     _schedule_notify_mention(payload)
+    _schedule_ws_broadcast(payload)
 
 
 @app.get("/health")
