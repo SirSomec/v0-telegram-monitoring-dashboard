@@ -976,7 +976,6 @@ def _do_notify_mention_sync(payload: dict[str, Any]) -> None:
                 return
             if settings.notify_telegram and (not settings.telegram_chat_id or not settings.telegram_chat_id.strip()):
                 log.warning("Уведомление об упоминании: user_id=%s включил Telegram, но Chat ID не задан", user_id)
-                return
 
             keyword = (data.get("keyword") or "").strip()
             message = (data.get("message") or "").strip()
