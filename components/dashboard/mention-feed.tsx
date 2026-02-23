@@ -121,6 +121,7 @@ export function MentionFeed({ userId }: { userId?: number }) {
   const [keywords, setKeywords] = useState<KeywordOption[]>([])
   const [exporting, setExporting] = useState(false)
   const wsRef = useRef<WebSocket | null>(null)
+  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const fetchPageRef = useRef<() => Promise<void>>(() => Promise.resolve())
   const token = typeof window !== "undefined" ? getStoredToken() : null
 
@@ -195,29 +196,48 @@ export function MentionFeed({ userId }: { userId?: number }) {
     if (!token) return
     const url = wsMentionsUrl(token)
     if (!url.startsWith("ws")) return
-    const ws = new WebSocket(url)
-    wsRef.current = ws
-    ws.onmessage = (event) => {
-      try {
-        const payload = JSON.parse(event.data as string)
-        if (payload.type === "init" && Array.isArray(payload.data)) {
-          fetchPageRef.current()
-        }
-        if (payload.type === "mention" && payload.data) {
-          const data = payload.data as { userId?: number }
-          if (data.userId === undefined || data.userId === userId) {
-            setTotalCount((c) => c + 1)
+
+    const connect = () => {
+      const ws = new WebSocket(url)
+      wsRef.current = ws
+      ws.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data as string)
+          if (payload.type === "init" && Array.isArray(payload.data)) {
             fetchPageRef.current()
           }
+          if (payload.type === "mention" && payload.data) {
+            const data = payload.data as { userId?: number }
+            if (data.userId === undefined || data.userId === userId) {
+              setTotalCount((c) => c + 1)
+              fetchPageRef.current()
+            }
+          }
+        } catch {
+          // ignore
         }
-      } catch {
-        // ignore
       }
+      ws.onclose = () => {
+        wsRef.current = null
+        // Переподключение после обрыва (рестарт бэкенда, сеть)
+        reconnectTimeoutRef.current = setTimeout(() => {
+          reconnectTimeoutRef.current = null
+          if (token) connect()
+        }, 2500)
+      }
+      ws.onerror = () => {}
     }
-    ws.onerror = () => {}
+    connect()
     return () => {
-      ws.close()
-      wsRef.current = null
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current)
+        reconnectTimeoutRef.current = null
+      }
+      const ws = wsRef.current
+      if (ws) {
+        ws.close()
+        wsRef.current = null
+      }
     }
   }, [token, userId])
 
