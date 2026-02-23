@@ -928,19 +928,26 @@ class TelegramScanner:
         to_embed: list[str] = [text]
         to_embed.extend(chunks)
         to_embed.extend(words)
-        # Тяжёлая работа только в executor — не блокирует event loop парсера
-        if _SEMANTIC_EXECUTOR:
-            loop = asyncio.get_running_loop()
-            all_vectors = await loop.run_in_executor(
-                _SEMANTIC_EXECUTOR,
-                _run_semantic_embed,
-                cache,
-                [kw.text for kw in semantic_items],
-                to_embed,
-            )
-        else:
-            cache.update([kw.text for kw in semantic_items])
-            all_vectors = embed(to_embed)
+        all_vectors = None
+        try:
+            if _SEMANTIC_EXECUTOR:
+                loop = asyncio.get_running_loop()
+                all_vectors = await loop.run_in_executor(
+                    _SEMANTIC_EXECUTOR,
+                    _run_semantic_embed,
+                    cache,
+                    [kw.text for kw in semantic_items],
+                    to_embed,
+                )
+            else:
+                cache.update([kw.text for kw in semantic_items])
+                all_vectors = embed(to_embed)
+        except Exception as e:
+            log_exception(e)
+            for kw in semantic_items:
+                if kw.text.casefold() in text_cf and kw.text not in by_kw:
+                    by_kw[kw.text] = (None, kw.text)
+            return [(k, sim, span) for k, (sim, span) in by_kw.items()]
         if not all_vectors or len(all_vectors) < 1:
             for kw in semantic_items:
                 if kw.text.casefold() in text_cf and kw.text not in by_kw:
