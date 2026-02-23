@@ -488,6 +488,14 @@ class ParserStatusOut(BaseModel):
     maxRunning: bool = False
 
 
+class TelegramDialogOut(BaseModel):
+    """Один диалог (группа/канал) из списка подписок аккаунта Telegram."""
+    id: int
+    title: str
+    username: str | None = None
+    identifier: str
+
+
 class ParserSettingsOut(BaseModel):
     """Настройки парсера (значения из БД или env). Пустые строки — не задано."""
     TG_API_ID: str = ""
@@ -2789,6 +2797,16 @@ def stop_parser(_: User = Depends(get_current_admin)) -> ParserStatusOut:
         scanner = None
         parser_log_append("Парсер остановлен.")
     return _parser_status()
+
+
+@app.get("/api/admin/parser/dialogs", response_model=list[TelegramDialogOut])
+def get_parser_dialogs(_: User = Depends(get_current_admin)) -> list[TelegramDialogOut]:
+    """Список групп и каналов, в которых состоит аккаунт Telegram (для выбора в мониторинг). Парсер должен быть запущен."""
+    global scanner
+    if scanner is None or not scanner.is_running:
+        return []
+    raw = scanner.get_dialogs_sync(timeout=45)
+    return [TelegramDialogOut(id=d["id"], title=d.get("title") or "", username=d.get("username"), identifier=d.get("identifier") or str(d["id"])) for d in raw]
 
 
 @app.post("/api/admin/parser/max/start", response_model=ParserStatusOut)

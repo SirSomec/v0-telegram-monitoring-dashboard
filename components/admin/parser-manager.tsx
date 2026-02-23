@@ -13,13 +13,22 @@ import {
   TooltipTrigger,
   TooltipProvider,
 } from "@/components/ui/tooltip"
-import { RefreshCw, Play, Square, RotateCw, HelpCircle, Save, FileText, Mail } from "lucide-react"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
+import { RefreshCw, Play, Square, RotateCw, HelpCircle, Save, FileText, Mail, Plus, List } from "lucide-react"
 import { apiJson } from "@/components/admin/api"
 import type {
   ParserStatus,
   ParserSettings,
   ParserSettingsUpdate,
   EmailStatus,
+  TelegramDialog,
 } from "@/components/admin/types"
 
 const PARSER_HINTS: Record<string, string> = {
@@ -136,6 +145,9 @@ export function ParserManager() {
   const [emailTestLoading, setEmailTestLoading] = useState(false)
   const [emailTestMessage, setEmailTestMessage] = useState<string>("")
   const [emailTestOk, setEmailTestOk] = useState<boolean | null>(null)
+  const [dialogs, setDialogs] = useState<TelegramDialog[] | null>(null)
+  const [dialogsLoading, setDialogsLoading] = useState(false)
+  const [addingIdentifier, setAddingIdentifier] = useState<string | null>(null)
 
   // Локальное состояние формы настроек (для редактирования)
   const [form, setForm] = useState<
@@ -191,6 +203,39 @@ export function ParserManager() {
       setParserLogs([])
     } finally {
       setLogLoading(false)
+    }
+  }
+
+  async function fetchDialogs() {
+    setDialogsLoading(true)
+    setError("")
+    try {
+      const list = await apiJson<TelegramDialog[]>("/api/admin/parser/dialogs")
+      setDialogs(Array.isArray(list) ? list : [])
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Не удалось загрузить список подписок")
+      setDialogs([])
+    } finally {
+      setDialogsLoading(false)
+    }
+  }
+
+  async function addDialogToMonitoring(d: TelegramDialog) {
+    setAddingIdentifier(d.identifier)
+    try {
+      await apiJson("/api/chats", {
+        method: "POST",
+        body: JSON.stringify({
+          identifier: d.identifier,
+          title: d.title || undefined,
+          isGlobal: true,
+          enabled: true,
+        }),
+      })
+      setAddingIdentifier(null)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Ошибка добавления канала")
+      setAddingIdentifier(null)
     }
   }
 
@@ -523,6 +568,77 @@ export function ParserManager() {
               Перезапустить
             </Button>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <List className="size-5" />
+                Подписки аккаунта Telegram
+              </CardTitle>
+              <CardDescription>
+                Список групп и каналов, в которых состоит аккаунт. Запустите парсер выше и нажмите «Загрузить» — затем добавьте нужные чаты в мониторинг (каналы станут глобальными и появятся в разделе «Каналы»).
+              </CardDescription>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={fetchDialogs}
+              disabled={!running || dialogsLoading}
+              aria-label="Загрузить список подписок"
+            >
+              <RefreshCw className={`mr-2 size-4 ${dialogsLoading ? "animate-spin" : ""}`} />
+              Загрузить список
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {dialogs === null ? (
+            <p className="text-muted-foreground text-sm">
+              {running ? "Нажмите «Загрузить список», чтобы получить группы и каналы аккаунта." : "Запустите парсер Telegram, чтобы загрузить список подписок."}
+            </p>
+          ) : dialogs.length === 0 ? (
+            <p className="text-muted-foreground text-sm">Подписок не найдено или парсер не подключён.</p>
+          ) : (
+            <div className="rounded-md border overflow-auto max-h-[400px]">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Название</TableHead>
+                    <TableHead className="font-mono text-xs">Идентификатор</TableHead>
+                    <TableHead className="w-[140px]">Действие</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {dialogs.map((d) => (
+                    <TableRow key={d.id}>
+                      <TableCell className="font-medium max-w-[200px] truncate" title={d.title}>
+                        {d.title || "—"}
+                      </TableCell>
+                      <TableCell className="font-mono text-xs text-muted-foreground">
+                        {d.username ? `@${d.username}` : d.identifier}
+                      </TableCell>
+                      <TableCell>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => addDialogToMonitoring(d)}
+                          disabled={addingIdentifier !== null}
+                          aria-label={`Добавить ${d.title || d.identifier} в мониторинг`}
+                        >
+                          <Plus className="mr-1 size-4" />
+                          {addingIdentifier === d.identifier ? "Добавление…" : "В мониторинг"}
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
         </CardContent>
       </Card>
 

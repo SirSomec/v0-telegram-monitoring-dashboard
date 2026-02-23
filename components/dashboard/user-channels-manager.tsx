@@ -198,6 +198,9 @@ export function UserChannelsManager({ canAddResources = true }: { canAddResource
           <p className="text-sm text-muted-foreground">
             Вставьте ссылку (t.me/… или приглашение t.me/joinchat/…), @username или числовой chat_id.
           </p>
+          <p className="text-xs text-muted-foreground mt-1">
+            Где взять: публичный канал — нажмите на название канала → «Поделиться» / скопировать ссылку или @username из шапки; приватный — ссылку-приглашение даёт админ (t.me/joinchat/…). Либо добавьте в чат бота @userinfobot — он покажет chat_id чата.
+          </p>
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="grid gap-3 sm:grid-cols-2">

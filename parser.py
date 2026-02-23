@@ -15,6 +15,7 @@ from telethon import TelegramClient, events
 from telethon.errors import FloodWaitError, UserAlreadyParticipantError
 from telethon.sessions import StringSession
 from telethon.tl.functions.messages import ImportChatInviteRequest
+from telethon.tl.types import Channel, Chat
 
 from database import db_session
 from models import Chat, ExclusionWord, Keyword, Mention, User, user_chat_subscriptions, CHAT_SOURCE_TELEGRAM
@@ -170,6 +171,7 @@ class TelegramScanner:
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
         self._client: TelegramClient | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
         self._chat_ids_to_users: dict[int, set[int]] = {}
         self._chat_usernames_to_users: dict[str, set[int]] = {}
         self._embedding_cache: KeywordEmbeddingCache | None = (
@@ -192,12 +194,72 @@ class TelegramScanner:
 
     def stop(self) -> None:
         self._stop_event.set()
+        self._loop = None
         client = self._client
         if client:
             try:
                 asyncio.run(client.disconnect())
             except Exception:
                 pass
+
+    async def _fetch_dialogs(self) -> list[dict[str, Any]]:
+        """Список групп и каналов, в которых состоит аккаунт (для админки)."""
+        client = self._client
+        if not client or not client.is_connected():
+            return []
+        out: list[dict[str, Any]] = []
+        try:
+            dialogs = await client.get_dialogs(limit=500)
+            for d in dialogs:
+                entity = getattr(d, "entity", None)
+                if entity is None:
+                    continue
+                if isinstance(entity, Channel):
+                    raw_id = getattr(entity, "id", None)
+                    title = getattr(entity, "title", None) or ""
+                    username = getattr(entity, "username", None) or ""
+                    if raw_id is None:
+                        continue
+                    # В API Telegram каналы имеют id вида -100xxxxxxxxxx
+                    cid = -1000000000000 - int(raw_id)
+                    # Идентификатор для добавления в мониторинг: @username или tg_chat_id
+                    identifier = (username.strip() or str(cid)).strip()
+                    if identifier and not identifier.lstrip("-").isdigit():
+                        identifier = identifier.lstrip("@")
+                    out.append({
+                        "id": cid,
+                        "title": title,
+                        "username": username.strip() or None,
+                        "identifier": identifier or str(cid),
+                    })
+                elif isinstance(entity, Chat):
+                    cid = getattr(entity, "id", None)
+                    title = getattr(entity, "title", None) or ""
+                    if cid is None:
+                        continue
+                    out.append({
+                        "id": cid,
+                        "title": title,
+                        "username": None,
+                        "identifier": str(cid),
+                    })
+        except Exception as e:
+            log_exception(e)
+        return out
+
+    def get_dialogs_sync(self, timeout: float = 30) -> list[dict[str, Any]]:
+        """Вызов из другого потока: получить список диалогов (группы/каналы)."""
+        loop = self._loop
+        if loop is None or not self.is_running:
+            return []
+        import concurrent.futures
+        future: concurrent.futures.Future = asyncio.run_coroutine_threadsafe(
+            self._fetch_dialogs(), loop
+        )
+        try:
+            return future.result(timeout=timeout)
+        except Exception:
+            return []
 
     def _run_thread(self) -> None:
         try:
@@ -228,6 +290,7 @@ class TelegramScanner:
             client = TelegramClient(session_name, int(api_id), api_hash, proxy=proxy)
 
         self._client = client
+        self._loop = asyncio.get_running_loop()
 
         if not self._multi_user:
             with db_session() as db:
