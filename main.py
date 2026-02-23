@@ -967,6 +967,11 @@ def _do_notify_mention_sync(payload: dict[str, Any]) -> None:
 
         with SessionLocal() as db:
             settings = _get_or_create_notification_settings(db, user_id)
+            chat_id_set = bool(settings.telegram_chat_id and settings.telegram_chat_id.strip())
+            log.info(
+                "Уведомление об упоминании: user_id=%s notify_telegram=%s chat_id_set=%s notify_mode=%s",
+                user_id, settings.notify_telegram, chat_id_set, (settings.notify_mode or "all").strip(),
+            )
             if not settings.notify_telegram and not settings.notify_email:
                 log.info("Уведомление об упоминании: user_id=%s — уведомления отключены (email и Telegram выкл)", user_id)
                 return
@@ -1343,15 +1348,21 @@ def get_notification_settings(user: User = Depends(get_current_user), db: Sessio
 
 @app.get("/api/notifications/telegram-status")
 def get_telegram_notify_status(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
-    """Статус для отладки: настроен ли бот, задан ли chat_id у текущего пользователя."""
+    """Статус для отладки: настроен ли бот, задан ли chat_id, совпадает ли user id с парсером."""
     _ensure_default_user(db)
     s = _get_or_create_notification_settings(db, user.id)
     chat_id = (s.telegram_chat_id or "").strip()
+    multi = get_parser_setting_bool("MULTI_USER_SCANNER", True)
+    parser_user_id = None if multi else get_parser_setting_int("TG_USER_ID", 1)
     return {
         "botConfigured": notify_telegram.is_configured(),
         "telegramEnabled": bool(s.notify_telegram),
         "chatIdSet": bool(chat_id),
         "chatIdPreview": f"{chat_id[:4]}...{chat_id[-2:]}" if len(chat_id) > 8 else (chat_id or None),
+        "userId": user.id,
+        "multiUserScanner": multi,
+        "parserUserId": parser_user_id,
+        "userIdMatchesParser": (parser_user_id is None or user.id == parser_user_id),
     }
 
 

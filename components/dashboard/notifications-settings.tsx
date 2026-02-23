@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
 import { apiBaseUrl, apiJson } from "@/lib/api"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Loader2, X } from "lucide-react"
 
 type NotificationSettings = {
@@ -34,19 +35,31 @@ export function NotificationsSettings() {
   const [telegramChatId, setTelegramChatId] = useState("")
   const [testLoading, setTestLoading] = useState(false)
   const [testResult, setTestResult] = useState<{ ok: boolean; message?: string } | null>(null)
+  const [telegramStatus, setTelegramStatus] = useState<{
+    userId?: number
+    parserUserId?: number | null
+    multiUserScanner?: boolean
+    userIdMatchesParser?: boolean
+  } | null>(null)
 
   useEffect(() => {
     let cancelled = false
     setLoading(true)
     setError("")
-    apiJson<NotificationSettings>(`${apiBaseUrl()}/api/notifications/settings`)
-      .then((data) => {
+    Promise.all([
+      apiJson<NotificationSettings>(`${apiBaseUrl()}/api/notifications/settings`),
+      apiJson<{ userId?: number; parserUserId?: number | null; multiUserScanner?: boolean; userIdMatchesParser?: boolean }>(
+        `${apiBaseUrl()}/api/notifications/telegram-status`
+      ).catch(() => null),
+    ])
+      .then(([data, status]) => {
         if (!cancelled) {
           setSettings(data)
           setNotifyEmail(data.notifyEmail)
           setNotifyTelegram(data.notifyTelegram)
           setNotifyMode(data.notifyMode || "all")
           setTelegramChatId(data.telegramChatId || "")
+          if (status) setTelegramStatus(status)
         }
       })
       .catch(() => {
@@ -117,6 +130,14 @@ export function NotificationsSettings() {
 
   return (
     <div className="space-y-6">
+      {telegramStatus && telegramStatus.userIdMatchesParser === false && notifyTelegram && (
+        <Alert variant="destructive" className="border-amber-500/50 bg-amber-500/10">
+          <AlertTitle>Уведомления о упоминаниях могут не приходить</AlertTitle>
+          <AlertDescription>
+            Парсер работает в режиме «один пользователь» (ID={telegramStatus.parserUserId ?? "?"}). Упоминания привязываются к этому пользователю. Ваш ID в системе — {telegramStatus.userId}. Чтобы получать уведомления в Telegram, включите мультипользовательский режим парсера в разделе «Парсер» (админка) или задайте TG_USER_ID={telegramStatus.userId} в настройках парсера.
+          </AlertDescription>
+        </Alert>
+      )}
       <Card className="border-border bg-card">
         <CardHeader>
           <CardTitle className="text-card-foreground">Каналы уведомлений</CardTitle>
