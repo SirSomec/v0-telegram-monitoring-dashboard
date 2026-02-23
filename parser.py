@@ -38,8 +38,11 @@ except ImportError:
     similarity_threshold = None
     KeywordEmbeddingCache = None
 
-# Потоки для embed(): не блокируют event loop; 2 воркера снижают очередь при пачке сообщений
-_SEMANTIC_EXECUTOR = ThreadPoolExecutor(max_workers=2) if embed else None
+# Потоки для embed(): не блокируют event loop; несколько воркеров — параллельная обработка сообщений
+_SEMANTIC_EXECUTOR = ThreadPoolExecutor(max_workers=6) if embed else None
+
+# Сколько сообщений обрабатывать параллельно (ограничение очереди)
+_MESSAGE_CONCURRENCY = 10
 
 
 def _run_semantic_embed(cache: Any, keyword_texts: list[str], to_embed: list[str]) -> list[list[float]] | None:
@@ -247,13 +250,16 @@ class TelegramScanner:
 
         chats_filter = await self._load_chats_filter(client)
         state: dict = {"filter": chats_filter, "handler": None}
+        msg_semaphore = asyncio.Semaphore(_MESSAGE_CONCURRENCY)
 
         async def on_message(event: events.NewMessage.Event) -> None:
-            try:
-                await self._handle_message(event)
-            except Exception as e:
-                log_exception(e)
-                return
+            async def process_one() -> None:
+                async with msg_semaphore:
+                    try:
+                        await self._handle_message(event)
+                    except Exception as e:
+                        log_exception(e)
+            asyncio.create_task(process_one())
 
         state["handler"] = client.add_event_handler(
             on_message,
