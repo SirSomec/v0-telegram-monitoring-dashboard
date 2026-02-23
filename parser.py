@@ -39,8 +39,8 @@ except ImportError:
     similarity_threshold = None
     KeywordEmbeddingCache = None
 
-# Один поток для тяжёлых вызовов embed(), чтобы не давать 100% CPU при пачке сообщений
-_SEMANTIC_EXECUTOR = ThreadPoolExecutor(max_workers=1) if embed else None
+# Потоки для embed(): не блокируют event loop; 2 воркера снижают задержку при пачке сообщений
+_SEMANTIC_EXECUTOR = ThreadPoolExecutor(max_workers=2) if embed else None
 
 
 def _run_semantic_embed(cache: Any, keyword_texts: list[str], to_embed: list[str]) -> list[list[float]] | None:
@@ -922,18 +922,13 @@ class TelegramScanner:
                 if kw.text.casefold() in text_cf and kw.text not in by_kw:
                     by_kw[kw.text] = (None, kw.text)
             return [(k, sim, span) for k, (sim, span) in by_kw.items()]
-        cache.update([kw.text for kw in semantic_items])
-        if not cache.is_available():
-            for kw in semantic_items:
-                if kw.text.casefold() in text_cf and kw.text not in by_kw:
-                    by_kw[kw.text] = (None, kw.text)
-            return [(k, sim, span) for k, (sim, span) in by_kw.items()]
+        # Вся тяжёлая работа (cache.update + embed) только в executor — не блокируем event loop
         chunks = self._message_chunks(text)
         words = self._message_words(text)
         to_embed: list[str] = [text]
         to_embed.extend(chunks)
         to_embed.extend(words)
-        # Тяжёлая работа в отдельном потоке (max 1 одновременно) — не блокирует loop и ограничивает CPU
+        # Тяжёлая работа только в executor — не блокирует event loop парсера
         if _SEMANTIC_EXECUTOR:
             loop = asyncio.get_running_loop()
             all_vectors = await loop.run_in_executor(
