@@ -62,14 +62,19 @@ export function NotificationsSettings() {
     setSaving(true)
     setError("")
     try {
+      const body: Record<string, unknown> = {
+        notifyEmail: notifyEmail,
+        notifyTelegram: notifyTelegram,
+        notifyMode: notifyMode,
+      }
+      const currentChatId = telegramChatId.trim() || null
+      const serverChatId = settings?.telegramChatId ?? null
+      if (notifyTelegram && currentChatId !== serverChatId) {
+        body.telegramChatId = currentChatId
+      }
       const data = await apiJson<NotificationSettings>(`${apiBaseUrl()}/api/notifications/settings`, {
         method: "PATCH",
-        body: JSON.stringify({
-          notifyEmail: notifyEmail,
-          notifyTelegram: notifyTelegram,
-          notifyMode: notifyMode,
-          telegramChatId: telegramChatId.trim() || null,
-        }),
+        body: JSON.stringify(body),
       })
       setSettings(data)
       setNotifyEmail(data.notifyEmail)
