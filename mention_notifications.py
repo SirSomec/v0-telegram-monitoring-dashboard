@@ -60,9 +60,12 @@ def _send_for_mention(mention_id: int) -> None:
     """
     Загрузить упоминание из БД, проверить настройки пользователя и отправить
     email/Telegram. Вызывается из потока пула.
+    Важно: сессию БД закрываем до отправки email/Telegram, чтобы долгий SMTP-таймаут
+    не блокировал соединения из пула и не мешал парсеру и API.
     """
     logger.info("Уведомление: обработка mention_id=%s", mention_id)
     try:
+        # Собираем все данные в рамках сессии и сразу освобождаем соединение
         with SessionLocal() as db:
             mention = db.get(Mention, mention_id)
             if mention is None:
@@ -87,37 +90,41 @@ def _send_for_mention(mention_id: int) -> None:
             keyword = (mention.keyword_text or "").strip() or "—"
             message = (mention.message_text or "").strip()
             message_link = _message_link_from_mention(mention)
-
-            if settings.notify_email:
+            send_email = bool(settings.notify_email)
+            email = ""
+            if send_email:
                 user = db.scalar(select(User).where(User.id == user_id))
                 email = (user and getattr(user, "email", None) or "").strip()
-                if email:
-                    try:
-                        from email_sender import send_mention_notification_email
-                        ok = send_mention_notification_email(email, keyword, message, message_link)
-                        if ok:
-                            logger.info("Уведомление mention_id=%s: email отправлен на %s", mention_id, email)
-                        else:
-                            logger.warning("Уведомление mention_id=%s: отправка email вернула False", mention_id)
-                    except Exception as e:
-                        logger.exception("Уведомление mention_id=%s: ошибка email — %s", mention_id, e)
-                else:
-                    logger.debug("Уведомление mention_id=%s: email пользователя не задан", mention_id)
+            send_telegram = bool(settings.notify_telegram)
+            telegram_chat_id = (settings.telegram_chat_id or "").strip()
+        # Сессия закрыта — отправка email/Telegram без удержания соединения БД
 
-            if settings.notify_telegram:
-                chat_id = (settings.telegram_chat_id or "").strip()
-                if not chat_id:
-                    logger.warning("Уведомление mention_id=%s user_id=%s: Telegram включён, но Chat ID не задан", mention_id, user_id)
+        if send_email and email:
+            try:
+                from email_sender import send_mention_notification_email
+                ok = send_mention_notification_email(email, keyword, message, message_link)
+                if ok:
+                    logger.info("Уведомление mention_id=%s: email отправлен на %s", mention_id, email)
                 else:
-                    try:
-                        import notify_telegram
-                        ok = notify_telegram.send_mention_notification(chat_id, keyword, message, message_link)
-                        if ok:
-                            logger.info("Уведомление mention_id=%s: Telegram доставлено chat_id=%s", mention_id, chat_id)
-                        else:
-                            logger.warning("Уведомление mention_id=%s: Telegram не доставлено chat_id=%s", mention_id, chat_id)
-                    except Exception as e:
-                        logger.exception("Уведомление mention_id=%s: ошибка Telegram — %s", mention_id, e)
+                    logger.warning("Уведомление mention_id=%s: отправка email вернула False", mention_id)
+            except Exception as e:
+                logger.exception("Уведомление mention_id=%s: ошибка email — %s", mention_id, e)
+        elif send_email:
+            logger.debug("Уведомление mention_id=%s: email пользователя не задан", mention_id)
+
+        if send_telegram:
+            if not telegram_chat_id:
+                logger.warning("Уведомление mention_id=%s user_id=%s: Telegram включён, но Chat ID не задан", mention_id, user_id)
+            else:
+                try:
+                    import notify_telegram
+                    ok = notify_telegram.send_mention_notification(telegram_chat_id, keyword, message, message_link)
+                    if ok:
+                        logger.info("Уведомление mention_id=%s: Telegram доставлено chat_id=%s", mention_id, telegram_chat_id)
+                    else:
+                        logger.warning("Уведомление mention_id=%s: Telegram не доставлено chat_id=%s", mention_id, telegram_chat_id)
+                except Exception as e:
+                    logger.exception("Уведомление mention_id=%s: ошибка Telegram — %s", mention_id, e)
     except Exception as e:
         logger.exception("Уведомление mention_id=%s: неожиданная ошибка — %s", mention_id, e)
 
