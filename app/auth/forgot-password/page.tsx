@@ -9,12 +9,12 @@ import { Label } from "@/components/ui/label"
 import { ArrowLeft, Loader2 } from "lucide-react"
 import { apiJson } from "@/lib/api"
 
-function authBase(): string {
+/** При том же origin — POST идёт в Next.js /api/auth/forgot-password (прокси на бэкенд). Иначе — напрямую на бэкенд. */
+function forgotPasswordApiUrl(): string {
   if (typeof window === "undefined") return ""
   const env = (process.env.NEXT_PUBLIC_API_URL ?? "").trim()
-  if (env === "." || env.toLowerCase() === "same_origin") return ""
-  if (env) return env
-  return ""
+  if (env === "." || env.toLowerCase() === "same_origin" || !env) return "/api/auth/forgot-password"
+  return `${env}/auth/forgot-password`
 }
 
 export default function ForgotPasswordPage() {
@@ -36,7 +36,7 @@ export default function ForgotPasswordPage() {
     }
     setSubmitting(true)
     try {
-      await apiJson<{ ok: boolean }>(`${authBase()}/auth/forgot-password`, {
+      await apiJson<{ ok: boolean }>(forgotPasswordApiUrl(), {
         method: "POST",
         body: JSON.stringify({ email: email.trim() }),
       })
