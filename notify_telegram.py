@@ -21,6 +21,18 @@ NOTIFY_TELEGRAM_BOT_TOKEN = os.getenv("NOTIFY_TELEGRAM_BOT_TOKEN", "").strip()
 FRONTEND_URL = os.getenv("FRONTEND_URL", "").strip()
 
 
+def _normalize_button_url(url: str) -> str | None:
+    """Вернуть URL, пригодный для inline-кнопки Telegram (только http/https). Исправляет опечатку htts -> https."""
+    if not url or not isinstance(url, str):
+        return None
+    u = url.strip()
+    if u.startswith("htts://"):
+        u = "https://" + u[7:]
+    if u.startswith("https://") or u.startswith("http://"):
+        return u
+    return None
+
+
 def is_configured() -> bool:
     return bool(NOTIFY_TELEGRAM_BOT_TOKEN)
 
@@ -100,8 +112,11 @@ def send_mention_notification(chat_id: str, keyword: str, message: str, message_
     if message_link and message_link.startswith("https://t.me/"):
         reply_markup = {"inline_keyboard": [[{"text": "Открыть сообщение", "url": message_link}]]}
     elif FRONTEND_URL:
-        dashboard_url = f"{FRONTEND_URL.rstrip('/')}/dashboard"
-        reply_markup = {"inline_keyboard": [[{"text": "Открыть в дашборде", "url": dashboard_url}]]}
+        dashboard_url = _normalize_button_url(f"{FRONTEND_URL.rstrip('/')}/dashboard")
+        if dashboard_url:
+            reply_markup = {"inline_keyboard": [[{"text": "Открыть в дашборде", "url": dashboard_url}]]}
+        else:
+            logger.warning("FRONTEND_URL задан, но URL не подходит для кнопки Telegram (нужен http:// или https://): %s", FRONTEND_URL[:50])
     if send_message(chat_id, text, reply_markup=reply_markup):
         logger.info("Telegram-уведомление об упоминании отправлено в chat_id=%s", chat_id)
         return True
