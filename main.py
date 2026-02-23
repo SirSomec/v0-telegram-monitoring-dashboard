@@ -948,10 +948,13 @@ def _schedule_ws_broadcast(payload: dict[str, Any]) -> None:
 def _do_notify_mention_sync(payload: dict[str, Any]) -> None:
     """Отправить уведомления о упоминании (email/Telegram) по настройкам пользователя."""
     import logging
+    import sys
     log = logging.getLogger(__name__)
+    data = payload.get("data") or {}
+    raw_uid = data.get("userId")
+    sys.stderr.write(f"[mention-notify] начало обработки userId={raw_uid}\n")
+    sys.stderr.flush()
     try:
-        data = payload.get("data") or {}
-        raw_uid = data.get("userId")
         log.warning("Уведомление об упоминании: начало обработки, userId=%s", raw_uid)
         if raw_uid is None:
             log.warning("Уведомление об упоминании: в payload нет userId, пропуск")
@@ -1011,7 +1014,14 @@ def _do_notify_mention_sync(payload: dict[str, Any]) -> None:
 
 def _schedule_notify_mention(payload: dict[str, Any]) -> None:
     """Отправить уведомления о упоминании (вызов в потоке парсера, как у поддержки)."""
-    payload_copy: dict[str, Any] = {"type": payload.get("type"), "data": dict(payload.get("data") or {})}
+    import sys
+    data_raw = payload.get("data")
+    if isinstance(data_raw, dict):
+        payload_copy: dict[str, Any] = {"type": payload.get("type"), "data": dict(data_raw)}
+    else:
+        payload_copy = {"type": payload.get("type"), "data": {}}
+    sys.stderr.write("[mention-notify] вызов _do_notify_mention_sync\n")
+    sys.stderr.flush()
     try:
         _do_notify_mention_sync(payload_copy)
     except Exception:
