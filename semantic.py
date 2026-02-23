@@ -160,6 +160,52 @@ def embed(texts: list[str]) -> list[list[float]] | None:
         return None
 
 
+def embed_with_config(
+    texts: list[str],
+    *,
+    service_url: str | None = None,
+    timeout_sec: float = 60,
+    provider: str = "http",
+    model_name: str | None = None,
+) -> list[list[float]] | None:
+    """
+    Эмбеддинги с явным конфигом (без вызова parser_config/БД).
+    Для вызова из фонового потока executor — конфиг передаётся из основного потока.
+    """
+    if not texts:
+        return None
+    use_http = (provider or "").strip().lower() == "http" or bool((service_url or "").strip())
+    if use_http and (service_url or "").strip():
+        url = (service_url or "").rstrip("/")
+        if not url:
+            return None
+        base = url.replace("/embed", "").replace("/health", "")
+        embed_url = f"{base}/embed"
+        timeout = max(10, min(300, timeout_sec))
+        req = urllib.request.Request(
+            embed_url,
+            data=json.dumps({"texts": texts}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                return data.get("vectors")
+        except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError, KeyError, TimeoutError, OSError):
+            return None
+    if (provider or "").strip().lower() == "local":
+        name = (model_name or "").strip() or _DEFAULT_MODEL
+        try:
+            from sentence_transformers import SentenceTransformer
+            model = SentenceTransformer(name)
+            vectors = model.encode(texts, convert_to_numpy=True)
+            return [v.tolist() for v in vectors]
+        except Exception:
+            return None
+    return None
+
+
 def cosine_similarity(a: list[float], b: list[float]) -> float:
     """Косинусное сходство двух векторов."""
     if len(a) != len(b) or not a:
@@ -184,14 +230,19 @@ class KeywordEmbeddingCache:
         self._cache: dict[str, list[float]] = {}
         self._model_available: bool | None = None
 
-    def update(self, keyword_texts: list[str]) -> None:
-        """Обновить кэш: вычислить эмбеддинги для переданных текстов (только недостающие)."""
+    def update(
+        self,
+        keyword_texts: list[str],
+        embed_func: None = None,  # callable: (list[str]) -> list[list[float]] | None
+    ) -> None:
+        """Обновить кэш: вычислить эмбеддинги для переданных текстов (только недостающие).
+        embed_func: если задан, вызывается вместо embed() (для фонового потока без доступа к БД)."""
         if not keyword_texts:
             return
         to_compute = [t for t in keyword_texts if (t or "").strip() and (t or "").strip() not in self._cache]
         if not to_compute:
             return
-        vectors = embed(to_compute)
+        vectors = (embed_func(to_compute) if embed_func else embed(to_compute))
         if vectors is None:
             self._model_available = False
             return

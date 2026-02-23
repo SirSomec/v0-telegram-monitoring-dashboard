@@ -31,9 +31,10 @@ from parser_config import (
 )
 
 try:
-    from semantic import embed, cosine_similarity, similarity_threshold, KeywordEmbeddingCache
+    from semantic import embed, embed_with_config, cosine_similarity, similarity_threshold, KeywordEmbeddingCache
 except ImportError:
     embed = None
+    embed_with_config = None
     cosine_similarity = None
     similarity_threshold = None
     KeywordEmbeddingCache = None
@@ -43,10 +44,38 @@ _SEMANTIC_EXECUTOR = ThreadPoolExecutor(max_workers=6) if embed else None
 
 
 def _run_semantic_embed(cache: Any, keyword_texts: list[str], to_embed: list[str]) -> list[list[float]] | None:
-    """Синхронная работа для executor: обновить кэш ключей и эмбеддинги текста сообщения."""
+    """Синхронная работа для executor: обновить кэш ключей и эмбеддинги текста сообщения (использует parser_config в потоке)."""
     if cache is not None and keyword_texts:
         cache.update(keyword_texts)
     return embed(to_embed) if embed else None
+
+
+def _run_semantic_embed_with_config(
+    cache: Any,
+    keyword_texts: list[str],
+    to_embed: list[str],
+    config: dict[str, Any],
+) -> list[list[float]] | None:
+    """Синхронная работа для executor с явным конфигом — без вызова БД из потока."""
+    if not embed_with_config:
+        return embed(to_embed) if embed else None
+    service_url = (config.get("SEMANTIC_SERVICE_URL") or "").strip()
+    timeout_sec = max(10, min(300, int(config.get("SEMANTIC_HTTP_TIMEOUT") or 60)))
+    provider = ((config.get("SEMANTIC_PROVIDER") or "http") or "").strip().lower()
+    model_name = (config.get("SEMANTIC_MODEL_NAME") or "").strip()
+
+    def embed_func(texts: list[str]) -> list[list[float]] | None:
+        return embed_with_config(
+            texts,
+            service_url=service_url or None,
+            timeout_sec=float(timeout_sec),
+            provider=provider or "http",
+            model_name=model_name or None,
+        )
+
+    if cache is not None and keyword_texts:
+        cache.update(keyword_texts, embed_func=embed_func)
+    return embed_func(to_embed)
 
 
 load_dotenv()
@@ -869,43 +898,50 @@ class TelegramScanner:
                 if kw.text.casefold() in text_cf and kw.text not in by_kw:
                     by_kw[kw.text] = (None, kw.text)
             return [(k, sim, span) for k, (sim, span) in by_kw.items()]
-        # Вся тяжёлая работа (cache.update + embed) только в executor — не блокируем event loop
+        # Вся тяжёлая работа (cache.update + embed) только в executor — не блокируем event loop.
+        # Конфиг читаем в основном потоке (БД), в executor передаём готовый dict — без доступа к БД из потока.
         chunks = self._message_chunks(text)
         words = self._message_words(text)
-        to_embed: list[str] = [text]
-        to_embed.extend(chunks)
-        to_embed.extend(words)
+        to_embed_list: list[str] = [text]
+        to_embed_list.extend(chunks)
+        to_embed_list.extend(words)
+        semantic_config = {
+            "SEMANTIC_PROVIDER": get_parser_setting_str("SEMANTIC_PROVIDER", "http"),
+            "SEMANTIC_SERVICE_URL": get_parser_setting_str("SEMANTIC_SERVICE_URL", ""),
+            "SEMANTIC_HTTP_TIMEOUT": get_parser_setting_int("SEMANTIC_HTTP_TIMEOUT", 60),
+            "SEMANTIC_MODEL_NAME": get_parser_setting_str("SEMANTIC_MODEL_NAME", ""),
+        }
         all_vectors = None
         executor = getattr(self, "_semantic_executor", None) or _SEMANTIC_EXECUTOR
         try:
-            if executor:
+            if executor and embed_with_config:
                 loop = asyncio.get_running_loop()
                 all_vectors = await loop.run_in_executor(
+                    executor,
+                    _run_semantic_embed_with_config,
+                    cache,
+                    [kw.text for kw in semantic_items],
+                    to_embed_list,
+                    semantic_config,
+                )
+            elif executor:
+                all_vectors = await asyncio.get_running_loop().run_in_executor(
                     executor,
                     _run_semantic_embed,
                     cache,
                     [kw.text for kw in semantic_items],
-                    to_embed,
+                    to_embed_list,
                 )
             else:
                 cache.update([kw.text for kw in semantic_items])
-                all_vectors = embed(to_embed)
+                all_vectors = embed(to_embed_list)
         except Exception as e:
             log_exception(e)
-            log_append(f"Семантика: ошибка в потоке (fallback на точное совпадение): {e!r}")
-            # Повтор в основном потоке — часто ошибка из-за БД/конфига в фоновом потоке
-            try:
-                all_vectors = _run_semantic_embed(
-                    cache,
-                    [kw.text for kw in semantic_items],
-                    to_embed,
-                )
-            except Exception as e2:
-                log_exception(e2)
-                for kw in semantic_items:
-                    if kw.text.casefold() in text_cf and kw.text not in by_kw:
-                        by_kw[kw.text] = (None, kw.text)
-                return [(k, sim, span) for k, (sim, span) in by_kw.items()]
+            log_append(f"Семантика: ошибка в потоке (используем только точное совпадение): {e!r}")
+            for kw in semantic_items:
+                if kw.text.casefold() in text_cf and kw.text not in by_kw:
+                    by_kw[kw.text] = (None, kw.text)
+            return [(k, sim, span) for k, (sim, span) in by_kw.items()]
         if not all_vectors or len(all_vectors) < 1:
             for kw in semantic_items:
                 if kw.text.casefold() in text_cf and kw.text not in by_kw:

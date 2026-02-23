@@ -12,11 +12,15 @@ from models import ParserSetting, User
 
 
 def get_parser_setting(key: str, env_fallback: str | None = None) -> str | None:
-    """Возвращает значение настройки: из БД, иначе из os.getenv(key) или env_fallback."""
-    with db_session() as db:
-        row = db.get(ParserSetting, key)
-        if row is not None and row.value is not None and row.value.strip():
-            return row.value.strip()
+    """Возвращает значение настройки: из БД, иначе из os.getenv(key) или env_fallback.
+    При вызове из фонового потока БД может быть недоступна — тогда сразу env (без блокировки event loop)."""
+    try:
+        with db_session() as db:
+            row = db.get(ParserSetting, key)
+            if row is not None and row.value is not None and row.value.strip():
+                return row.value.strip()
+    except Exception:
+        pass
     return os.getenv(key, env_fallback) or None
 
 
