@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -33,7 +34,7 @@ def send_message(
 ) -> bool:
     """Отправить сообщение от бота (Bot API sendMessage). reply_markup — например inline_keyboard."""
     if not is_configured():
-        logger.debug("NOTIFY_TELEGRAM_BOT_TOKEN не задан, пропуск отправки")
+        logger.warning("NOTIFY_TELEGRAM_BOT_TOKEN не задан — уведомления в Telegram отключены")
         return False
     url = f"https://api.telegram.org/bot{NOTIFY_TELEGRAM_BOT_TOKEN}/sendMessage"
     payload: dict[str, str | int | bool] = {
@@ -43,14 +44,24 @@ def send_message(
     }
     if reply_markup:
         payload["reply_markup"] = json.dumps(reply_markup)
-    data = urllib.parse.urlencode(payload).encode()
-    req = urllib.request.Request(url, data=data, method="POST", headers={"Content-Type": "application/x-www-form-urlencoded"})
+    data = urllib.parse.urlencode(payload, encoding="utf-8").encode("utf-8")
+    req = urllib.request.Request(url, data=data, method="POST", headers={"Content-Type": "application/x-www-form-urlencoded; charset=utf-8"})
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
             if resp.status == 200:
                 return True
-            logger.warning("Telegram API sendMessage вернул %s", resp.status)
+            body = resp.read().decode("utf-8", errors="replace")
+            logger.warning("Telegram API sendMessage вернул %s: %s", resp.status, body[:500])
             return False
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace") if e.fp else ""
+        try:
+            err = json.loads(body)
+            desc = err.get("description", body)
+        except Exception:
+            desc = body or str(e)
+        logger.warning("Telegram API ошибка (chat_id=%s): %s", chat_id, desc)
+        return False
     except Exception as e:
         logger.exception("Ошибка отправки сообщения в Telegram: %s", e)
         return False
@@ -80,7 +91,7 @@ def send_mention_notification(chat_id: str, keyword: str, message: str, message_
     Для публичных чатов — кнопка «Открыть сообщение» (t.me/...), иначе — «Открыть в дашборде».
     """
     if not is_configured():
-        logger.debug("NOTIFY_TELEGRAM_BOT_TOKEN не задан, пропуск Telegram-уведомления")
+        logger.warning("NOTIFY_TELEGRAM_BOT_TOKEN не задан, пропуск Telegram-уведомления об упоминании")
         return False
     text = f"🔔 Упоминание: {keyword}\n\n{message[:400]}{'...' if len(message) > 400 else ''}"
     reply_markup = None

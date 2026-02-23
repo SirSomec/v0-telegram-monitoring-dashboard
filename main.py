@@ -845,6 +845,12 @@ async def on_startup() -> None:
     global scanner, max_scanner, main_loop
     main_loop = asyncio.get_running_loop()
     init_db()
+    import logging
+    _startup_log = logging.getLogger(__name__)
+    if notify_telegram.is_configured():
+        _startup_log.info("Уведомления в Telegram: бот настроен (NOTIFY_TELEGRAM_BOT_TOKEN задан)")
+    else:
+        _startup_log.warning("Уведомления в Telegram отключены: NOTIFY_TELEGRAM_BOT_TOKEN не задан в окружении")
 
     # Создаем пользователя “по умолчанию”, чтобы CRUD можно было сразу дергать.
     # (Фронт пока без авторизации/токенов.)
@@ -941,10 +947,13 @@ def _schedule_ws_broadcast(payload: dict[str, Any]) -> None:
 
 def _do_notify_mention_sync(payload: dict[str, Any]) -> None:
     """Отправить уведомления о упоминании (email/Telegram) по настройкам пользователя. Вызывается из executor."""
+    import logging
+    log = logging.getLogger(__name__)
     try:
         data = payload.get("data") or {}
         user_id = data.get("userId")
         if user_id is None:
+            log.warning("Уведомление об упоминании: в payload нет userId, пропуск")
             return
         from database import SessionLocal
         from email_sender import send_mention_notification_email
@@ -953,6 +962,7 @@ def _do_notify_mention_sync(payload: dict[str, Any]) -> None:
         with SessionLocal() as db:
             settings = db.scalar(select(NotificationSettings).where(NotificationSettings.user_id == user_id))
             if not settings:
+                log.debug("Уведомление об упоминании: нет настроек для user_id=%s", user_id)
                 return
             notify_mode = (settings.notify_mode or "all").strip()
             is_lead = data.get("isLead") is True
@@ -976,25 +986,25 @@ def _do_notify_mention_sync(payload: dict[str, Any]) -> None:
                         message_link,
                     )
             if settings.notify_telegram and settings.telegram_chat_id and settings.telegram_chat_id.strip():
-                send_telegram_mention(
-                    settings.telegram_chat_id.strip(),
-                    keyword or "—",
-                    message,
-                    message_link,
-                )
+                chat_id = settings.telegram_chat_id.strip()
+                log.info("Отправка Telegram-уведомления об упоминании: user_id=%s, chat_id=%s", user_id, chat_id)
+                ok = send_telegram_mention(chat_id, keyword or "—", message, message_link)
+                if not ok:
+                    log.warning("Telegram-уведомление не доставлено: user_id=%s, chat_id=%s", user_id, chat_id)
     except Exception:  # не ломаем парсер из-за уведомлений
-        import logging
-        logging.getLogger(__name__).exception("Ошибка отправки уведомления об упоминании")
+        log.exception("Ошибка отправки уведомления об упоминании")
 
 
 def _schedule_notify_mention(payload: dict[str, Any]) -> None:
     """Запустить отправку уведомлений в пуле потоков (не блокируя парсер)."""
+    # Копируем payload: парсер может переиспользовать объект, executor выполнится позже
+    payload_copy: dict[str, Any] = {"type": payload.get("type"), "data": dict(payload.get("data") or {})}
     loop = main_loop
     if loop and loop.is_running():
-        loop.run_in_executor(None, _do_notify_mention_sync, payload)
+        loop.run_in_executor(None, _do_notify_mention_sync, payload_copy)
     else:
         try:
-            _do_notify_mention_sync(payload)
+            _do_notify_mention_sync(payload_copy)
         except Exception:
             pass
 
