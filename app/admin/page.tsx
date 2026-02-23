@@ -59,21 +59,21 @@ export default function AdminPage() {
 
   return (
     <div className="min-h-screen bg-background">
-      <main className="mx-auto w-full max-w-6xl space-y-6 p-4 lg:p-6">
-        <div className="flex items-center gap-3">
-          <div className="flex size-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
+      <main className="mx-auto w-full min-w-0 max-w-[90rem] space-y-4 px-3 py-4 sm:px-4 sm:space-y-6 md:px-6 lg:px-8">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
             <Shield className="size-5" />
           </div>
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight text-foreground">Админ-панель</h1>
-            <p className="mt-1 text-sm text-muted-foreground">
+          <div className="min-w-0">
+            <h1 className="text-xl font-bold tracking-tight text-foreground sm:text-2xl">Админ-панель</h1>
+            <p className="mt-1 text-xs text-muted-foreground sm:text-sm">
               Управление источниками мониторинга и учётными записями сервиса.
             </p>
           </div>
         </div>
 
         <Tabs value={tab} onValueChange={(v) => setTab(v as AdminTab)}>
-          <TabsList className="bg-secondary">
+          <TabsList className="flex h-auto flex-wrap gap-1 bg-secondary p-1">
             <TabsTrigger value="channels">Каналы</TabsTrigger>
             <TabsTrigger value="groups">Группы</TabsTrigger>
             <TabsTrigger value="accounts">Учётки</TabsTrigger>
@@ -82,32 +82,32 @@ export default function AdminPage() {
           <TabsTrigger value="support">Поддержка</TabsTrigger>
           </TabsList>
 
-          <TabsContent value="channels" className="mt-6">
+          <TabsContent value="channels" className="mt-4 min-w-0 sm:mt-6">
             <h2 className="sr-only">{title}</h2>
             <ChannelsManager userId={userId} />
           </TabsContent>
 
-          <TabsContent value="groups" className="mt-6">
+          <TabsContent value="groups" className="mt-4 min-w-0 sm:mt-6">
             <h2 className="sr-only">{title}</h2>
             <ChannelGroupsManager userId={userId} />
           </TabsContent>
 
-          <TabsContent value="accounts" className="mt-6">
+          <TabsContent value="accounts" className="mt-4 min-w-0 sm:mt-6">
             <h2 className="sr-only">{title}</h2>
             <AccountsManager />
           </TabsContent>
 
-          <TabsContent value="limits" className="mt-6">
+          <TabsContent value="limits" className="mt-4 min-w-0 sm:mt-6">
             <h2 className="sr-only">{title}</h2>
             <PlanLimitsManager />
           </TabsContent>
 
-          <TabsContent value="parser" className="mt-6">
+          <TabsContent value="parser" className="mt-4 min-w-0 sm:mt-6">
             <h2 className="sr-only">{title}</h2>
             <ParserManager />
           </TabsContent>
 
-          <TabsContent value="support" className="mt-6">
+          <TabsContent value="support" className="mt-4 min-w-0 sm:mt-6">
             <h2 className="sr-only">{title}</h2>
             <SupportManager />
           </TabsContent>
