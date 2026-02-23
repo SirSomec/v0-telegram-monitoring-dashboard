@@ -72,12 +72,28 @@ def _use_http() -> bool:
     return provider == "http" or _service_url() is not None
 
 
+def _embed_http_timeout() -> float:
+    """Таймаут в секундах для HTTP-запроса к сервису эмбеддингов."""
+    try:
+        from parser_config import get_parser_setting_int
+        v = get_parser_setting_int("SEMANTIC_HTTP_TIMEOUT", 60)
+        return max(10, min(300, v))
+    except ImportError:
+        pass
+    try:
+        v = int(os.getenv("SEMANTIC_HTTP_TIMEOUT", "60").strip())
+        return max(10, min(300, v))
+    except ValueError:
+        return 60.0
+
+
 def _embed_via_http(texts: list[str]) -> list[list[float]] | None:
     url = _service_url()
     if not url or not texts:
         return None
     base = url.replace("/embed", "").replace("/health", "")
     embed_url = f"{base}/embed"
+    timeout = _embed_http_timeout()
     req = urllib.request.Request(
         embed_url,
         data=json.dumps({"texts": texts}).encode("utf-8"),
@@ -85,10 +101,10 @@ def _embed_via_http(texts: list[str]) -> list[list[float]] | None:
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             return data.get("vectors")
-    except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError, KeyError):
+    except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError, KeyError, TimeoutError, OSError):
         return None
 
 
