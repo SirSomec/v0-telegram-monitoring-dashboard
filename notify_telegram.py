@@ -34,7 +34,7 @@ def send_message(
 ) -> bool:
     """Отправить сообщение от бота (Bot API sendMessage). reply_markup — например inline_keyboard."""
     if not is_configured():
-        logger.debug("NOTIFY_TELEGRAM_BOT_TOKEN не задан, пропуск отправки")
+        logger.info("Уведомления Telegram отключены: NOTIFY_TELEGRAM_BOT_TOKEN не задан в окружении, пропуск отправки")
         return False
     url = f"https://api.telegram.org/bot{NOTIFY_TELEGRAM_BOT_TOKEN}/sendMessage"
     payload: dict[str, str | int | bool] = {
@@ -47,8 +47,10 @@ def send_message(
     data = urllib.parse.urlencode(payload, encoding="utf-8").encode("utf-8")
     req = urllib.request.Request(url, data=data, method="POST", headers={"Content-Type": "application/x-www-form-urlencoded; charset=utf-8"})
     try:
+        logger.debug("Telegram sendMessage: запрос chat_id=%s text_len=%s", chat_id, len(text))
         with urllib.request.urlopen(req, timeout=15) as resp:
             if resp.status == 200:
+                logger.debug("Telegram sendMessage: успех chat_id=%s", chat_id)
                 return True
             body = resp.read().decode("utf-8", errors="replace")
             logger.warning("Telegram API sendMessage вернул %s: %s", resp.status, body[:500])
@@ -60,10 +62,10 @@ def send_message(
             desc = err.get("description", body)
         except Exception:
             desc = body or str(e)
-        logger.warning("Telegram API ошибка (chat_id=%s): %s", chat_id, desc)
+        logger.warning("Telegram API ошибка (chat_id=%s, status=%s): %s", chat_id, e.code, desc)
         return False
     except Exception as e:
-        logger.exception("Ошибка отправки сообщения в Telegram: %s", e)
+        logger.exception("Ошибка отправки сообщения в Telegram (chat_id=%s): %s", chat_id, e)
         return False
 
 
@@ -91,7 +93,7 @@ def send_mention_notification(chat_id: str, keyword: str, message: str, message_
     Для публичных чатов — кнопка «Открыть сообщение» (t.me/...), иначе — «Открыть в дашборде».
     """
     if not is_configured():
-        logger.debug("NOTIFY_TELEGRAM_BOT_TOKEN не задан, пропуск Telegram-уведомления об упоминании")
+        logger.info("Telegram-уведомление об упоминании пропущено: NOTIFY_TELEGRAM_BOT_TOKEN не задан")
         return False
     text = f"🔔 Упоминание: {keyword}\n\n{message[:400]}{'...' if len(message) > 400 else ''}"
     reply_markup = None
@@ -116,7 +118,7 @@ def send_support_notification(
 ) -> bool:
     """Уведомить администратора о новом сообщении в обращении поддержки."""
     if not is_configured():
-        logger.debug("NOTIFY_TELEGRAM_BOT_TOKEN не задан, пропуск уведомления поддержки")
+        logger.info("Уведомление поддержки в Telegram пропущено: NOTIFY_TELEGRAM_BOT_TOKEN не задан")
         return False
     who = (user_name or user_email or "Пользователь").strip()
     preview = (message_preview or "").strip()[:200]
@@ -137,7 +139,7 @@ def send_support_notification(
 def send_support_reply_to_user(chat_id: str | int, ticket_subject: str, reply_preview: str) -> bool:
     """Уведомить пользователя об ответе поддержки в Telegram."""
     if not is_configured():
-        logger.debug("NOTIFY_TELEGRAM_BOT_TOKEN не задан, пропуск уведомления об ответе поддержки")
+        logger.info("Уведомление об ответе поддержки в Telegram пропущено: NOTIFY_TELEGRAM_BOT_TOKEN не задан")
         return False
     preview = (reply_preview or "").strip()[:250]
     if len((reply_preview or "").strip()) > 250:
