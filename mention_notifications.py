@@ -61,26 +61,27 @@ def _send_for_mention(mention_id: int) -> None:
     Загрузить упоминание из БД, проверить настройки пользователя и отправить
     email/Telegram. Вызывается из потока пула.
     """
+    logger.info("Уведомление: обработка mention_id=%s", mention_id)
     try:
         with SessionLocal() as db:
             mention = db.get(Mention, mention_id)
             if mention is None:
-                logger.warning("Уведомление: упоминание id=%s не найдено в БД", mention_id)
+                logger.warning("Уведомление: упоминание id=%s не найдено в БД (возможно, ещё не закоммичено)", mention_id)
                 return
             user_id = mention.user_id
             settings = _get_or_create_settings(db, user_id)
 
             if not settings.notify_email and not settings.notify_telegram:
-                logger.debug("Уведомление mention_id=%s user_id=%s: оба канала выключены", mention_id, user_id)
+                logger.info("Уведомление mention_id=%s user_id=%s: пропуск — оба канала выключены", mention_id, user_id)
                 return
 
             mode = (settings.notify_mode or "all").strip()
             is_lead = bool(getattr(mention, "is_lead", False))
             if mode == "leads_only" and not is_lead:
-                logger.debug("Уведомление mention_id=%s: режим leads_only, упоминание не лид", mention_id)
+                logger.info("Уведомление mention_id=%s: пропуск — режим «только лиды», упоминание не лид", mention_id)
                 return
             if mode == "digest":
-                logger.debug("Уведомление mention_id=%s: режим digest, мгновенная отправка не используется", mention_id)
+                logger.info("Уведомление mention_id=%s: пропуск — режим «дайджест»", mention_id)
                 return
 
             keyword = (mention.keyword_text or "").strip() or "—"
@@ -124,8 +125,9 @@ def _send_for_mention(mention_id: int) -> None:
 def enqueue_mention_notification(mention_id: int) -> None:
     """
     Поставить в очередь отправку уведомлений по упоминанию.
-    Вызывать из парсера сразу после создания Mention и commit (чтобы mention_id был в БД).
+    Вызывать из парсера сразу после commit (когда упоминание уже в БД).
     """
+    logger.info("Уведомление: в очередь mention_id=%s", mention_id)
     try:
         _EXECUTOR.submit(_send_for_mention, mention_id)
     except Exception as e:
