@@ -946,12 +946,13 @@ def _schedule_ws_broadcast(payload: dict[str, Any]) -> None:
 
 
 def _do_notify_mention_sync(payload: dict[str, Any]) -> None:
-    """Отправить уведомления о упоминании (email/Telegram) по настройкам пользователя. Вызывается из executor."""
+    """Отправить уведомления о упоминании (email/Telegram) по настройкам пользователя."""
     import logging
     log = logging.getLogger(__name__)
     try:
         data = payload.get("data") or {}
         raw_uid = data.get("userId")
+        log.warning("Уведомление об упоминании: начало обработки, userId=%s", raw_uid)
         if raw_uid is None:
             log.warning("Уведомление об упоминании: в payload нет userId, пропуск")
             return
@@ -967,18 +968,18 @@ def _do_notify_mention_sync(payload: dict[str, Any]) -> None:
         with SessionLocal() as db:
             settings = db.scalar(select(NotificationSettings).where(NotificationSettings.user_id == user_id))
             if not settings:
-                log.debug("Уведомление об упоминании: нет настроек для user_id=%s", user_id)
+                log.warning("Уведомление об упоминании: нет настроек для user_id=%s — пропуск", user_id)
                 return
             if not settings.notify_telegram and not settings.notify_email:
-                log.debug("Уведомление об упоминании: у user_id=%s отключены и Telegram, и Email", user_id)
+                log.warning("Уведомление об упоминании: у user_id=%s отключены и Telegram, и Email — пропуск", user_id)
                 return
             notify_mode = (settings.notify_mode or "all").strip()
             is_lead = data.get("isLead") is True
             if notify_mode == "leads_only" and not is_lead:
-                log.debug("Уведомление об упоминании: режим «только лиды», упоминание не лид — пропуск user_id=%s", user_id)
+                log.warning("Уведомление об упоминании: режим «только лиды», упоминание не лид — пропуск user_id=%s", user_id)
                 return
             if notify_mode == "digest":
-                log.debug("Уведомление об упоминании: режим «дайджест» — мгновенные не шлём, user_id=%s", user_id)
+                log.warning("Уведомление об упоминании: режим «дайджест» — мгновенные не шлём, user_id=%s", user_id)
                 return
             if settings.notify_telegram and (not settings.telegram_chat_id or not settings.telegram_chat_id.strip()):
                 log.warning("Уведомление об упоминании: user_id=%s включил Telegram, но Chat ID не задан — укажите в настройках «Уведомления»", user_id)
@@ -998,10 +999,12 @@ def _do_notify_mention_sync(payload: dict[str, Any]) -> None:
                     )
             if settings.notify_telegram and settings.telegram_chat_id and settings.telegram_chat_id.strip():
                 chat_id = settings.telegram_chat_id.strip()
-                log.info("Отправка Telegram-уведомления об упоминании: user_id=%s, chat_id=%s", user_id, chat_id)
+                log.warning("Уведомление об упоминании: отправка в Telegram user_id=%s, chat_id=%s", user_id, chat_id)
                 ok = send_telegram_mention(chat_id, keyword or "—", message, message_link)
                 if not ok:
-                    log.warning("Telegram-уведомление не доставлено: user_id=%s, chat_id=%s", user_id, chat_id)
+                    log.warning("Уведомление об упоминании: Telegram не доставлено user_id=%s, chat_id=%s", user_id, chat_id)
+                else:
+                    log.warning("Уведомление об упоминании: Telegram отправлено user_id=%s", user_id)
     except Exception:  # не ломаем парсер из-за уведомлений
         log.exception("Ошибка отправки уведомления об упоминании")
 
@@ -1018,6 +1021,10 @@ def _schedule_notify_mention(payload: dict[str, Any]) -> None:
 
 def _on_mention_callback(payload: dict[str, Any]) -> None:
     """Единый callback при новом упоминании: WebSocket + уведомления."""
+    import logging
+    _log = logging.getLogger(__name__)
+    _uid = (payload.get("data") or {}).get("userId")
+    _log.warning("Упоминание: callback вызван, user_id=%s", _uid)
     _schedule_ws_broadcast(payload)
     _schedule_notify_mention(payload)
 
