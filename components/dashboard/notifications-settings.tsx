@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
 import { apiBaseUrl, apiJson } from "@/lib/api"
-import { Loader2 } from "lucide-react"
+import { Loader2, X } from "lucide-react"
 
 type NotificationSettings = {
   notifyEmail: boolean
@@ -131,16 +131,30 @@ export function NotificationsSettings() {
             </div>
             {notifyTelegram && (
               <div className="space-y-2 pt-2">
-                <Label htmlFor="telegram-chat-id">ID чата или @username</Label>
+                <div className="flex items-center justify-between gap-2">
+                  <Label htmlFor="telegram-chat-id">ID чата или @username</Label>
+                  {telegramChatId ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 text-xs text-muted-foreground hover:text-destructive"
+                      onClick={() => setTelegramChatId("")}
+                    >
+                      <X className="size-3.5 mr-1" />
+                      Очистить
+                    </Button>
+                  ) : null}
+                </div>
                 <Input
                   id="telegram-chat-id"
                   value={telegramChatId}
                   onChange={(e) => setTelegramChatId(e.target.value)}
-                  placeholder="Например: 123456789 или @username"
+                  placeholder="Например: 123456789 (получить в боте по /start)"
                   className="bg-background border-border"
                 />
                 <p className="text-xs text-muted-foreground">
-                  Как добавить: начните диалог с ботом @telescopemsg_bot в Telegram (команда /start). Бот покажет ваш Chat ID и инструкцию. Скопируйте Chat ID сюда, сохраните настройки и в боте нажмите «Проверить».
+                  Начните диалог с ботом @telescopemsg_bot (команда /start) — бот покажет ваш Chat ID. Вставьте его сюда, сохраните и в боте нажмите «Проверить».
                 </p>
               </div>
             )}

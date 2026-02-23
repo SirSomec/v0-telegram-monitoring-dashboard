@@ -1332,8 +1332,10 @@ def update_notification_settings(
         s.notify_telegram = bool(body.notifyTelegram)
     if body.notifyMode is not None and body.notifyMode.strip() in ("all", "leads_only", "digest"):
         s.notify_mode = body.notifyMode.strip()
-    if body.telegramChatId is not None:
-        s.telegram_chat_id = (body.telegramChatId.strip() or None)
+    # Явно обновлять chat_id при переданном поле (в т.ч. null — очистка для перевыпуска в боте)
+    if "telegramChatId" in body.model_fields_set:
+        raw = body.telegramChatId
+        s.telegram_chat_id = (raw.strip() or None) if raw and str(raw).strip() else None
     db.add(s)
     db.commit()
     db.refresh(s)
