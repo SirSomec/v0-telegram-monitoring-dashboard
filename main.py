@@ -951,9 +951,14 @@ def _do_notify_mention_sync(payload: dict[str, Any]) -> None:
     log = logging.getLogger(__name__)
     try:
         data = payload.get("data") or {}
-        user_id = data.get("userId")
-        if user_id is None:
+        raw_uid = data.get("userId")
+        if raw_uid is None:
             log.warning("Уведомление об упоминании: в payload нет userId, пропуск")
+            return
+        try:
+            user_id = int(raw_uid)
+        except (TypeError, ValueError):
+            log.warning("Уведомление об упоминании: некорректный userId=%s, пропуск", raw_uid)
             return
         from database import SessionLocal
         from email_sender import send_mention_notification_email
@@ -964,13 +969,19 @@ def _do_notify_mention_sync(payload: dict[str, Any]) -> None:
             if not settings:
                 log.debug("Уведомление об упоминании: нет настроек для user_id=%s", user_id)
                 return
+            if not settings.notify_telegram and not settings.notify_email:
+                log.debug("Уведомление об упоминании: у user_id=%s отключены и Telegram, и Email", user_id)
+                return
             notify_mode = (settings.notify_mode or "all").strip()
             is_lead = data.get("isLead") is True
             if notify_mode == "leads_only" and not is_lead:
+                log.debug("Уведомление об упоминании: режим «только лиды», упоминание не лид — пропуск user_id=%s", user_id)
                 return
-            # digest пока не реализован — не шлём мгновенные уведомления
             if notify_mode == "digest":
+                log.debug("Уведомление об упоминании: режим «дайджест» — мгновенные не шлём, user_id=%s", user_id)
                 return
+            if settings.notify_telegram and (not settings.telegram_chat_id or not settings.telegram_chat_id.strip()):
+                log.warning("Уведомление об упоминании: user_id=%s включил Telegram, но Chat ID не задан — укажите в настройках «Уведомления»", user_id)
 
             keyword = (data.get("keyword") or "").strip()
             message = (data.get("message") or "").strip()
@@ -996,17 +1007,13 @@ def _do_notify_mention_sync(payload: dict[str, Any]) -> None:
 
 
 def _schedule_notify_mention(payload: dict[str, Any]) -> None:
-    """Запустить отправку уведомлений в пуле потоков (не блокируя парсер)."""
-    # Копируем payload: парсер может переиспользовать объект, executor выполнится позже
+    """Отправить уведомления о упоминании (вызов в потоке парсера, как у поддержки)."""
     payload_copy: dict[str, Any] = {"type": payload.get("type"), "data": dict(payload.get("data") or {})}
-    loop = main_loop
-    if loop and loop.is_running():
-        loop.run_in_executor(None, _do_notify_mention_sync, payload_copy)
-    else:
-        try:
-            _do_notify_mention_sync(payload_copy)
-        except Exception:
-            pass
+    try:
+        _do_notify_mention_sync(payload_copy)
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception("Ошибка при отправке уведомления об упоминании")
 
 
 def _on_mention_callback(payload: dict[str, Any]) -> None:
