@@ -18,6 +18,7 @@ from telethon.tl.functions.messages import ImportChatInviteRequest
 
 from database import db_session
 from models import Chat, Keyword, Mention, User, user_chat_subscriptions, CHAT_SOURCE_TELEGRAM
+import mention_notifications
 from parser_log import append as log_append, append_exception as log_exception
 from plans import can_track, get_effective_plan
 from parser_config import (
@@ -594,6 +595,7 @@ class TelegramScanner:
                                 "topicMatchPercent": round(sim * 100) if sim is not None else None,
                             },
                         }
+                    mention_notifications.enqueue_mention_notification(mention.id)
                     if self.on_mention:
                         self.on_mention(payload)
             return
@@ -670,6 +672,7 @@ class TelegramScanner:
                     },
                 }
 
+            mention_notifications.enqueue_mention_notification(mention.id)
             if self.on_mention:
                 self.on_mention(payload)
 

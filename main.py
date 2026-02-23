@@ -6,7 +6,6 @@ import io
 import os
 import secrets
 import threading
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
@@ -33,9 +32,6 @@ from parser_config import (
 from parser_log import get_lines as get_parser_log_lines
 import notify_telegram
 import support_uploads
-
-# Отдельный пул потоков для отправки уведомлений, чтобы не зависеть от контекста потока парсера
-_notify_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="notify")
 
 
 def _now_utc() -> datetime:
@@ -951,117 +947,16 @@ def _schedule_ws_broadcast(payload: dict[str, Any]) -> None:
             pass
 
 
-def _do_notify_mention_sync(payload: dict[str, Any]) -> None:
-    """Отправить уведомления о упоминании (email/Telegram) по настройкам пользователя."""
-    import logging
-    log = logging.getLogger(__name__)
-    try:
-        data = payload.get("data") or {}
-        raw_uid = data.get("userId")
-        if raw_uid is None:
-            log.info("Уведомление об упоминании: пропуск — в payload.data нет userId, keys=%s", list(data.keys()))
-            return
-        try:
-            user_id = int(raw_uid)
-        except (TypeError, ValueError):
-            log.warning("Уведомление об упоминании: неверный userId=%r", raw_uid)
-            return
-        from database import SessionLocal
-        from email_sender import send_mention_notification_email
-        from notify_telegram import send_mention_notification as send_telegram_mention
-
-        with SessionLocal() as db:
-            settings = _get_or_create_notification_settings(db, user_id)
-            chat_id_set = bool(settings.telegram_chat_id and settings.telegram_chat_id.strip())
-            log.info(
-                "Уведомление об упоминании: user_id=%s notify_telegram=%s chat_id_set=%s notify_mode=%s",
-                user_id, settings.notify_telegram, chat_id_set, (settings.notify_mode or "all").strip(),
-            )
-            if not settings.notify_telegram and not settings.notify_email:
-                log.info("Уведомление об упоминании: user_id=%s — уведомления отключены (email и Telegram выкл)", user_id)
-                return
-            notify_mode = (settings.notify_mode or "all").strip()
-            is_lead = data.get("isLead") is True
-            if notify_mode == "leads_only" and not is_lead:
-                log.info("Уведомление об упоминании: user_id=%s — режим «только лиды», упоминание не лид", user_id)
-                return
-            if notify_mode == "digest":
-                log.info("Уведомление об упоминании: user_id=%s — режим «дайджест», мгновенная отправка не используется", user_id)
-                return
-            if settings.notify_telegram and (not settings.telegram_chat_id or not settings.telegram_chat_id.strip()):
-                log.warning("Уведомление об упоминании: user_id=%s включил Telegram, но Chat ID не задан", user_id)
-
-            keyword = (data.get("keyword") or "").strip()
-            message = (data.get("message") or "").strip()
-            message_link = data.get("messageLink") or None
-
-            if settings.notify_email:
-                try:
-                    user = db.scalar(select(User).where(User.id == user_id))
-                    if user and user.email and user.email.strip():
-                        send_mention_notification_email(
-                            user.email.strip(),
-                            keyword or "—",
-                            message,
-                            message_link,
-                        )
-                    else:
-                        log.debug("Уведомление email: user_id=%s — email не задан или пустой", user_id)
-                except Exception:
-                    log.exception("Ошибка отправки уведомления об упоминании по email")
-
-            if settings.notify_telegram and settings.telegram_chat_id and settings.telegram_chat_id.strip():
-                chat_id = settings.telegram_chat_id.strip()
-                log.info("Уведомление об упоминании: отправка в Telegram user_id=%s chat_id=%s keyword=%s", user_id, chat_id, keyword or "—")
-                try:
-                    ok = send_telegram_mention(chat_id, keyword or "—", message, message_link)
-                    if not ok:
-                        log.warning("Уведомление об упоминании: Telegram не доставлено user_id=%s, chat_id=%s", user_id, chat_id)
-                    else:
-                        log.info("Уведомление об упоминании: Telegram доставлено user_id=%s chat_id=%s", user_id, chat_id)
-                except Exception:
-                    log.exception("Ошибка отправки уведомления об упоминании в Telegram")
-    except Exception:
-        log.exception("Ошибка отправки уведомления об упоминании")
-
-
-def _schedule_notify_mention(payload: dict[str, Any]) -> None:
-    """Отправить уведомления о упоминании (вызов из потока парсера; работа выполняется в отдельном потоке)."""
-    import logging
-    log = logging.getLogger(__name__)
-    data_raw = payload.get("data")
-    if isinstance(data_raw, dict):
-        payload_copy: dict[str, Any] = {"type": payload.get("type"), "data": dict(data_raw)}
-    else:
-        payload_copy = {"type": payload.get("type"), "data": {}}
-    user_id = (payload_copy.get("data") or {}).get("userId")
-    log.info("Уведомление об упоминании: запуск type=%s userId=%s", payload_copy.get("type"), user_id)
-
-    def _run() -> None:
-        try:
-            _do_notify_mention_sync(payload_copy)
-        except Exception:
-            log.exception("Ошибка при отправке уведомления об упоминании")
-
-    try:
-        _notify_executor.submit(_run)
-    except Exception as e:
-        log.exception("Не удалось поставить отправку уведомления в очередь: %s", e)
-        _run()
-
-
 def _on_mention_callback(payload: dict[str, Any]) -> None:
-    """Единый callback при новом упоминании: уведомления сначала, затем WebSocket."""
-    import logging
-    log = logging.getLogger(__name__)
+    """Callback при новом упоминании: только рассылка в WebSocket (уведомления email/Telegram — через mention_notifications по mention_id)."""
     try:
-        _schedule_notify_mention(payload)
         _schedule_ws_broadcast(payload)
     except Exception as e:
-        log.exception("Ошибка в callback упоминания (уведомления/WebSocket): %s", e)
+        import logging
+        logging.getLogger(__name__).exception("Ошибка WebSocket при упоминании: %s", e)
         try:
             from parser_log import append as parser_log_append
-            parser_log_append(f"Уведомление: ошибка — {type(e).__name__}: {e}")
+            parser_log_append(f"WebSocket упоминание: ошибка — {type(e).__name__}: {e}")
         except Exception:
             pass
 
@@ -3290,17 +3185,8 @@ def set_mention_lead(mention_id: int, body: MentionLeadPatch, user: User = Depen
     db.commit()
     db.refresh(m)
     if body.isLead:
-        payload = {
-            "type": "mention",
-            "data": {
-                "userId": m.user_id,
-                "keyword": m.keyword_text,
-                "message": m.message_text or "",
-                "messageLink": _message_link(m.chat_id, m.message_id, m.chat_username),
-                "isLead": True,
-            },
-        }
-        _schedule_notify_mention(payload)
+        import mention_notifications
+        mention_notifications.enqueue_mention_notification(m.id)
     return _mention_to_front(m)
 
 
