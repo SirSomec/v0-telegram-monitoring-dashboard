@@ -10,8 +10,9 @@ services:
       POSTGRES_DB: telegram_monitor
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    # Не открывать 5432 в интернет — только localhost (админ/бэкап с хоста). Backend подключается по имени postgres во внутренней сети.
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
