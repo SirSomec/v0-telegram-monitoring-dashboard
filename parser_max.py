@@ -346,9 +346,9 @@ class MaxScanner:
                                 },
                             }
                             mention_id = mention.id
-                        mention_notifications.enqueue_mention_notification(mention_id)
                         if self.on_mention:
                             self.on_mention(payload)
+                        mention_notifications.enqueue_mention_notification(mention_id)
 
             if newest_ts is not None:
                 self._last_message_time_by_chat[max_chat_id] = newest_ts

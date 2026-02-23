@@ -610,9 +610,9 @@ class TelegramScanner:
                                 "topicMatchPercent": round(sim * 100) if sim is not None else None,
                             },
                         }
-                    mention_notifications.enqueue_mention_notification(mention.id)
                     if self.on_mention:
                         self.on_mention(payload)
+                    mention_notifications.enqueue_mention_notification(mention.id)
             return
 
         items = self._load_keywords()
@@ -690,9 +690,9 @@ class TelegramScanner:
                     },
                 }
 
-            mention_notifications.enqueue_mention_notification(mention.id)
             if self.on_mention:
                 self.on_mention(payload)
+            mention_notifications.enqueue_mention_notification(mention.id)
 
     def _load_keywords(self) -> list[KeywordItem]:
         with db_session() as db:

@@ -28,7 +28,7 @@ SMTP_USER = os.getenv("SMTP_USER", "").strip()
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "").strip()
 SMTP_FROM = os.getenv("SMTP_FROM", "").strip() or SMTP_USER
 SMTP_USE_TLS = os.getenv("SMTP_USE_TLS", "1").strip().lower() in ("1", "true", "yes")
-SMTP_TIMEOUT = int(os.getenv("SMTP_TIMEOUT", "60"))  # Таймаут в секундах (для медленных/дальних серверов)
+SMTP_TIMEOUT = int(os.getenv("SMTP_TIMEOUT", "20"))  # Таймаут в секундах; быстрый фейл, чтобы не держать воркеры уведомлений
 FRONTEND_URL = os.getenv("FRONTEND_URL", "").strip()  # Базовый URL фронта для ссылок в письмах
 
 

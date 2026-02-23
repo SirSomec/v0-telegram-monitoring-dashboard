@@ -3,14 +3,15 @@
 
 - Единственная точка входа: enqueue_mention_notification(mention_id).
 - Парсер после создания Mention в БД вызывает enqueue_mention_notification(mention.id).
-- Обработка выполняется в отдельном потоке: загрузка Mention и настроек из БД,
-  проверка режима (all / leads_only / digest), отправка email и/или Telegram.
+- Обработка выполняется в отдельных воркерах: очередь с неблокирующей постановкой,
+  чтобы парсер и лента никогда не ждали отправку email/Telegram.
 - Никакой передачи payload из парсера — всё берётся из БД по mention_id.
 """
 from __future__ import annotations
 
 import logging
-from concurrent.futures import ThreadPoolExecutor
+import queue
+import threading
 
 from sqlalchemy import select
 
@@ -19,7 +20,29 @@ from models import Mention, NotificationSettings, User
 
 logger = logging.getLogger(__name__)
 
-_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="mention_notify")
+_NOTIFY_QUEUE: queue.Queue[int | None] = queue.Queue(maxsize=2000)
+_NUM_WORKERS = 4
+
+
+def _notification_worker() -> None:
+    """Воркер: забирает mention_id из очереди и отправляет уведомления. None — сигнал выхода."""
+    while True:
+        try:
+            mention_id = _NOTIFY_QUEUE.get()
+            if mention_id is None:
+                break
+            _send_for_mention(mention_id)
+        except Exception as e:
+            logger.exception("Воркер уведомлений: %s", e)
+
+
+def _start_workers() -> None:
+    for i in range(_NUM_WORKERS):
+        t = threading.Thread(target=_notification_worker, name=f"mention_notify_{i}", daemon=True)
+        t.start()
+
+
+_start_workers()
 
 
 def _get_or_create_settings(db, user_id: int):
@@ -131,15 +154,11 @@ def _send_for_mention(mention_id: int) -> None:
 
 def enqueue_mention_notification(mention_id: int) -> None:
     """
-    Поставить в очередь отправку уведомлений по упоминанию.
-    Вызывать из парсера сразу после commit (когда упоминание уже в БД).
+    Поставить в очередь отправку уведомлений по упоминанию. Неблокирующая постановка:
+    парсер и отображение ленты не ждут отправку email/Telegram. При переполнении очереди
+    уведомление пропускается (лента и WS уже обновлены).
     """
-    logger.info("Уведомление: в очередь mention_id=%s", mention_id)
     try:
-        _EXECUTOR.submit(_send_for_mention, mention_id)
-    except Exception as e:
-        logger.exception("Не удалось поставить уведомление mention_id=%s в очередь: %s", mention_id, e)
-        try:
-            _send_for_mention(mention_id)
-        except Exception:
-            logger.exception("Прямая отправка уведомления mention_id=%s также завершилась ошибкой", mention_id)
+        _NOTIFY_QUEUE.put_nowait(mention_id)
+    except queue.Full:
+        logger.warning("Очередь уведомлений переполнена, mention_id=%s пропущен", mention_id)
