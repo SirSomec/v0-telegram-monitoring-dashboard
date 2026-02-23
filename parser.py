@@ -892,10 +892,20 @@ class TelegramScanner:
                 all_vectors = embed(to_embed)
         except Exception as e:
             log_exception(e)
-            for kw in semantic_items:
-                if kw.text.casefold() in text_cf and kw.text not in by_kw:
-                    by_kw[kw.text] = (None, kw.text)
-            return [(k, sim, span) for k, (sim, span) in by_kw.items()]
+            log_append(f"Семантика: ошибка в потоке (fallback на точное совпадение): {e!r}")
+            # Повтор в основном потоке — часто ошибка из-за БД/конфига в фоновом потоке
+            try:
+                all_vectors = _run_semantic_embed(
+                    cache,
+                    [kw.text for kw in semantic_items],
+                    to_embed,
+                )
+            except Exception as e2:
+                log_exception(e2)
+                for kw in semantic_items:
+                    if kw.text.casefold() in text_cf and kw.text not in by_kw:
+                        by_kw[kw.text] = (None, kw.text)
+                return [(k, sim, span) for k, (sim, span) in by_kw.items()]
         if not all_vectors or len(all_vectors) < 1:
             for kw in semantic_items:
                 if kw.text.casefold() in text_cf and kw.text not in by_kw:
