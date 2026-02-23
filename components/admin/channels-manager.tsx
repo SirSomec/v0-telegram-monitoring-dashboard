@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
@@ -16,9 +16,9 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog"
-import { Trash2, Plus, RefreshCw, Pencil, List, Search } from "lucide-react"
+import { Trash2, Plus, RefreshCw, Pencil } from "lucide-react"
 import { apiJson } from "@/components/admin/api"
-import type { Chat, ChatGroup, TelegramDialog } from "@/components/admin/types"
+import type { Chat, ChatGroup } from "@/components/admin/types"
 
 export function ChannelsManager({ userId = 1 }: { userId?: number }) {
   const [channels, setChannels] = useState<Chat[]>([])
@@ -41,11 +41,6 @@ export function ChannelsManager({ userId = 1 }: { userId?: number }) {
   const [editIsGlobal, setEditIsGlobal] = useState(false)
   const [savingEdit, setSavingEdit] = useState(false)
   const [editError, setEditError] = useState("")
-
-  const [dialogs, setDialogs] = useState<TelegramDialog[] | null>(null)
-  const [dialogsLoading, setDialogsLoading] = useState(false)
-  const [addingIdentifier, setAddingIdentifier] = useState<string | null>(null)
-  const [dialogSearch, setDialogSearch] = useState("")
 
   async function refresh() {
     setLoading(true)
@@ -192,52 +187,6 @@ export function ChannelsManager({ userId = 1 }: { userId?: number }) {
     for (const g of groups) map.set(g.id, g.name)
     return map
   }, [groups])
-
-  async function fetchDialogs() {
-    setDialogsLoading(true)
-    setError("")
-    try {
-      const list = await apiJson<TelegramDialog[]>("/api/admin/parser/dialogs")
-      setDialogs(Array.isArray(list) ? list : [])
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Не удалось загрузить список подписок")
-      setDialogs([])
-    } finally {
-      setDialogsLoading(false)
-    }
-  }
-
-  async function addDialogToMonitoring(d: TelegramDialog) {
-    setAddingIdentifier(d.identifier)
-    try {
-      await apiJson("/api/chats", {
-        method: "POST",
-        body: JSON.stringify({
-          identifier: d.identifier,
-          title: d.title || undefined,
-          isGlobal: true,
-          enabled: true,
-        }),
-      })
-      setAddingIdentifier(null)
-      await refresh()
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Ошибка добавления канала")
-      setAddingIdentifier(null)
-    }
-  }
-
-  const filteredDialogs = useMemo(() => {
-    if (!dialogs) return []
-    const q = dialogSearch.trim().toLowerCase()
-    if (!q) return dialogs
-    return dialogs.filter(
-      (d) =>
-        (d.title || "").toLowerCase().includes(q) ||
-        (d.username || "").toLowerCase().includes(q) ||
-        (d.identifier || "").toLowerCase().includes(q)
-    )
-  }, [dialogs, dialogSearch])
 
   return (
     <div className="grid min-w-0 gap-4 sm:gap-6 lg:grid-cols-5">
@@ -413,97 +362,6 @@ export function ChannelsManager({ userId = 1 }: { userId?: number }) {
               )}
             </TableBody>
           </Table>
-        </CardContent>
-      </Card>
-
-      <Card className="min-w-0 lg:col-span-5 border-border bg-card">
-        <CardHeader>
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="min-w-0">
-              <CardTitle className="flex items-center gap-2 text-base font-semibold text-card-foreground">
-                <List className="size-5 shrink-0" />
-                Подписки аккаунта Telegram
-              </CardTitle>
-              <CardDescription className="mt-1">
-                Группы и каналы аккаунта парсера. Для загрузки списка в настройках парсера должен быть задан <strong>TG_SESSION_STRING</strong> (иначе кнопка вернёт пустой список). Добавьте нужные чаты в мониторинг — они появятся в списке выше.
-              </CardDescription>
-            </div>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={fetchDialogs}
-              disabled={dialogsLoading}
-              className="shrink-0"
-              aria-label="Загрузить список подписок"
-            >
-              <RefreshCw className={`mr-2 size-4 ${dialogsLoading ? "animate-spin" : ""}`} />
-              Загрузить список
-            </Button>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {dialogs !== null && dialogs.length > 0 && (
-            <div className="relative">
-              <Search className="absolute left-2.5 top-1/2 size-4 -translate-y-1/2 shrink-0 text-muted-foreground" />
-              <Input
-                placeholder="Поиск по названию, @username или идентификатору…"
-                value={dialogSearch}
-                onChange={(e) => setDialogSearch(e.target.value)}
-                className="pl-8 bg-secondary border-border"
-              />
-            </div>
-          )}
-          {dialogs === null ? (
-            <p className="text-sm text-muted-foreground">
-              Нажмите «Загрузить список», чтобы получить группы и каналы аккаунта (парсер должен быть запущен во вкладке «Парсер»).
-            </p>
-          ) : dialogs.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Подписок не найдено или парсер не подключён.</p>
-          ) : (
-            <div className="min-w-0 overflow-auto rounded-md border max-h-[400px]">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Название</TableHead>
-                    <TableHead className="font-mono text-xs">Идентификатор</TableHead>
-                    <TableHead className="w-[140px]">Действие</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredDialogs.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={3} className="py-6 text-center text-sm text-muted-foreground">
-                        Ничего не найдено по запросу «{dialogSearch.trim()}»
-                      </TableCell>
-                    </TableRow>
-                  ) : (
-                    filteredDialogs.map((d) => (
-                      <TableRow key={d.id}>
-                        <TableCell className="max-w-[200px] truncate font-medium" title={d.title}>
-                          {d.title || "—"}
-                        </TableCell>
-                        <TableCell className="font-mono text-xs text-muted-foreground">
-                          {d.username ? `@${d.username}` : d.identifier}
-                        </TableCell>
-                        <TableCell>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => addDialogToMonitoring(d)}
-                            disabled={addingIdentifier !== null}
-                            aria-label={`Добавить ${d.title || d.identifier} в мониторинг`}
-                          >
-                            <Plus className="mr-1 size-4" />
-                            {addingIdentifier === d.identifier ? "Добавление…" : "В мониторинг"}
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
-            </div>
-          )}
         </CardContent>
       </Card>
 

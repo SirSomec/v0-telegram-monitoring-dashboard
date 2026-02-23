@@ -15,7 +15,6 @@ from telethon import TelegramClient, events
 from telethon.errors import FloodWaitError, UserAlreadyParticipantError
 from telethon.sessions import StringSession
 from telethon.tl.functions.messages import ImportChatInviteRequest
-from telethon.tl.types import Channel, Chat as TlChat
 
 from database import db_session
 from models import Chat, ExclusionWord, Keyword, Mention, User, user_chat_subscriptions, CHAT_SOURCE_TELEGRAM
@@ -39,8 +38,8 @@ except ImportError:
     similarity_threshold = None
     KeywordEmbeddingCache = None
 
-# Потоки для embed(): не блокируют event loop; 2 воркера снижают задержку при пачке сообщений
-_SEMANTIC_EXECUTOR = ThreadPoolExecutor(max_workers=2) if embed else None
+# Один поток для тяжёлых вызовов embed(), чтобы не давать 100% CPU при пачке сообщений
+_SEMANTIC_EXECUTOR = ThreadPoolExecutor(max_workers=1) if embed else None
 
 
 def _run_semantic_embed(cache: Any, keyword_texts: list[str], to_embed: list[str]) -> list[list[float]] | None:
@@ -148,81 +147,6 @@ def _parse_chat_identifiers(raw: str | None) -> list[str]:
             continue
         items.append(v)
     return items
-
-
-async def fetch_dialogs_standalone_async() -> list[dict[str, Any]]:
-    """
-    Загрузка списка групп/каналов отдельным клиентом, без блокировки парсера.
-    Работает только при заданном TG_SESSION_STRING (файловая сессия занята парсером).
-    """
-    api_id = get_parser_setting_str("TG_API_ID")
-    api_hash = get_parser_setting_str("TG_API_HASH")
-    session_string = get_parser_setting_str("TG_SESSION_STRING")
-    if not api_id or not api_hash or not session_string or not session_string.strip():
-        log_append("Подписки TG: для загрузки без блокировки парсера задайте TG_SESSION_STRING в настройках парсера.")
-        return []
-    proxy_cfg = _proxy_from_config()
-    proxy = proxy_cfg.to_telethon() if proxy_cfg else None
-    client = TelegramClient(
-        StringSession(session_string.strip()),
-        int(api_id),
-        api_hash,
-        proxy=proxy,
-    )
-    out: list[dict[str, Any]] = []
-    try:
-        await client.start(bot_token=get_parser_setting_str("TG_BOT_TOKEN") or None)
-        if not client.is_connected():
-            return []
-        dialogs = await client.get_dialogs(limit=500)
-        for d in dialogs:
-            entity = getattr(d, "entity", None)
-            if entity is None:
-                continue
-            if isinstance(entity, Channel):
-                raw_id = getattr(entity, "id", None)
-                title = getattr(entity, "title", None) or ""
-                username = getattr(entity, "username", None) or ""
-                if raw_id is None:
-                    continue
-                cid = -1000000000000 - int(raw_id)
-                identifier = (username.strip() or str(cid)).strip()
-                if identifier and not identifier.lstrip("-").isdigit():
-                    identifier = identifier.lstrip("@")
-                out.append({
-                    "id": cid,
-                    "title": title,
-                    "username": username.strip() or None,
-                    "identifier": identifier or str(cid),
-                })
-            elif isinstance(entity, TlChat):
-                cid = getattr(entity, "id", None)
-                title = getattr(entity, "title", None) or ""
-                if cid is None:
-                    continue
-                out.append({
-                    "id": cid,
-                    "title": title,
-                    "username": None,
-                    "identifier": str(cid),
-                })
-    except Exception as e:
-        log_exception(e)
-    finally:
-        try:
-            await client.disconnect()
-        except Exception:
-            pass
-    return out
-
-
-def fetch_dialogs_standalone_sync() -> list[dict[str, Any]]:
-    """Синхронная обёртка для вызова из потока (API). Не блокирует парсер."""
-    try:
-        return asyncio.run(fetch_dialogs_standalone_async())
-    except Exception as e:
-        log_exception(e)
-        return []
 
 
 class TelegramScanner:
@@ -922,32 +846,29 @@ class TelegramScanner:
                 if kw.text.casefold() in text_cf and kw.text not in by_kw:
                     by_kw[kw.text] = (None, kw.text)
             return [(k, sim, span) for k, (sim, span) in by_kw.items()]
-        # Вся тяжёлая работа (cache.update + embed) только в executor — не блокируем event loop
+        cache.update([kw.text for kw in semantic_items])
+        if not cache.is_available():
+            for kw in semantic_items:
+                if kw.text.casefold() in text_cf and kw.text not in by_kw:
+                    by_kw[kw.text] = (None, kw.text)
+            return [(k, sim, span) for k, (sim, span) in by_kw.items()]
         chunks = self._message_chunks(text)
         words = self._message_words(text)
         to_embed: list[str] = [text]
         to_embed.extend(chunks)
         to_embed.extend(words)
-        all_vectors = None
-        try:
-            if _SEMANTIC_EXECUTOR:
-                loop = asyncio.get_running_loop()
-                all_vectors = await loop.run_in_executor(
-                    _SEMANTIC_EXECUTOR,
-                    _run_semantic_embed,
-                    cache,
-                    [kw.text for kw in semantic_items],
-                    to_embed,
-                )
-            else:
-                cache.update([kw.text for kw in semantic_items])
-                all_vectors = embed(to_embed)
-        except Exception as e:
-            log_exception(e)
-            for kw in semantic_items:
-                if kw.text.casefold() in text_cf and kw.text not in by_kw:
-                    by_kw[kw.text] = (None, kw.text)
-            return [(k, sim, span) for k, (sim, span) in by_kw.items()]
+        if _SEMANTIC_EXECUTOR:
+            loop = asyncio.get_running_loop()
+            all_vectors = await loop.run_in_executor(
+                _SEMANTIC_EXECUTOR,
+                _run_semantic_embed,
+                cache,
+                [kw.text for kw in semantic_items],
+                to_embed,
+            )
+        else:
+            cache.update([kw.text for kw in semantic_items])
+            all_vectors = embed(to_embed)
         if not all_vectors or len(all_vectors) < 1:
             for kw in semantic_items:
                 if kw.text.casefold() in text_cf and kw.text not in by_kw:

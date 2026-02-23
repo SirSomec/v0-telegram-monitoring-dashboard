@@ -37,14 +37,6 @@ export type ParserStatus = {
   maxRunning?: boolean
 }
 
-/** Диалог (группа/канал) из подписок аккаунта Telegram для выбора в мониторинг. */
-export type TelegramDialog = {
-  id: number
-  title: string
-  username: string | null
-  identifier: string
-}
-
 export type ParserSettings = {
   TG_API_ID: string
   TG_API_HASH: string

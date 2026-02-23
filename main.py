@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session, selectinload
 from auth_utils import create_token, decode_token, hash_password, verify_password
 from database import get_db, init_db
 from models import Chat, ChatGroup, ExclusionWord, Keyword, Mention, NotificationSettings, PasswordResetToken, User, user_chat_subscriptions, user_thematic_group_subscriptions, PlanLimit, SupportTicket, SupportMessage, SupportAttachment, CHAT_SOURCE_TELEGRAM, CHAT_SOURCE_MAX
-from parser import TelegramScanner, fetch_dialogs_standalone_sync
+from parser import TelegramScanner
 from parser_max import MaxScanner
 from plans import PLAN_BASIC, PLAN_FREE, PLAN_ORDER, get_effective_plan, get_limits
 from parser_config import (
@@ -486,14 +486,6 @@ class ParserStatusOut(BaseModel):
     multiUser: bool
     userId: int | None = None
     maxRunning: bool = False
-
-
-class TelegramDialogOut(BaseModel):
-    """Один диалог (группа/канал) из списка подписок аккаунта Telegram."""
-    id: int
-    title: str
-    username: str | None = None
-    identifier: str
 
 
 class ParserSettingsOut(BaseModel):
@@ -2797,29 +2789,6 @@ def stop_parser(_: User = Depends(get_current_admin)) -> ParserStatusOut:
         scanner = None
         parser_log_append("Парсер остановлен.")
     return _parser_status()
-
-
-@app.get("/api/admin/parser/dialogs", response_model=list[TelegramDialogOut])
-async def get_parser_dialogs(_: User = Depends(get_current_admin)) -> list[TelegramDialogOut]:
-    """Список групп и каналов аккаунта Telegram. Загружается отдельным клиентом (не блокирует парсер). Требуется TG_SESSION_STRING."""
-    try:
-        raw = await asyncio.wait_for(
-            asyncio.to_thread(fetch_dialogs_standalone_sync),
-            timeout=60.0,
-        )
-    except asyncio.TimeoutError:
-        return []
-    if not raw:
-        return []
-    return [
-        TelegramDialogOut(
-            id=d["id"],
-            title=d.get("title") or "",
-            username=d.get("username"),
-            identifier=d.get("identifier") or str(d["id"]),
-        )
-        for d in raw
-    ]
 
 
 @app.post("/api/admin/parser/max/start", response_model=ParserStatusOut)
