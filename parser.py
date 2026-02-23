@@ -17,7 +17,7 @@ from telethon.sessions import StringSession
 from telethon.tl.functions.messages import ImportChatInviteRequest
 
 from database import db_session
-from models import Chat, Keyword, Mention, User, user_chat_subscriptions, CHAT_SOURCE_TELEGRAM
+from models import Chat, ExclusionWord, Keyword, Mention, User, user_chat_subscriptions, CHAT_SOURCE_TELEGRAM
 import mention_notifications
 from parser_log import append as log_append, append_exception as log_exception
 from plans import can_track, get_effective_plan
@@ -87,6 +87,17 @@ def _humanize_ru(dt: datetime) -> str:
 
 def _truthy(v: str | None) -> bool:
     return (v or "").strip() in {"1", "true", "True", "yes", "YES", "on", "ON"}
+
+
+def _message_has_exclusion(text_cf: str, exclusion_words: list[str]) -> bool:
+    """True, если в тексте (casefold) есть хотя бы одно слово-исключение как подстрока."""
+    if not text_cf:
+        return False
+    for e in exclusion_words:
+        t = (e or "").strip()
+        if t and t.casefold() in text_cf:
+            return True
+    return False
 
 
 @dataclass(frozen=True)
@@ -529,9 +540,12 @@ class TelegramScanner:
             if not user_ids:
                 return
             keywords_by_user = self._load_keywords_multi()
+            exclusion_by_user = self._load_exclusion_words_multi()
             msg_id = int(msg.id) if getattr(msg, "id", None) is not None else None
             cid = int(chat_id) if chat_id is not None else None
             for uid in user_ids:
+                if _message_has_exclusion(text_cf, exclusion_by_user.get(uid, [])):
+                    continue
                 items = keywords_by_user.get(uid, [])
                 thresh = get_user_semantic_threshold(uid)
                 thresh = float(thresh) if thresh is not None else 0.6  # стандартный порог 60%
@@ -602,6 +616,8 @@ class TelegramScanner:
 
         items = self._load_keywords()
         if not items:
+            return
+        if _message_has_exclusion(text_cf, self._load_exclusion_words()):
             return
         thresh = get_user_semantic_threshold(self.user_id)
         thresh = float(thresh) if thresh is not None else 0.6  # стандартный порог 60%
@@ -713,6 +729,27 @@ class TelegramScanner:
                 if t:
                     use_sem = getattr(r, "use_semantic", False)
                     out.setdefault(r.user_id, []).append(KeywordItem(text=t, use_semantic=use_sem))
+            return out
+
+    def _load_exclusion_words(self) -> list[str]:
+        """Слова-исключения текущего пользователя (однопользовательский режим)."""
+        with db_session() as db:
+            rows = (
+                db.query(ExclusionWord)
+                .filter(ExclusionWord.user_id == self.user_id)
+                .all()
+            )
+            return [(r.text or "").strip() for r in rows if (r.text or "").strip()]
+
+    def _load_exclusion_words_multi(self) -> dict[int, list[str]]:
+        """Слова-исключения по user_id (мультипользовательский режим)."""
+        with db_session() as db:
+            rows = db.query(ExclusionWord).order_by(ExclusionWord.user_id, ExclusionWord.id).all()
+            out: dict[int, list[str]] = {}
+            for r in rows:
+                t = (r.text or "").strip()
+                if t:
+                    out.setdefault(r.user_id, []).append(t)
             return out
 
     def _message_chunks(self, text: str, max_chunks: int = 6) -> list[str]:

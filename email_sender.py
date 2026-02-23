@@ -28,7 +28,21 @@ SMTP_USER = os.getenv("SMTP_USER", "").strip()
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "").strip()
 SMTP_FROM = os.getenv("SMTP_FROM", "").strip() or SMTP_USER
 SMTP_USE_TLS = os.getenv("SMTP_USE_TLS", "1").strip().lower() in ("1", "true", "yes")
+SMTP_TIMEOUT = int(os.getenv("SMTP_TIMEOUT", "60"))  # Таймаут в секундах (для медленных/дальних серверов)
 FRONTEND_URL = os.getenv("FRONTEND_URL", "").strip()  # Базовый URL фронта для ссылок в письмах
+
+
+def _smtp_connection():
+    """
+    Контекстный менеджер: SMTP-подключение с учётом порта.
+    Порт 465 — сразу SSL (SMTP_SSL), иначе — обычный SMTP + STARTTLS при SMTP_USE_TLS.
+    """
+    if SMTP_PORT == 465:
+        return smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=SMTP_TIMEOUT)
+    server = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=SMTP_TIMEOUT)
+    if SMTP_USE_TLS:
+        server.starttls()
+    return server
 
 
 def is_configured() -> bool:
@@ -72,9 +86,7 @@ def send_password_reset_email(to_email: str, reset_link: str) -> bool:
     msg.attach(MIMEText(body_html, "html", "utf-8"))
 
     try:
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as server:
-            if SMTP_USE_TLS:
-                server.starttls()
+        with _smtp_connection() as server:
             server.login(SMTP_USER, SMTP_PASSWORD)
             server.sendmail(SMTP_FROM, to_email, msg.as_string())
         logger.info("Письмо для сброса пароля отправлено на %s", to_email)
@@ -115,9 +127,7 @@ def send_test_email(to_email: str) -> bool:
     msg.attach(MIMEText(body_html, "html", "utf-8"))
 
     try:
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as server:
-            if SMTP_USE_TLS:
-                server.starttls()
+        with _smtp_connection() as server:
             server.login(SMTP_USER, SMTP_PASSWORD)
             server.sendmail(SMTP_FROM, to_email, msg.as_string())
         logger.info("Тестовое письмо отправлено на %s", to_email)
@@ -159,9 +169,7 @@ def send_mention_notification_email(to_email: str, keyword: str, message: str, m
     msg.attach(MIMEText(body_html, "html", "utf-8"))
 
     try:
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as server:
-            if SMTP_USE_TLS:
-                server.starttls()
+        with _smtp_connection() as server:
             server.login(SMTP_USER, SMTP_PASSWORD)
             server.sendmail(SMTP_FROM, to_email, msg.as_string())
         logger.info("Уведомление об упоминании отправлено на %s", to_email)
@@ -204,9 +212,7 @@ def send_support_reply_email(to_email: str, ticket_subject: str, reply_preview: 
     msg.attach(MIMEText(body_html, "html", "utf-8"))
 
     try:
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as server:
-            if SMTP_USE_TLS:
-                server.starttls()
+        with _smtp_connection() as server:
             server.login(SMTP_USER, SMTP_PASSWORD)
             server.sendmail(SMTP_FROM, to_email, msg.as_string())
         logger.info("Уведомление об ответе поддержки отправлено на %s", to_email)

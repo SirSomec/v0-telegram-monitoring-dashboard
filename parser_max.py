@@ -13,7 +13,7 @@ from typing import Any, Callable
 from sqlalchemy import select
 
 from database import db_session
-from models import Chat, Keyword, Mention, User, user_chat_subscriptions
+from models import Chat, ExclusionWord, Keyword, Mention, User, user_chat_subscriptions
 import mention_notifications
 from parser_log import append as log_append, append_exception as log_exception
 from plans import can_track, get_effective_plan
@@ -94,6 +94,29 @@ def _match_keywords_exact(items: list[KeywordItem], text: str, text_cf: str) -> 
     return [kw.text for kw in items if kw.text.casefold() in text_cf]
 
 
+def _message_has_exclusion(text_cf: str, exclusion_words: list[str]) -> bool:
+    """True, если в тексте (casefold) есть хотя бы одно слово-исключение как подстрока."""
+    if not text_cf:
+        return False
+    for e in exclusion_words:
+        t = (e or "").strip()
+        if t and t.casefold() in text_cf:
+            return True
+    return False
+
+
+def _load_exclusion_words_multi() -> dict[int, list[str]]:
+    """Слова-исключения по user_id."""
+    with db_session() as db:
+        rows = db.scalars(select(ExclusionWord).order_by(ExclusionWord.user_id, ExclusionWord.id)).all()
+        out: dict[int, list[str]] = {}
+        for r in rows:
+            t = (r.text or "").strip()
+            if t:
+                out.setdefault(r.user_id, []).append(t)
+        return out
+
+
 class MaxScanner:
     """
     Сканер чатов MAX через Long Polling (GET /messages).
@@ -166,6 +189,7 @@ class MaxScanner:
             return
 
         keywords_by_user = _load_keywords_multi()
+        exclusion_by_user = _load_exclusion_words_multi()
         url = f"{base_url}/messages"
 
         for max_chat_id, (chat_title, user_ids) in chats_map.items():
@@ -254,6 +278,8 @@ class MaxScanner:
                         pass
 
                 for uid in user_ids:
+                    if _message_has_exclusion(text_cf, exclusion_by_user.get(uid, [])):
+                        continue
                     items = keywords_by_user.get(uid, [])
                     matches = _match_keywords_exact(items, text, text_cf)
                     for kw in matches:

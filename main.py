@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from auth_utils import create_token, decode_token, hash_password, verify_password
 from database import get_db, init_db
-from models import Chat, ChatGroup, Keyword, Mention, NotificationSettings, PasswordResetToken, User, user_chat_subscriptions, user_thematic_group_subscriptions, PlanLimit, SupportTicket, SupportMessage, SupportAttachment, CHAT_SOURCE_TELEGRAM, CHAT_SOURCE_MAX
+from models import Chat, ChatGroup, ExclusionWord, Keyword, Mention, NotificationSettings, PasswordResetToken, User, user_chat_subscriptions, user_thematic_group_subscriptions, PlanLimit, SupportTicket, SupportMessage, SupportAttachment, CHAT_SOURCE_TELEGRAM, CHAT_SOURCE_MAX
 from parser import TelegramScanner
 from parser_max import MaxScanner
 from plans import PLAN_BASIC, PLAN_FREE, PLAN_ORDER, get_effective_plan, get_limits
@@ -82,6 +82,16 @@ class KeywordOut(BaseModel):
     userId: int
     createdAt: str
     enabled: bool = True
+
+
+class ExclusionWordCreate(BaseModel):
+    text: str = Field(..., min_length=1, max_length=400)
+
+
+class ExclusionWordOut(BaseModel):
+    id: int
+    text: str
+    createdAt: str
 
 
 class ChatCreate(BaseModel):
@@ -1909,6 +1919,62 @@ def restore_keyword(keyword_id: int, user: User = Depends(get_current_user), db:
         createdAt=created_at.isoformat(),
         enabled=True,
     )
+
+
+# --- Слова-исключения ---
+
+
+@app.get("/api/exclusion-words", response_model=list[ExclusionWordOut])
+def list_exclusion_words(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> list[ExclusionWordOut]:
+    _ensure_default_user(db)
+    rows = (
+        db.scalars(
+            select(ExclusionWord)
+            .where(ExclusionWord.user_id == user.id)
+            .order_by(ExclusionWord.id.asc())
+        )
+    ).all()
+    out: list[ExclusionWordOut] = []
+    for w in rows:
+        created_at = w.created_at
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        out.append(ExclusionWordOut(id=w.id, text=w.text, createdAt=created_at.isoformat()))
+    return out
+
+
+@app.post("/api/exclusion-words", response_model=ExclusionWordOut)
+def create_exclusion_word(body: ExclusionWordCreate, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> ExclusionWordOut:
+    _ensure_default_user(db)
+    text = body.text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text is required")
+    existing = db.scalar(select(ExclusionWord).where(ExclusionWord.user_id == user.id, ExclusionWord.text == text))
+    if existing:
+        created_at = existing.created_at
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        return ExclusionWordOut(id=existing.id, text=existing.text, createdAt=created_at.isoformat())
+    w = ExclusionWord(user_id=user.id, text=text)
+    db.add(w)
+    db.commit()
+    db.refresh(w)
+    created_at = w.created_at
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    return ExclusionWordOut(id=w.id, text=w.text, createdAt=created_at.isoformat())
+
+
+@app.delete("/api/exclusion-words/{word_id}")
+def delete_exclusion_word(word_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+    w = db.scalar(select(ExclusionWord).where(ExclusionWord.id == word_id))
+    if not w:
+        raise HTTPException(status_code=404, detail="exclusion word not found")
+    if w.user_id != user.id:
+        raise HTTPException(status_code=403, detail="forbidden")
+    db.delete(w)
+    db.commit()
+    return {"ok": True}
 
 
 def _parse_chat_identifier(ident: str) -> tuple[str | None, int | None, str | None]:

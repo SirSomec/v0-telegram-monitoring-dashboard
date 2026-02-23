@@ -317,7 +317,7 @@ def _migrate_user_semantic_settings() -> None:
 
 
 def init_db() -> None:
-    from models import Chat, ChatGroup, Keyword, Mention, NotificationSettings, ParserSetting, User, PasswordResetToken, PlanLimit, SupportTicket, SupportMessage, SupportAttachment, user_thematic_group_subscriptions  # noqa: F401
+    from models import Chat, ChatGroup, ExclusionWord, Keyword, Mention, NotificationSettings, ParserSetting, User, PasswordResetToken, PlanLimit, SupportTicket, SupportMessage, SupportAttachment, user_thematic_group_subscriptions  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
     _migrate_keywords_use_semantic()
