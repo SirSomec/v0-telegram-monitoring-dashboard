@@ -5,6 +5,7 @@ import csv
 import io
 import os
 import secrets
+import threading
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
@@ -878,13 +879,37 @@ async def on_startup() -> None:
     asyncio.create_task(_support_attachments_cleanup_loop())
 
 
+# Троттлинг WS: при пачке упоминаний не планируем сотни broadcast-корутин, а сбрасываем раз в 80 ms
+_ws_pending: list[dict[str, Any]] = []
+_ws_lock = threading.Lock()
+_ws_flush_scheduled = False
+
+
+async def _ws_broadcast_flush() -> None:
+    global _ws_flush_scheduled  # noqa: PLW0603
+    await asyncio.sleep(0.08)
+    with _ws_lock:
+        to_send = _ws_pending[:]
+        _ws_pending.clear()
+        _ws_flush_scheduled = False
+    for p in to_send:
+        await ws_manager.broadcast(p)
+    with _ws_lock:
+        if _ws_pending and not _ws_flush_scheduled:
+            _ws_flush_scheduled = True
+            asyncio.create_task(_ws_broadcast_flush())
+
+
 def _schedule_ws_broadcast(payload: dict[str, Any]) -> None:
-    # Callback из фонового потока (Telethon) -> отправляем в WS асинхронно.
+    # Callback из фонового потока (Telethon) -> отправляем в WS асинхронно (с троттлингом).
     loop = main_loop
     if loop and loop.is_running():
-        asyncio.run_coroutine_threadsafe(ws_manager.broadcast(payload), loop)
+        with _ws_lock:
+            _ws_pending.append(payload)
+            if not _ws_flush_scheduled:
+                _ws_flush_scheduled = True
+                asyncio.run_coroutine_threadsafe(_ws_broadcast_flush(), loop)
     else:
-        # fallback (например, если uvicorn не поднят)
         try:
             asyncio.run(ws_manager.broadcast(payload))
         except Exception:

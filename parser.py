@@ -4,9 +4,10 @@ import asyncio
 import os
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Callable, Iterable
+from typing import Any, Callable, Iterable
 
 import socks  # PySocks
 from dotenv import load_dotenv
@@ -35,6 +36,17 @@ except ImportError:
     cosine_similarity = None
     similarity_threshold = None
     KeywordEmbeddingCache = None
+
+# Один поток для тяжёлых вызовов embed(), чтобы не давать 100% CPU при пачке сообщений
+_SEMANTIC_EXECUTOR = ThreadPoolExecutor(max_workers=1) if embed else None
+
+
+def _run_semantic_embed(cache: Any, keyword_texts: list[str], to_embed: list[str]) -> list[list[float]] | None:
+    """Синхронная работа для executor: обновить кэш ключей и эмбеддинги текста сообщения."""
+    if cache is not None and keyword_texts:
+        cache.update(keyword_texts)
+    return embed(to_embed) if embed else None
+
 
 load_dotenv()
 
@@ -524,7 +536,7 @@ class TelegramScanner:
                 min_topic = get_user_semantic_min_topic_percent(uid)
                 if min_topic is None:
                     min_topic = 70.0  # стандартный мин. % совпадения с темой 70%
-                matches = self._match_keywords(items, text, text_cf, threshold=thresh, min_topic_percent=min_topic)
+                matches = await self._match_keywords(items, text, text_cf, threshold=thresh, min_topic_percent=min_topic)
                 for kw, sim, span in matches:
                     with db_session() as db:
                         mention = Mention(
@@ -593,7 +605,7 @@ class TelegramScanner:
         min_topic = get_user_semantic_min_topic_percent(self.user_id)
         if min_topic is None:
             min_topic = 70.0  # стандартный мин. % совпадения с темой 70%
-        matches = self._match_keywords(items, text, text_cf, threshold=thresh, min_topic_percent=min_topic)
+        matches = await self._match_keywords(items, text, text_cf, threshold=thresh, min_topic_percent=min_topic)
         if not matches:
             return
 
@@ -750,7 +762,7 @@ class TelegramScanner:
                 break
         return out
 
-    def _match_keywords(
+    async def _match_keywords(
         self,
         items: list[KeywordItem],
         text: str,
@@ -761,6 +773,7 @@ class TelegramScanner:
         """
         Совпадение по смыслу: общая тема сообщения, перефразирование (фразы), отдельные слова (синонимы, другой язык).
         Возвращает (keyword, similarity, matched_span): matched_span — фрагмент сообщения, давший лучшее сходство (для подсветки).
+        Тяжёлый embed() выполняется в отдельном потоке (1 worker), чтобы не блокировать event loop и не давать 100% CPU при пачке сообщений.
         """
         exact_items = [kw for kw in items if not kw.use_semantic]
         semantic_items = [kw for kw in items if kw.use_semantic]
@@ -791,7 +804,19 @@ class TelegramScanner:
         to_embed: list[str] = [text]
         to_embed.extend(chunks)
         to_embed.extend(words)
-        all_vectors = embed(to_embed)
+        # Тяжёлая работа в отдельном потоке (max 1 одновременно) — не блокирует loop и ограничивает CPU
+        if _SEMANTIC_EXECUTOR:
+            loop = asyncio.get_running_loop()
+            all_vectors = await loop.run_in_executor(
+                _SEMANTIC_EXECUTOR,
+                _run_semantic_embed,
+                cache,
+                [kw.text for kw in semantic_items],
+                to_embed,
+            )
+        else:
+            cache.update([kw.text for kw in semantic_items])
+            all_vectors = embed(to_embed)
         if not all_vectors or len(all_vectors) < 1:
             for kw in semantic_items:
                 if kw.text.casefold() in text_cf and kw.text not in by_kw:
