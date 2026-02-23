@@ -186,11 +186,59 @@ export function MentionFeed({ userId }: { userId?: number }) {
     }
   }, [buildParams, countParams])
 
+  /** Обновить ленту с первой страницы (для автообновления по WebSocket). */
+  const refetchFirstPage = useCallback(async () => {
+    setLoading(true)
+    setError("")
+    try {
+      const countQuery = countParams()
+      const [data, countRes] = await Promise.all([
+        apiJson<MentionGroup[]>(`${apiBaseUrl()}/api/mentions?${buildParams({ offset: 0 })}`),
+        apiJson<{ total: number }>(
+          `${apiBaseUrl()}/api/mentions/count${countQuery ? `?${countQuery}` : ""}`
+        ),
+      ])
+      setMentions(Array.isArray(data) ? data : [])
+      setTotalCount(countRes?.total ?? 0)
+      setPage(1)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Ошибка загрузки")
+      setMentions([])
+    } finally {
+      setLoading(false)
+    }
+  }, [buildParams, countParams])
+
   fetchPageRef.current = fetchPage
+  const refetchFirstPageRef = useRef(refetchFirstPage)
+  refetchFirstPageRef.current = refetchFirstPage
 
   useEffect(() => {
     fetchPage()
   }, [fetchPage])
+
+  // Запасное автообновление по таймеру (на случай проблем с WebSocket)
+  const lastCountRef = useRef<number | null>(null)
+  useEffect(() => {
+    if (!token || typeof document === "undefined") return
+    const interval = setInterval(() => {
+      if (document.visibilityState !== "visible") return
+      apiJson<{ total: number }>(
+        `${apiBaseUrl()}/api/mentions/count?${countParams()}`
+      )
+        .then((res) => {
+          const prev = lastCountRef.current
+          lastCountRef.current = res.total
+          if (prev !== null && res.total !== prev) refetchFirstPageRef.current()
+        })
+        .catch(() => {})
+    }, 15000)
+    return () => clearInterval(interval)
+  }, [token, countParams])
+  // Синхронизировать lastCountRef после загрузки страницы
+  useEffect(() => {
+    if (!loading) lastCountRef.current = totalCount
+  }, [loading, totalCount])
 
   useEffect(() => {
     if (!token) return
@@ -208,10 +256,11 @@ export function MentionFeed({ userId }: { userId?: number }) {
           }
           if (payload.type === "mention" && payload.data) {
             const data = payload.data as { userId?: number }
-            if (data.userId === undefined || data.userId === userId) {
+            const forCurrentUser =
+              data.userId === undefined || Number(data.userId) === Number(userId)
+            if (forCurrentUser) {
               setTotalCount((c) => c + 1)
-              setPage(1)
-              // Переход на страницу 1 вызовет пересчёт fetchPage и эффект загрузки — лента обновится с новым сообщением
+              refetchFirstPageRef.current()
             }
           }
         } catch {

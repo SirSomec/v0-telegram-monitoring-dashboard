@@ -549,17 +549,33 @@ class ParserSettingsUpdate(BaseModel):
 class ConnectionManager:
     def __init__(self) -> None:
         self._connections: set[WebSocket] = set()
+        self._ws_user_ids: dict[WebSocket, int] = {}
 
-    async def connect(self, ws: WebSocket) -> None:
+    async def connect(self, ws: WebSocket, user_id: int | None = None) -> None:
         await ws.accept()
         self._connections.add(ws)
+        if user_id is not None:
+            self._ws_user_ids[ws] = user_id
 
     def disconnect(self, ws: WebSocket) -> None:
         self._connections.discard(ws)
+        self._ws_user_ids.pop(ws, None)
 
     async def broadcast(self, payload: dict[str, Any]) -> None:
         dead: list[WebSocket] = []
         for ws in list(self._connections):
+            try:
+                await ws.send_json(payload)
+            except Exception:
+                dead.append(ws)
+        for ws in dead:
+            self.disconnect(ws)
+
+    async def broadcast_to_user(self, user_id: int, payload: dict[str, Any]) -> None:
+        dead: list[WebSocket] = []
+        for ws, uid in list(self._ws_user_ids.items()):
+            if uid != user_id:
+                continue
             try:
                 await ws.send_json(payload)
             except Exception:
@@ -893,7 +909,14 @@ async def _ws_broadcast_flush() -> None:
         _ws_pending.clear()
         _ws_flush_scheduled = False
     for p in to_send:
-        await ws_manager.broadcast(p)
+        if p.get("type") == "mention":
+            uid = (p.get("data") or {}).get("userId")
+            if uid is not None:
+                await ws_manager.broadcast_to_user(int(uid), p)
+            else:
+                await ws_manager.broadcast(p)
+        else:
+            await ws_manager.broadcast(p)
     with _ws_lock:
         if _ws_pending and not _ws_flush_scheduled:
             _ws_flush_scheduled = True
@@ -3197,7 +3220,7 @@ async def ws_mentions(ws: WebSocket) -> None:
     if user_id is None:
         await ws.close(code=4001)
         return
-    await ws_manager.connect(ws)
+    await ws_manager.connect(ws, user_id)
     try:
         await ws.send_json({"type": "hello", "message": "connected"})
 
