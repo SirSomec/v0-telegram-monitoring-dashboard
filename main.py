@@ -954,7 +954,7 @@ def _do_notify_mention_sync(payload: dict[str, Any]) -> None:
         data = payload.get("data") or {}
         raw_uid = data.get("userId")
         if raw_uid is None:
-            log.debug("Уведомление об упоминании: пропуск — в payload.data нет userId, keys=%s", list(data.keys()))
+            log.info("Уведомление об упоминании: пропуск — в payload.data нет userId, keys=%s", list(data.keys()))
             return
         try:
             user_id = int(raw_uid)
@@ -968,15 +968,15 @@ def _do_notify_mention_sync(payload: dict[str, Any]) -> None:
         with SessionLocal() as db:
             settings = _get_or_create_notification_settings(db, user_id)
             if not settings.notify_telegram and not settings.notify_email:
-                log.debug("Уведомление об упоминании: user_id=%s — уведомления отключены (email и Telegram выкл)", user_id)
+                log.info("Уведомление об упоминании: user_id=%s — уведомления отключены (email и Telegram выкл)", user_id)
                 return
             notify_mode = (settings.notify_mode or "all").strip()
             is_lead = data.get("isLead") is True
             if notify_mode == "leads_only" and not is_lead:
-                log.debug("Уведомление об упоминании: user_id=%s — режим leads_only, упоминание не лид", user_id)
+                log.info("Уведомление об упоминании: user_id=%s — режим «только лиды», упоминание не лид", user_id)
                 return
             if notify_mode == "digest":
-                log.debug("Уведомление об упоминании: user_id=%s — режим digest, мгновенная отправка не используется", user_id)
+                log.info("Уведомление об упоминании: user_id=%s — режим «дайджест», мгновенная отправка не используется", user_id)
                 return
             if settings.notify_telegram and (not settings.telegram_chat_id or not settings.telegram_chat_id.strip()):
                 log.warning("Уведомление об упоминании: user_id=%s включил Telegram, но Chat ID не задан", user_id)
@@ -1025,7 +1025,7 @@ def _schedule_notify_mention(payload: dict[str, Any]) -> None:
     else:
         payload_copy = {"type": payload.get("type"), "data": {}}
     user_id = (payload_copy.get("data") or {}).get("userId")
-    log.debug("Уведомление об упоминании: запуск для payload type=%s userId=%s", payload_copy.get("type"), user_id)
+    log.info("Уведомление об упоминании: запуск type=%s userId=%s", payload_copy.get("type"), user_id)
     try:
         _do_notify_mention_sync(payload_copy)
     except Exception:
@@ -1339,6 +1339,39 @@ def get_notification_settings(user: User = Depends(get_current_user), db: Sessio
         notifyMode=(s.notify_mode or "all"),
         telegramChatId=s.telegram_chat_id,
     )
+
+
+@app.get("/api/notifications/telegram-status")
+def get_telegram_notify_status(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+    """Статус для отладки: настроен ли бот, задан ли chat_id у текущего пользователя."""
+    _ensure_default_user(db)
+    s = _get_or_create_notification_settings(db, user.id)
+    chat_id = (s.telegram_chat_id or "").strip()
+    return {
+        "botConfigured": notify_telegram.is_configured(),
+        "telegramEnabled": bool(s.notify_telegram),
+        "chatIdSet": bool(chat_id),
+        "chatIdPreview": f"{chat_id[:4]}...{chat_id[-2:]}" if len(chat_id) > 8 else (chat_id or None),
+    }
+
+
+@app.post("/api/notifications/test-telegram")
+def test_telegram_notification(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+    """Отправить тестовое уведомление в Telegram (для проверки токена и chat_id)."""
+    _ensure_default_user(db)
+    if not notify_telegram.is_configured():
+        return {"ok": False, "error": "NOTIFY_TELEGRAM_BOT_TOKEN не задан в окружении"}
+    s = _get_or_create_notification_settings(db, user.id)
+    chat_id = (s.telegram_chat_id or "").strip()
+    if not chat_id:
+        return {"ok": False, "error": "Укажите ID чата или @username в настройках уведомлений и сохраните"}
+    ok = notify_telegram.send_message(
+        chat_id,
+        "🔔 Тестовое уведомление от дашборда мониторинга. Если вы видите это сообщение — уведомления настроены верно.",
+    )
+    if ok:
+        return {"ok": True, "message": "Тестовое сообщение отправлено в Telegram"}
+    return {"ok": False, "error": "Telegram API вернул ошибку. Проверьте логи бэкенда и правильность Chat ID (число или @username)."}
 
 
 @app.patch("/api/notifications/settings", response_model=NotificationSettingsOut)

@@ -32,6 +32,8 @@ export function NotificationsSettings() {
   const [notifyTelegram, setNotifyTelegram] = useState(false)
   const [notifyMode, setNotifyMode] = useState("all")
   const [telegramChatId, setTelegramChatId] = useState("")
+  const [testLoading, setTestLoading] = useState(false)
+  const [testResult, setTestResult] = useState<{ ok: boolean; message?: string } | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -86,6 +88,22 @@ export function NotificationsSettings() {
       setError(e instanceof Error ? e.message : "Ошибка сохранения")
     } finally {
       setSaving(false)
+    }
+  }
+
+  async function handleTestTelegram() {
+    setTestLoading(true)
+    setTestResult(null)
+    try {
+      const res = await apiJson<{ ok: boolean; message?: string; error?: string }>(
+        `${apiBaseUrl()}/api/notifications/test-telegram`,
+        { method: "POST" }
+      )
+      setTestResult({ ok: res.ok, message: res.ok ? res.message : res.error || "Ошибка" })
+    } catch (e) {
+      setTestResult({ ok: false, message: e instanceof Error ? e.message : "Ошибка запроса" })
+    } finally {
+      setTestLoading(false)
     }
   }
 
@@ -160,8 +178,24 @@ export function NotificationsSettings() {
                   className="bg-background border-border"
                 />
                 <p className="text-xs text-muted-foreground">
-                  Начните диалог с ботом @telescopemsg_bot (команда /start) — бот покажет ваш Chat ID. Вставьте его сюда, сохраните и в боте нажмите «Проверить».
+                  Начните диалог с ботом @telescopemsg_bot (команда /start) — бот покажет ваш Chat ID. Вставьте его сюда и сохраните.
                 </p>
+                <div className="flex items-center gap-2 pt-1">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    disabled={testLoading || !telegramChatId.trim()}
+                    onClick={handleTestTelegram}
+                  >
+                    {testLoading ? <Loader2 className="size-4 animate-spin" /> : "Проверить отправку"}
+                  </Button>
+                  {testResult && (
+                    <span className={testResult.ok ? "text-sm text-green-600 dark:text-green-400" : "text-sm text-destructive"}>
+                      {testResult.ok ? testResult.message : testResult.message}
+                    </span>
+                  )}
+                </div>
               </div>
             )}
           </div>
