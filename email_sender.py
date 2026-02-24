@@ -7,6 +7,7 @@ import smtplib
 from html import escape
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from email.utils import formatdate, make_msgid
 
 from dotenv import load_dotenv
 
@@ -88,7 +89,7 @@ def send_password_reset_email(to_email: str, reset_link: str) -> bool:
     """
     reset_link = _normalize_reset_link(reset_link)
     reset_link_html = escape(reset_link, quote=True)
-    subject = "TeleScope — восстановление пароля"
+    subject = "Сброс пароля TeleScope"
     body_plain = (
         f"Здравствуйте.\n\n"
         f"Вы запросили сброс пароля для аккаунта TeleScope.\n\n"
@@ -101,7 +102,7 @@ def send_password_reset_email(to_email: str, reset_link: str) -> bool:
         f"<p>Вы запросили сброс пароля для аккаунта TeleScope.</p>"
         f"<p><a href=\"{reset_link_html}\">Задать новый пароль</a></p>"
         f"<p>Если кнопка не открывается, скопируйте ссылку:</p>"
-        f"<p><a href=\"{reset_link_html}\">{reset_link_html}</a></p>"
+        f"<p><code>{reset_link_html}</code></p>"
         f"<p>Ссылка действительна 1 час. Если вы не запрашивали сброс, проигнорируйте это письмо.</p>"
         f"<p>— TeleScope</p>"
     )
@@ -117,6 +118,10 @@ def send_password_reset_email(to_email: str, reset_link: str) -> bool:
     msg["Subject"] = subject
     msg["From"] = SMTP_FROM
     msg["To"] = to_email
+    msg["Date"] = formatdate(localtime=True)
+    msg["Auto-Submitted"] = "auto-generated"
+    sender_domain = SMTP_FROM.split("@", 1)[1] if "@" in SMTP_FROM else None
+    msg["Message-ID"] = make_msgid(domain=sender_domain)
     msg.attach(MIMEText(body_plain, "plain", "utf-8"))
     msg.attach(MIMEText(body_html, "html", "utf-8"))
 
