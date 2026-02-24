@@ -30,9 +30,17 @@ interface SidebarNavProps {
   activeItem: string
   onNavigate: (item: string) => void
   supportHasUnread?: boolean
+  showGroupsOnboardingHint?: boolean
 }
 
-export function SidebarNav({ collapsed, onToggle, activeItem, onNavigate, supportHasUnread = false }: SidebarNavProps) {
+export function SidebarNav({
+  collapsed,
+  onToggle,
+  activeItem,
+  onNavigate,
+  supportHasUnread = false,
+  showGroupsOnboardingHint = false,
+}: SidebarNavProps) {
   return (
     <aside
       className={cn(
@@ -57,6 +65,7 @@ export function SidebarNav({ collapsed, onToggle, activeItem, onNavigate, suppor
         {navItems.map((item) => {
           const isActive = activeItem === item.label
           const showSupportUnread = item.label === "Поддержка" && supportHasUnread
+          const showGroupsHint = item.label === "Группы" && showGroupsOnboardingHint && !collapsed
           return (
             <button
               key={item.label}
@@ -76,6 +85,15 @@ export function SidebarNav({ collapsed, onToggle, activeItem, onNavigate, suppor
                   className="absolute right-2 top-2 size-2 rounded-full bg-destructive"
                   aria-hidden
                 />
+              )}
+              {showGroupsHint && (
+                <span className="pointer-events-none absolute left-[calc(100%+8px)] top-1/2 z-20 -translate-y-1/2 whitespace-nowrap rounded-2xl border border-primary/30 bg-primary/10 px-3 py-1 text-[11px] font-medium text-primary shadow-sm">
+                  <span
+                    className="absolute -left-1 top-1/2 size-2 -translate-y-1/2 rotate-45 border-b border-l border-primary/30 bg-primary/10"
+                    aria-hidden
+                  />
+                  добавьте первые каналы для отслеживания
+                </span>
               )}
             </button>
           )

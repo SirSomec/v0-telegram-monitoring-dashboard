@@ -17,6 +17,7 @@ import { SupportSection } from "@/components/dashboard/support-section"
 import { BillingModal } from "@/components/dashboard/billing-modal"
 import { apiBaseUrl, apiJson } from "@/lib/api"
 import { useAuth } from "@/lib/auth-context"
+import type { ChatOut } from "@/components/dashboard/user-channels-manager"
 
 export default function DashboardPage() {
   const router = useRouter()
@@ -29,6 +30,7 @@ export default function DashboardPage() {
   const [serviceOnline, setServiceOnline] = useState(false)
   const [channelsRefreshKey, setChannelsRefreshKey] = useState(0)
   const [supportHasUnread, setSupportHasUnread] = useState(false)
+  const [hasTrackedChannels, setHasTrackedChannels] = useState<boolean | null>(null)
 
   async function fetchSupportUnread() {
     try {
@@ -36,6 +38,15 @@ export default function DashboardPage() {
       setSupportHasUnread(data.hasUnread)
     } catch {
       setSupportHasUnread(false)
+    }
+  }
+
+  async function fetchTrackedChannelsPresence() {
+    try {
+      const channels = await apiJson<ChatOut[]>("/api/chats")
+      setHasTrackedChannels(channels.length > 0)
+    } catch {
+      setHasTrackedChannels(null)
     }
   }
 
@@ -74,6 +85,11 @@ export default function DashboardPage() {
     return () => clearInterval(interval)
   }, [user])
 
+  useEffect(() => {
+    if (!user) return
+    fetchTrackedChannelsPresence()
+  }, [user, channelsRefreshKey])
+
   function handleNavigate(item: string) {
     if (item === "Оплата") {
       setBillingOpen(true)
@@ -102,6 +118,7 @@ export default function DashboardPage() {
           activeItem={activeNav}
           onNavigate={handleNavigate}
           supportHasUnread={supportHasUnread}
+          showGroupsOnboardingHint={activeNav === "Панель" && hasTrackedChannels === false}
         />
       </div>
 
@@ -138,7 +155,11 @@ export default function DashboardPage() {
                 </p>
               </div>
               <ChannelGroupsSection onSubscribedChange={() => setChannelsRefreshKey((k) => k + 1)} canAddResources={user.plan !== "free"} />
-              <UserChannelsManager key={channelsRefreshKey} canAddResources={user.plan !== "free"} />
+              <UserChannelsManager
+                key={channelsRefreshKey}
+                canAddResources={user.plan !== "free"}
+                onMyChannelsChange={(count) => setHasTrackedChannels(count > 0)}
+              />
             </>
           ) : activeNav === "Уведомления" ? (
             <>
