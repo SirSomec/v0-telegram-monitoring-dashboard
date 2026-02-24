@@ -1272,8 +1272,20 @@ FRONTEND_URL = os.getenv("FRONTEND_URL", "").strip()
 FRONTEND_URL_FALLBACK = "http://localhost:3000"
 
 
+def _normalized_frontend_base() -> str:
+    raw = (FRONTEND_URL or "").strip()
+    if not raw:
+        return FRONTEND_URL_FALLBACK.rstrip("/")
+    if raw.startswith(("http://", "https://")):
+        return raw.rstrip("/")
+    if "://" in raw:
+        # Неверная схема (например, htts://) — убираем и используем https.
+        raw = raw.split("://", 1)[1]
+    return f"https://{raw.lstrip('/')}".rstrip("/")
+
+
 def _build_password_reset_link(token: str) -> str:
-    base = (FRONTEND_URL or "").rstrip("/") or FRONTEND_URL_FALLBACK
+    base = _normalized_frontend_base()
     return f"{base}/auth/reset-password?token={token}"
 
 

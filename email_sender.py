@@ -34,15 +34,30 @@ FRONTEND_URL = os.getenv("FRONTEND_URL", "").strip()  # Базовый URL фр�
 FRONTEND_URL_FALLBACK = "http://localhost:3000"
 
 
+def _normalized_frontend_base() -> str:
+    raw = (FRONTEND_URL or "").strip()
+    if not raw:
+        return FRONTEND_URL_FALLBACK.rstrip("/")
+    if raw.startswith(("http://", "https://")):
+        return raw.rstrip("/")
+    if "://" in raw:
+        # Неверная схема (например, htts://) — убираем и используем https.
+        raw = raw.split("://", 1)[1]
+    return f"https://{raw.lstrip('/')}".rstrip("/")
+
+
 def _normalize_reset_link(reset_link: str) -> str:
     link = (reset_link or "").strip()
     if not link:
-        base = (FRONTEND_URL or FRONTEND_URL_FALLBACK).rstrip("/")
+        base = _normalized_frontend_base()
         return f"{base}/auth/reset-password"
     if link.startswith(("http://", "https://")):
         return link
+    if "://" in link:
+        # Неверная схема (например, htts://) — убираем и используем https.
+        link = link.split("://", 1)[1]
     if link.startswith("/"):
-        base = (FRONTEND_URL or FRONTEND_URL_FALLBACK).rstrip("/")
+        base = _normalized_frontend_base()
         return f"{base}{link}"
     # Если схема не передана (example.com/...), добавляем https
     return f"https://{link.lstrip('/')}"
