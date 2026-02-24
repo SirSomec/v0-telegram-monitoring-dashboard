@@ -419,6 +419,33 @@ class PlanOut(BaseModel):
     usage: PlanUsageOut
 
 
+class MentionsCountOut(BaseModel):
+    total: int
+
+
+class AdminUserChannelOut(BaseModel):
+    id: int
+    identifier: str
+    title: str | None = None
+    description: str | None = None
+    source: str = "telegram"
+    enabled: bool
+    isOwner: bool
+    viaGroupId: int | None = None
+    viaGroupName: str | None = None
+    createdAt: str
+
+
+class AdminUserOverviewOut(BaseModel):
+    user: UserOut
+    limits: PlanLimitsOut
+    usage: PlanUsageOut
+    ownChannels: list[AdminUserChannelOut]
+    subscribedChannels: list[AdminUserChannelOut]
+    keywords: list[KeywordOut]
+    mentionsCount: int
+
+
 class AdminPlanLimitOut(BaseModel):
     """Лимиты одного тарифа (для админки)."""
     planSlug: str
@@ -722,6 +749,107 @@ def _usage_counts(db: Session, user_id: int) -> dict[str, int]:
         "keywords_semantic": keywords_semantic,
         "own_channels": own_chats,
     }
+
+
+def _keywords_out_by_user_id(db: Session, user_id: int) -> list[KeywordOut]:
+    rows = (
+        db.scalars(
+            select(Keyword)
+            .where(Keyword.user_id == user_id)
+            .order_by(Keyword.enabled.desc(), Keyword.id.asc())
+        )
+    ).all()
+    if not rows:
+        return []
+    kw_ids = [k.id for k in rows]
+    excl_rows = (
+        db.scalars(
+            select(ExclusionWord)
+            .where(ExclusionWord.keyword_id.in_(kw_ids))
+            .order_by(ExclusionWord.keyword_id, ExclusionWord.id)
+        )
+    ).all()
+    excl_by_kw: dict[int, list[ExclusionWordOut]] = {}
+    for e in excl_rows:
+        created_at = e.created_at
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        excl_by_kw.setdefault(e.keyword_id, []).append(
+            ExclusionWordOut(id=e.id, text=e.text, createdAt=created_at.isoformat())
+        )
+    out: list[KeywordOut] = []
+    for k in rows:
+        created_at = k.created_at
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        out.append(
+            KeywordOut(
+                id=k.id,
+                text=k.text,
+                useSemantic=getattr(k, "use_semantic", False),
+                userId=k.user_id,
+                createdAt=created_at.isoformat(),
+                enabled=getattr(k, "enabled", True),
+                exclusionWords=excl_by_kw.get(k.id, []),
+            )
+        )
+    return out
+
+
+def _admin_user_channels(db: Session, user_id: int) -> tuple[list[AdminUserChannelOut], list[AdminUserChannelOut]]:
+    own_rows = db.scalars(select(Chat).where(Chat.user_id == user_id).order_by(desc(Chat.created_at), Chat.id.desc())).all()
+    own: list[AdminUserChannelOut] = []
+    for c in own_rows:
+        created_at = c.created_at
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        own.append(
+            AdminUserChannelOut(
+                id=c.id,
+                identifier=_chat_identifier(c),
+                title=c.title,
+                description=c.description,
+                source=(getattr(c, "source", None) or CHAT_SOURCE_TELEGRAM),
+                enabled=bool(c.enabled),
+                isOwner=True,
+                viaGroupId=None,
+                viaGroupName=None,
+                createdAt=created_at.isoformat(),
+            )
+        )
+
+    sub_rows = db.execute(
+        select(
+            Chat,
+            user_chat_subscriptions.c.enabled,
+            user_chat_subscriptions.c.via_group_id,
+            ChatGroup.name.label("via_group_name"),
+        )
+        .join(user_chat_subscriptions, user_chat_subscriptions.c.chat_id == Chat.id)
+        .outerjoin(ChatGroup, ChatGroup.id == user_chat_subscriptions.c.via_group_id)
+        .where(user_chat_subscriptions.c.user_id == user_id)
+        .order_by(desc(Chat.created_at), Chat.id.desc())
+    ).all()
+    subs: list[AdminUserChannelOut] = []
+    for chat, sub_enabled, via_group_id, via_group_name in sub_rows:
+        created_at = chat.created_at
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        subs.append(
+            AdminUserChannelOut(
+                id=chat.id,
+                identifier=_chat_identifier(chat),
+                title=chat.title,
+                description=chat.description,
+                source=(getattr(chat, "source", None) or CHAT_SOURCE_TELEGRAM),
+                enabled=bool(sub_enabled),
+                isOwner=False,
+                viaGroupId=via_group_id,
+                viaGroupName=via_group_name,
+                createdAt=created_at.isoformat(),
+            )
+        )
+    return own, subs
 
 
 def _check_plan_can_track(user: User) -> None:
@@ -1777,48 +1905,7 @@ def list_all_support_tickets(
 @app.get("/api/keywords", response_model=list[KeywordOut])
 def list_keywords(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> list[KeywordOut]:
     _ensure_default_user(db)
-    rows = (
-        db.scalars(
-            select(Keyword)
-            .where(Keyword.user_id == user.id)
-            .order_by(Keyword.enabled.desc(), Keyword.id.asc())
-        )
-    ).all()
-    if not rows:
-        return []
-    kw_ids = [k.id for k in rows]
-    excl_rows = (
-        db.scalars(
-            select(ExclusionWord)
-            .where(ExclusionWord.keyword_id.in_(kw_ids))
-            .order_by(ExclusionWord.keyword_id, ExclusionWord.id)
-        )
-    ).all()
-    excl_by_kw: dict[int, list[ExclusionWordOut]] = {}
-    for e in excl_rows:
-        created_at = e.created_at
-        if created_at.tzinfo is None:
-            created_at = created_at.replace(tzinfo=timezone.utc)
-        excl_by_kw.setdefault(e.keyword_id, []).append(
-            ExclusionWordOut(id=e.id, text=e.text, createdAt=created_at.isoformat())
-        )
-    out: list[KeywordOut] = []
-    for k in rows:
-        created_at = k.created_at
-        if created_at.tzinfo is None:
-            created_at = created_at.replace(tzinfo=timezone.utc)
-        out.append(
-            KeywordOut(
-                id=k.id,
-                text=k.text,
-                useSemantic=getattr(k, "use_semantic", False),
-                userId=k.user_id,
-                createdAt=created_at.isoformat(),
-                enabled=getattr(k, "enabled", True),
-                exclusionWords=excl_by_kw.get(k.id, []),
-            )
-        )
-    return out
+    return _keywords_out_by_user_id(db, user.id)
 
 
 @app.post("/api/keywords", response_model=KeywordOut)
@@ -2543,6 +2630,90 @@ def delete_user(user_id: int, _: User = Depends(get_current_admin), db: Session 
     return {"ok": True}
 
 
+@app.get("/api/admin/users/{user_id}/overview", response_model=AdminUserOverviewOut)
+def get_admin_user_overview(
+    user_id: int,
+    _: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+) -> AdminUserOverviewOut:
+    _ensure_default_user(db)
+    target = db.scalar(select(User).where(User.id == user_id))
+    if not target:
+        raise HTTPException(status_code=404, detail="user not found")
+    plan = get_effective_plan(target)
+    limits_dict = get_limits(plan, db)
+    usage = _usage_counts(db, target.id)
+    own_channels, subscribed_channels = _admin_user_channels(db, target.id)
+    keywords = _keywords_out_by_user_id(db, target.id)
+    mentions_count = db.scalar(select(func.count(Mention.id)).where(Mention.user_id == target.id)) or 0
+    return AdminUserOverviewOut(
+        user=_user_to_out(target),
+        limits=PlanLimitsOut(
+            maxGroups=limits_dict["max_groups"],
+            maxChannels=limits_dict["max_channels"],
+            maxKeywordsExact=limits_dict["max_keywords_exact"],
+            maxKeywordsSemantic=limits_dict["max_keywords_semantic"],
+            maxOwnChannels=limits_dict["max_own_channels"],
+            label=limits_dict.get("label", plan),
+        ),
+        usage=PlanUsageOut(
+            groups=usage["groups"],
+            channels=usage["channels"],
+            keywordsExact=usage["keywords_exact"],
+            keywordsSemantic=usage["keywords_semantic"],
+            ownChannels=usage["own_channels"],
+        ),
+        ownChannels=own_channels,
+        subscribedChannels=subscribed_channels,
+        keywords=keywords,
+        mentionsCount=mentions_count,
+    )
+
+
+@app.get("/api/admin/users/{user_id}/mentions/count", response_model=MentionsCountOut)
+def get_admin_user_mentions_count(
+    user_id: int,
+    _: User = Depends(get_current_admin),
+    keyword: str | None = None,
+    search: str | None = None,
+    source: str | None = None,
+    db: Session = Depends(get_db),
+) -> MentionsCountOut:
+    _ensure_default_user(db)
+    exists = db.scalar(select(User.id).where(User.id == user_id))
+    if not exists:
+        raise HTTPException(status_code=404, detail="user not found")
+    stmt = select(func.count(Mention.id))
+    stmt = _mentions_filter_stmt(stmt, user_id, False, keyword, search, source)
+    total = db.scalar(stmt) or 0
+    return MentionsCountOut(total=total)
+
+
+@app.get("/api/admin/users/{user_id}/mentions", response_model=list[MentionOut])
+def get_admin_user_mentions(
+    user_id: int,
+    _: User = Depends(get_current_admin),
+    limit: int = 50,
+    offset: int = 0,
+    keyword: str | None = None,
+    search: str | None = None,
+    source: str | None = None,
+    sortOrder: Literal["desc", "asc"] = "desc",
+    db: Session = Depends(get_db),
+) -> list[MentionOut]:
+    _ensure_default_user(db)
+    exists = db.scalar(select(User.id).where(User.id == user_id))
+    if not exists:
+        raise HTTPException(status_code=404, detail="user not found")
+    limit = max(1, min(500, limit))
+    offset = max(0, offset)
+    stmt = select(Mention)
+    stmt = _mentions_filter_stmt(stmt, user_id, False, keyword, search, source)
+    order = desc(Mention.created_at) if sortOrder == "desc" else Mention.created_at
+    rows = db.scalars(stmt.order_by(order).offset(offset).limit(limit)).all()
+    return [_mention_to_front(m) for m in rows]
+
+
 @app.get("/api/admin/plan-limits", response_model=list[AdminPlanLimitOut])
 def get_admin_plan_limits(_: User = Depends(get_current_admin), db: Session = Depends(get_db)) -> list[AdminPlanLimitOut]:
     """Список лимитов всех тарифов (из БД или значения по умолчанию)."""
@@ -3067,10 +3238,6 @@ def delete_chat(chat_id: int, user: User = Depends(get_current_user), db: Sessio
     db.delete(c)
     db.commit()
     return {"ok": True}
-
-
-class MentionsCountOut(BaseModel):
-    total: int
 
 
 def _mentions_filter_stmt(stmt, user_id: int, unreadOnly: bool, keyword: str | None, search: str | None, source: str | None = None):
