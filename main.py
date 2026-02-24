@@ -2165,6 +2165,22 @@ def _parse_chat_identifier(ident: str) -> tuple[str | None, int | None, str | No
     return (raw.lstrip("@"), None, None)
 
 
+def _chat_identifier(c: Chat) -> str:
+    """Человекочитаемый идентификатор чата для API."""
+    source = getattr(c, "source", None) or CHAT_SOURCE_TELEGRAM
+    if source == CHAT_SOURCE_MAX:
+        if getattr(c, "max_chat_id", None):
+            return str(c.max_chat_id)
+        return c.title or "—"
+    if getattr(c, "username", None):
+        return str(c.username).lstrip("@")
+    if c.tg_chat_id is not None:
+        return str(c.tg_chat_id)
+    if getattr(c, "invite_hash", None):
+        return f"t.me/joinchat/{c.invite_hash}"
+    return "—"
+
+
 def _chat_to_out(c: Chat, is_owner: bool, subscription_enabled: bool | None = None) -> ChatOut:
     source = getattr(c, "source", None) or CHAT_SOURCE_TELEGRAM
     if source == CHAT_SOURCE_MAX:
