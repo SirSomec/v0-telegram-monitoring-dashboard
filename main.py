@@ -1269,6 +1269,23 @@ def update_me(
 # --- Восстановление пароля ---
 RESET_TOKEN_EXPIRE_HOURS = 1
 FRONTEND_URL = os.getenv("FRONTEND_URL", "").strip()
+FRONTEND_URL_FALLBACK = "http://localhost:3000"
+
+
+def _build_password_reset_link(token: str) -> str:
+    base = (FRONTEND_URL or "").rstrip("/") or FRONTEND_URL_FALLBACK
+    return f"{base}/auth/reset-password?token={token}"
+
+
+def _is_dev_mode() -> bool:
+    for key in ("APP_ENV", "PYTHON_ENV", "ENVIRONMENT", "NODE_ENV"):
+        val = (os.getenv(key) or "").strip().lower()
+        if val in ("dev", "development", "local"):
+            return True
+        if val in ("prod", "production", "staging"):
+            return False
+    frontend_url_l = FRONTEND_URL.lower()
+    return "localhost" in frontend_url_l or "127.0.0.1" in frontend_url_l
 
 
 @app.post("/auth/forgot-password")
@@ -1279,26 +1296,30 @@ def forgot_password(body: ForgotPasswordRequest, db: Session = Depends(get_db)) 
     """
     email = body.email.strip().lower()
     user = db.scalar(select(User).where(func.lower(User.email) == email))
+    token = secrets.token_urlsafe(32)
+    reset_link = _build_password_reset_link(token)
+    response: dict[str, Any] = {
+        "ok": True,
+        "message": "If an account exists, you will receive an email with instructions.",
+    }
+    if _is_dev_mode():
+        response["resetLink"] = reset_link
     if not user or not user.password_hash:
-        return {"ok": True, "message": "If an account exists, you will receive an email with instructions."}
+        return response
 
     # Удаляем старые токены этого пользователя
     for old in db.scalars(select(PasswordResetToken).where(PasswordResetToken.user_id == user.id)).all():
         db.delete(old)
 
-    token = secrets.token_urlsafe(32)
     expires_at = _now_utc() + timedelta(hours=RESET_TOKEN_EXPIRE_HOURS)
     prt = PasswordResetToken(user_id=user.id, token=token, expires_at=expires_at)
     db.add(prt)
     db.commit()
 
-    base = (FRONTEND_URL or "").rstrip("/")
-    reset_link = f"{base}/auth/reset-password?token={token}" if base else f"/auth/reset-password?token={token}"
-
     from email_sender import send_password_reset_email
     send_password_reset_email(user.email or email, reset_link)
 
-    return {"ok": True, "message": "If an account exists, you will receive an email with instructions."}
+    return response
 
 
 @app.post("/auth/reset-password")

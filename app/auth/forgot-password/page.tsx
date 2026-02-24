@@ -22,6 +22,10 @@ export default function ForgotPasswordPage() {
   const [submitting, setSubmitting] = useState(false)
   const [sent, setSent] = useState(false)
   const [error, setError] = useState("")
+  const [resetLink, setResetLink] = useState("")
+  const [successMessage, setSuccessMessage] = useState(
+    "Если аккаунт с таким email существует, мы отправили на него ссылку для сброса пароля. Проверьте почту (и папку «Спам»).",
+  )
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -36,10 +40,15 @@ export default function ForgotPasswordPage() {
     }
     setSubmitting(true)
     try {
-      await apiJson<{ ok: boolean }>(forgotPasswordApiUrl(), {
+      const result = await apiJson<{ ok: boolean; message?: string; resetLink?: string }>(forgotPasswordApiUrl(), {
         method: "POST",
         body: JSON.stringify({ email: email.trim() }),
       })
+      setResetLink(result.resetLink ?? "")
+      setSuccessMessage(
+        result.message ??
+          "Если аккаунт с таким email существует, мы отправили на него ссылку для сброса пароля. Проверьте почту (и папку «Спам»).",
+      )
       setSent(true)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Ошибка запроса")
@@ -74,16 +83,24 @@ export default function ForgotPasswordPage() {
           <CardHeader>
             <CardTitle className="text-xl text-card-foreground">Восстановление пароля</CardTitle>
             <CardDescription className="text-muted-foreground">
-              {sent
-                ? "Если аккаунт с таким email существует, мы отправили на него ссылку для сброса пароля. Проверьте почту (и папку «Спам»)."
-                : "Введите email вашего аккаунта — мы отправим ссылку для сброса пароля."}
+              {sent ? successMessage : "Введите email вашего аккаунта — мы отправим ссылку для сброса пароля."}
             </CardDescription>
           </CardHeader>
           <CardContent>
             {sent ? (
-              <Button asChild className="w-full">
-                <Link href="/auth">Вернуться к входу</Link>
-              </Button>
+              <div className="space-y-3">
+                {resetLink && (
+                  <a
+                    href={resetLink}
+                    className="block rounded-md border border-border bg-secondary px-3 py-2 text-sm text-foreground hover:bg-secondary/80"
+                  >
+                    Перейти по ссылке сброса пароля
+                  </a>
+                )}
+                <Button asChild className="w-full">
+                  <Link href="/auth">Вернуться к входу</Link>
+                </Button>
+              </div>
             ) : (
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div className="space-y-2">
