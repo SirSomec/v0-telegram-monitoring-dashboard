@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import os
 import smtplib
+from html import escape
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
@@ -30,6 +31,21 @@ SMTP_FROM = os.getenv("SMTP_FROM", "").strip() or SMTP_USER
 SMTP_USE_TLS = os.getenv("SMTP_USE_TLS", "1").strip().lower() in ("1", "true", "yes")
 SMTP_TIMEOUT = int(os.getenv("SMTP_TIMEOUT", "20"))  # Таймаут в секундах; быстрый фейл, чтобы не держать воркеры уведомлений
 FRONTEND_URL = os.getenv("FRONTEND_URL", "").strip()  # Базовый URL фронта для ссылок в письмах
+FRONTEND_URL_FALLBACK = "http://localhost:3000"
+
+
+def _normalize_reset_link(reset_link: str) -> str:
+    link = (reset_link or "").strip()
+    if not link:
+        base = (FRONTEND_URL or FRONTEND_URL_FALLBACK).rstrip("/")
+        return f"{base}/auth/reset-password"
+    if link.startswith(("http://", "https://")):
+        return link
+    if link.startswith("/"):
+        base = (FRONTEND_URL or FRONTEND_URL_FALLBACK).rstrip("/")
+        return f"{base}{link}"
+    # Если схема не передана (example.com/...), добавляем https
+    return f"https://{link.lstrip('/')}"
 
 
 def _smtp_connection():
@@ -55,6 +71,8 @@ def send_password_reset_email(to_email: str, reset_link: str) -> bool:
     Отправить письмо со ссылкой для сброса пароля.
     Возвращает True при успехе, False при ошибке. Если SMTP не настроен — логирует ссылку и возвращает True.
     """
+    reset_link = _normalize_reset_link(reset_link)
+    reset_link_html = escape(reset_link, quote=True)
     subject = "TeleScope — восстановление пароля"
     body_plain = (
         f"Здравствуйте.\n\n"
@@ -66,7 +84,9 @@ def send_password_reset_email(to_email: str, reset_link: str) -> bool:
     body_html = (
         f"<p>Здравствуйте.</p>"
         f"<p>Вы запросили сброс пароля для аккаунта TeleScope.</p>"
-        f"<p><a href=\"{reset_link}\">Задать новый пароль</a></p>"
+        f"<p><a href=\"{reset_link_html}\">Задать новый пароль</a></p>"
+        f"<p>Если кнопка не открывается, скопируйте ссылку:</p>"
+        f"<p><a href=\"{reset_link_html}\">{reset_link_html}</a></p>"
         f"<p>Ссылка действительна 1 час. Если вы не запрашивали сброс, проигнорируйте это письмо.</p>"
         f"<p>— TeleScope</p>"
     )
