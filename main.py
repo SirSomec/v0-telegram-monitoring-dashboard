@@ -13,7 +13,7 @@ from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import desc, func, select, update
+from sqlalchemy import desc, func, select, update, text
 from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.orm import Session, selectinload
 
@@ -960,7 +960,7 @@ def _user_profile_link(m: Mention) -> str | None:
 def _mention_to_front(m: Mention) -> MentionOut:
     group_name = (m.chat_name or m.chat_username or "Неизвестный чат").strip()
     user_name = (m.sender_name or "Неизвестный пользователь").strip()
-    created_at = m.created_at
+    created_at = m.created_at or _now_utc()
     if created_at.tzinfo is None:
         created_at = created_at.replace(tzinfo=timezone.utc)
     source = getattr(m, "source", None) or CHAT_SOURCE_TELEGRAM
@@ -2710,8 +2710,69 @@ def get_admin_user_mentions(
     stmt = select(Mention)
     stmt = _mentions_filter_stmt(stmt, user_id, False, keyword, search, source)
     order = desc(Mention.created_at) if sortOrder == "desc" else Mention.created_at
-    rows = db.scalars(stmt.order_by(order).offset(offset).limit(limit)).all()
-    return [_mention_to_front(m) for m in rows]
+    try:
+        rows = db.scalars(stmt.order_by(order).offset(offset).limit(limit)).all()
+        return [_mention_to_front(m) for m in rows]
+    except (OperationalError, ProgrammingError):
+        # Fallback для старых БД, где в mentions могут отсутствовать новые колонки.
+        where_sql = "WHERE user_id = :user_id"
+        params: dict[str, Any] = {
+            "user_id": user_id,
+            "limit": limit,
+            "offset": offset,
+        }
+        if keyword is not None and keyword.strip():
+            where_sql += " AND keyword_text = :keyword"
+            params["keyword"] = keyword.strip()
+        if search is not None and search.strip():
+            where_sql += " AND message_text ILIKE :search"
+            params["search"] = f"%{search.strip()}%"
+        order_sql = "DESC" if sortOrder == "desc" else "ASC"
+        rows = db.execute(
+            text(
+                "SELECT id, chat_name, chat_username, sender_name, sender_id, "
+                "message_text, keyword_text, is_lead, is_read, created_at, chat_id, message_id "
+                "FROM mentions "
+                f"{where_sql} "
+                f"ORDER BY created_at {order_sql}, id {order_sql} "
+                "OFFSET :offset LIMIT :limit"
+            ),
+            params,
+        ).mappings().all()
+        out: list[MentionOut] = []
+        for r in rows:
+            created_at = r.get("created_at") or _now_utc()
+            if isinstance(created_at, str):
+                try:
+                    created_at = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+                except ValueError:
+                    created_at = _now_utc()
+            if created_at.tzinfo is None:
+                created_at = created_at.replace(tzinfo=timezone.utc)
+            group_name = (r.get("chat_name") or r.get("chat_username") or "Неизвестный чат").strip()
+            user_name = (r.get("sender_name") or "Неизвестный пользователь").strip()
+            sender_id = r.get("sender_id")
+            out.append(
+                MentionOut(
+                    id=str(r.get("id")),
+                    groupName=group_name,
+                    groupIcon=_initials(group_name),
+                    userName=user_name,
+                    userInitials=_initials(user_name),
+                    userLink=(f"tg://user?id={sender_id}" if sender_id is not None else None),
+                    message=(r.get("message_text") or ""),
+                    keyword=(r.get("keyword_text") or ""),
+                    timestamp=_humanize_ru(created_at),
+                    isLead=bool(r.get("is_lead")),
+                    isRead=bool(r.get("is_read")),
+                    createdAt=created_at.isoformat(),
+                    messageLink=_message_link(r.get("chat_id"), r.get("message_id"), r.get("chat_username")),
+                    groupLink=_group_link(r.get("chat_username")),
+                    source=CHAT_SOURCE_TELEGRAM,
+                    topicMatchPercent=None,
+                )
+            )
+        return out
 
 
 @app.get("/api/admin/plan-limits", response_model=list[AdminPlanLimitOut])
