@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from auth_utils import create_token, decode_token, hash_password, verify_password
 from database import get_db, init_db
-from models import Chat, ChatGroup, ExclusionWord, Keyword, Mention, NotificationSettings, PasswordResetToken, User, user_chat_subscriptions, user_thematic_group_subscriptions, PlanLimit, SupportTicket, SupportMessage, SupportAttachment, CHAT_SOURCE_TELEGRAM, CHAT_SOURCE_MAX
+from models import Chat, ChatGroup, ExclusionWord, Keyword, Mention, NotificationSettings, PasswordResetToken, User, chat_group_links, user_chat_subscriptions, user_thematic_group_subscriptions, PlanLimit, SupportTicket, SupportMessage, SupportAttachment, CHAT_SOURCE_TELEGRAM, CHAT_SOURCE_MAX
 from parser import TelegramScanner
 from parser_max import MaxScanner
 from plans import PLAN_BASIC, PLAN_FREE, PLAN_ORDER, get_effective_plan, get_limits
@@ -711,12 +711,24 @@ def _usage_counts(db: Session, user_id: int) -> dict[str, int]:
     )
     groups = own_groups + subscribed_thematic
     own_chats = db.scalar(select(func.count(Chat.id)).where(Chat.user_id == user_id)) or 0
-    # В лимит каналов входят только индивидуальные подписки (via_group_id IS NULL); подписки через группы не считаются
+    # В лимит каналов входят только индивидуальные подписки (via_group_id IS NULL),
+    # но канал не должен тарифицироваться отдельно, если пользователь уже подписан
+    # на тематическую группу, в которую этот канал входит.
     sub_count_individual = (
         db.scalar(
-            select(func.count()).select_from(user_chat_subscriptions).where(
+            select(func.count())
+            .select_from(user_chat_subscriptions)
+            .where(
                 user_chat_subscriptions.c.user_id == user_id,
                 user_chat_subscriptions.c.via_group_id.is_(None),
+                ~user_chat_subscriptions.c.chat_id.in_(
+                    select(chat_group_links.c.chat_id)
+                    .select_from(chat_group_links.join(
+                        user_thematic_group_subscriptions,
+                        chat_group_links.c.group_id == user_thematic_group_subscriptions.c.group_id,
+                    ))
+                    .where(user_thematic_group_subscriptions.c.user_id == user_id)
+                ),
             )
         )
         or 0
