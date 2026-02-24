@@ -67,35 +67,36 @@ export function SidebarNav({
           const showSupportUnread = item.label === "Поддержка" && supportHasUnread
           const showGroupsHint = item.label === "Группы" && showGroupsOnboardingHint && !collapsed
           return (
-            <button
-              key={item.label}
-              onClick={() => onNavigate(item.label)}
-              className={cn(
-                "relative flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
-                collapsed && "justify-center px-0",
-                isActive
-                  ? "bg-sidebar-accent text-primary"
-                  : "text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground"
-              )}
-            >
-              <item.icon className="size-5 shrink-0" />
-              {!collapsed && <span>{item.label}</span>}
-              {showSupportUnread && (
-                <span
-                  className="absolute right-2 top-2 size-2 rounded-full bg-destructive"
-                  aria-hidden
-                />
-              )}
-              {showGroupsHint && (
-                <span className="pointer-events-none absolute left-[calc(100%+8px)] top-1/2 z-20 -translate-y-1/2 whitespace-nowrap rounded-2xl border border-primary/30 bg-primary/10 px-3 py-1 text-[11px] font-medium text-primary shadow-sm">
+            <div key={item.label} className="space-y-1">
+              <button
+                onClick={() => onNavigate(item.label)}
+                className={cn(
+                  "relative flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
+                  collapsed && "justify-center px-0",
+                  isActive
+                    ? "bg-sidebar-accent text-primary"
+                    : "text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground"
+                )}
+              >
+                <item.icon className="size-5 shrink-0" />
+                {!collapsed && <span>{item.label}</span>}
+                {showSupportUnread && (
                   <span
-                    className="absolute -left-1 top-1/2 size-2 -translate-y-1/2 rotate-45 border-b border-l border-primary/30 bg-primary/10"
+                    className="absolute right-2 top-2 size-2 rounded-full bg-destructive"
+                    aria-hidden
+                  />
+                )}
+              </button>
+              {showGroupsHint && (
+                <div className="relative ml-9 rounded-xl border border-primary/35 bg-primary/10 px-2.5 py-1.5 text-[11px] leading-tight text-primary">
+                  <span
+                    className="absolute -top-1 left-3 size-2 rotate-45 border-l border-t border-primary/35 bg-primary/10"
                     aria-hidden
                   />
                   добавьте первые каналы для отслеживания
-                </span>
+                </div>
               )}
-            </button>
+            </div>
           )
         })}
       </nav>
