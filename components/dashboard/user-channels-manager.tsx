@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
@@ -9,8 +10,9 @@ import { Switch } from "@/components/ui/switch"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Trash2, Plus, RefreshCw, Search } from "lucide-react"
+import { Trash2, Plus, RefreshCw, Search, Lightbulb, X } from "lucide-react"
 import { apiJson } from "@/lib/api"
+import { useAuth } from "@/lib/auth-context"
 
 export type ChatOut = {
   id: number
@@ -54,10 +56,12 @@ function scoreChannelMatch(ch: ChatAvailableOut, q: string): number {
 }
 
 export function UserChannelsManager({ canAddResources = true }: { canAddResources?: boolean } = {}) {
+  const { token } = useAuth()
   const [myChannels, setMyChannels] = useState<ChatOut[]>([])
   const [availableChannels, setAvailableChannels] = useState<ChatAvailableOut[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string>("")
+  const [showOnboardingTip, setShowOnboardingTip] = useState(false)
 
   const [identifier, setIdentifier] = useState("")
   const [title, setTitle] = useState("")
@@ -75,6 +79,12 @@ export function UserChannelsManager({ canAddResources = true }: { canAddResource
     withScores.sort((a, b) => b.score - a.score)
     return withScores.map((x) => x.ch)
   }, [availableChannels, channelSearchQuery])
+
+  const onboardingTipKey = useMemo(
+    () => (token ? `telescope_onboarding_hide_until_relogin:${token}` : null),
+    [token]
+  )
+  const hasConnectedChannels = myChannels.length > 0
 
   async function refresh() {
     setLoading(true)
@@ -96,6 +106,15 @@ export function UserChannelsManager({ canAddResources = true }: { canAddResource
   useEffect(() => {
     refresh()
   }, [])
+
+  useEffect(() => {
+    if (!onboardingTipKey || hasConnectedChannels) {
+      setShowOnboardingTip(false)
+      return
+    }
+    const hiddenForSession = localStorage.getItem(onboardingTipKey) === "1"
+    setShowOnboardingTip(!hiddenForSession)
+  }, [hasConnectedChannels, onboardingTipKey])
 
   const canCreate = identifier.trim().length > 0
 
@@ -185,8 +204,36 @@ export function UserChannelsManager({ canAddResources = true }: { canAddResource
     }
   }, [])
 
+  function hideOnboardingTipUntilRelogin() {
+    if (onboardingTipKey) {
+      localStorage.setItem(onboardingTipKey, "1")
+    }
+    setShowOnboardingTip(false)
+  }
+
   return (
     <div className="space-y-6">
+      {showOnboardingTip && (
+        <Alert className="border-primary/40 bg-primary/5 relative">
+          <Lightbulb className="text-primary" />
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={hideOnboardingTipUntilRelogin}
+            className="absolute top-2 right-2"
+            aria-label="Скрыть подсказку до следующего входа"
+            title="Скрыть до следующего входа"
+          >
+            <X className="size-4" />
+          </Button>
+          <AlertTitle>Как запустить мониторинг</AlertTitle>
+          <AlertDescription>
+            <p>1) Добавьте свой канал через форму выше или включите один из доступных каналов ниже.</p>
+            <p>2) После подключения первого канала сервис начнет собирать упоминания автоматически.</p>
+            <p className="text-xs">Можно скрыть подсказку крестиком до следующего входа в аккаунт.</p>
+          </AlertDescription>
+        </Alert>
+      )}
       <Card className="border-border bg-card">
         <CardHeader>
           {!canAddResources && (
