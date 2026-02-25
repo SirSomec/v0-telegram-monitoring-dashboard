@@ -867,6 +867,24 @@ class TelegramScanner:
                 break
         return out
 
+    def _is_weak_semantic_word(self, word: str) -> bool:
+        """
+        True для «слабых» слов-кандидатов в span (служебные/слишком короткие),
+        которые часто дают ложные semantic-match при сравнении одиночных токенов.
+        """
+        w = (word or "").strip().casefold()
+        if len(w) < 4:
+            return True
+        # Частые служебные слова RU/EN; не используем как semantic-span.
+        weak_words = {
+            "для", "про", "при", "под", "над", "без", "меж", "через", "после", "перед",
+            "или", "как", "что", "это", "эта", "этот", "эти", "того", "тому", "тогда",
+            "здесь", "там", "куда", "когда", "если", "чтобы", "где", "кто",
+            "about", "with", "from", "into", "onto", "over", "under", "then", "than",
+            "that", "this", "these", "those", "your", "just", "only", "also", "very",
+        }
+        return w in weak_words
+
     async def _match_keywords(
         self,
         items: list[KeywordItem],
@@ -964,11 +982,26 @@ class TelegramScanner:
                 if s > best_sim:
                     best_sim = s
                     best_span = chunks[i] if i < len(chunks) else best_span
+            chunk_or_text_best = best_sim
+            word_best_sim: float | None = None
+            word_best_span: str | None = None
             for i, wvec in enumerate(word_vecs):
+                word = words[i] if i < len(words) else ""
+                if self._is_weak_semantic_word(word):
+                    continue
                 s = cosine_similarity(wvec, kw_vec)
-                if s > best_sim:
-                    best_sim = s
-                    best_span = words[i] if i < len(words) else best_span
+                if word_best_sim is None or s > word_best_sim:
+                    word_best_sim = s
+                    word_best_span = word
+            # Не даём одиночным словам «перебивать» тему по шуму:
+            # слово учитывается только если заметно лучше фразы/сообщения.
+            if (
+                word_best_sim is not None
+                and word_best_span is not None
+                and word_best_sim >= chunk_or_text_best + 0.08
+            ):
+                best_sim = word_best_sim
+                best_span = word_best_span
             if best_sim >= thresh:
                 if min_topic_percent is not None and best_sim * 100 < min_topic_percent:
                     continue
