@@ -143,6 +143,7 @@ export function ParserManager() {
   const [linkedBackfillLoading, setLinkedBackfillLoading] = useState(false)
   const [linkedBackfillMessage, setLinkedBackfillMessage] = useState<string>("")
   const [linkedBackfillOk, setLinkedBackfillOk] = useState<boolean | null>(null)
+  const [linkedBackfillRunning, setLinkedBackfillRunning] = useState(false)
 
   // Локальное состояние формы настроек (для редактирования)
   const [form, setForm] = useState<
@@ -236,6 +237,44 @@ export function ParserManager() {
   useEffect(() => {
     fetchEmailStatus()
   }, [])
+
+  async function fetchLinkedBackfillStatus() {
+    try {
+      const res = await apiJson<{
+        ok: boolean
+        status: {
+          running: boolean
+          lastResult?: { checked?: number; changed?: number; skipped?: boolean; detail?: string } | null
+          lastError?: string | null
+        }
+      }>("/api/admin/parser/chats/backfill-linked/status")
+      const st = res.status
+      setLinkedBackfillRunning(Boolean(st?.running))
+      if (st?.lastError) {
+        setLinkedBackfillOk(false)
+        setLinkedBackfillMessage(st.lastError)
+      } else if (st?.lastResult && !st.running) {
+        const rr = st.lastResult
+        const detail = rr.detail?.trim() || "Backfill выполнен."
+        setLinkedBackfillOk(true)
+        setLinkedBackfillMessage(
+          `${detail} Проверено: ${rr.checked ?? 0}, изменений: ${rr.changed ?? 0}${rr.skipped ? " (пропущено)" : ""}.`
+        )
+      }
+    } catch {
+      // Тихо: не блокируем UI админки из-за временной недоступности статуса.
+    }
+  }
+
+  useEffect(() => {
+    fetchLinkedBackfillStatus()
+  }, [])
+
+  useEffect(() => {
+    if (!linkedBackfillRunning) return
+    const timer = setInterval(fetchLinkedBackfillStatus, 3000)
+    return () => clearInterval(timer)
+  }, [linkedBackfillRunning])
 
   async function sendTestEmail() {
     setEmailTestLoading(true)
@@ -359,19 +398,19 @@ export function ParserManager() {
     try {
       const res = await apiJson<{
         ok: boolean
-        skipped: boolean
-        checked: number
-        changed: number
-        detail?: string
+        started: boolean
+        status: {
+          running: boolean
+          lastResult?: { checked?: number; changed?: number; skipped?: boolean; detail?: string } | null
+        }
       }>("/api/admin/parser/chats/backfill-linked", {
         method: "POST",
         body: JSON.stringify({ force: true }),
       })
-      setLinkedBackfillOk(Boolean(res.ok))
-      const detail = res.detail?.trim() || "Backfill выполнен."
-      setLinkedBackfillMessage(
-        `${detail} Проверено: ${res.checked}, изменений: ${res.changed}${res.skipped ? " (пропущено)" : ""}.`
-      )
+      setLinkedBackfillRunning(Boolean(res.status?.running))
+      setLinkedBackfillOk(true)
+      setLinkedBackfillMessage(res.started ? "Backfill запущен в фоне. Обновляю статус…" : "Backfill уже выполняется. Обновляю статус…")
+      await fetchLinkedBackfillStatus()
       await fetchLogs()
     } catch (e) {
       setLinkedBackfillOk(false)
@@ -585,11 +624,11 @@ export function ParserManager() {
             <Button
               variant="outline"
               onClick={runLinkedChatsBackfill}
-              disabled={linkedBackfillLoading || actionLoading}
+              disabled={linkedBackfillLoading || actionLoading || linkedBackfillRunning}
               aria-label="Перепроверить связанные discussion-чаты"
             >
               <RefreshCw className={`mr-2 size-4 ${linkedBackfillLoading ? "animate-spin" : ""}`} />
-              Перепроверить linked-чаты
+              {linkedBackfillRunning ? "Backfill выполняется…" : "Перепроверить linked-чаты"}
             </Button>
           </div>
           {linkedBackfillMessage && (

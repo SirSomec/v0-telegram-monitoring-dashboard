@@ -671,6 +671,14 @@ scanner: TelegramScanner | None = None
 max_scanner: MaxScanner | None = None
 main_loop: asyncio.AbstractEventLoop | None = None
 _TG_LINKED_BACKFILL_FLAG = "TG_LINKED_CHAT_BACKFILL_V1_DONE"
+_linked_backfill_lock = threading.Lock()
+_linked_backfill_state: dict[str, Any] = {
+    "running": False,
+    "lastStartedAt": None,
+    "lastFinishedAt": None,
+    "lastResult": None,
+    "lastError": None,
+}
 
 
 def _ensure_default_user(db: Session) -> User:
@@ -2601,29 +2609,117 @@ def _backfill_telegram_linked_chats_once(*, force: bool = False) -> dict[str, An
             "detail": "Backfill уже был выполнен ранее.",
         }
 
+    async def _collect_linked_meta_batch(chats: list[Chat]) -> tuple[int, dict[int, dict[str, Any]]]:
+        api_id = get_parser_setting_str("TG_API_ID")
+        api_hash = get_parser_setting_str("TG_API_HASH")
+        if not api_id or not api_hash:
+            return (0, {})
+        try:
+            api_id_int = int(api_id)
+        except ValueError:
+            return (0, {})
+
+        session_string = get_parser_setting_str("TG_SESSION_STRING")
+        session_name = get_parser_setting_str("TG_SESSION_NAME") or "telegram_monitor"
+        proxy = _proxy_tuple_from_settings()
+        client = TelegramClient(StringSession(session_string), api_id_int, api_hash, proxy=proxy) if session_string else TelegramClient(session_name, api_id_int, api_hash, proxy=proxy)
+
+        checked = 0
+        meta_by_chat_id: dict[int, dict[str, Any]] = {}
+        joined_chat_ids: set[int] = set()
+
+        try:
+            await client.connect()
+            if not await client.is_user_authorized():
+                return (0, {})
+
+            async def _join_once(entity_or_ident: Any, tg_chat_id: int | None = None) -> None:
+                key = int(tg_chat_id) if tg_chat_id is not None else None
+                if key is not None and key in joined_chat_ids:
+                    return
+                try:
+                    entity = entity_or_ident
+                    if isinstance(entity_or_ident, str):
+                        entity = await client.get_entity(entity_or_ident)
+                    await client(JoinChannelRequest(entity))
+                except UserAlreadyParticipantError:
+                    pass
+                except Exception:
+                    pass
+                finally:
+                    if key is not None:
+                        joined_chat_ids.add(key)
+
+            for ch in chats:
+                identifier = _chat_identifier(ch)
+                if identifier == "—":
+                    continue
+                checked += 1
+                try:
+                    entity = await client.get_entity(identifier)
+                    channel_tg_chat_id = _normalize_telethon_chat_id(getattr(entity, "id", None))
+                    await _join_once(entity, channel_tg_chat_id)
+                    full = await client(GetFullChannelRequest(entity))
+                    full_chat = getattr(full, "full_chat", None)
+                    linked_tg_chat_id = _normalize_telethon_chat_id(getattr(full_chat, "linked_chat_id", None))
+                    linked_username = None
+                    linked_title = None
+                    if linked_tg_chat_id is not None:
+                        linked_entity = None
+                        try:
+                            linked_entity = await client.get_entity(PeerChannel(abs(linked_tg_chat_id) % (10**10)))
+                        except Exception:
+                            linked_entity = None
+                        if linked_entity is not None:
+                            await _join_once(linked_entity, linked_tg_chat_id)
+                            linked_username = getattr(linked_entity, "username", None)
+                            linked_title = getattr(linked_entity, "title", None) or getattr(linked_entity, "name", None)
+                        else:
+                            await _join_once(str(linked_tg_chat_id), linked_tg_chat_id)
+
+                    meta_by_chat_id[ch.id] = {
+                        "channel_tg_chat_id": channel_tg_chat_id,
+                        "channel_username": getattr(entity, "username", None),
+                        "linked_tg_chat_id": linked_tg_chat_id,
+                        "linked_username": linked_username,
+                        "linked_title": linked_title,
+                    }
+                except Exception:
+                    continue
+            return (checked, meta_by_chat_id)
+        finally:
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
+
     with SessionLocal() as db:
-        channels = db.scalars(
+        all_tg_chats = db.scalars(
             select(Chat)
             .where(Chat.source == CHAT_SOURCE_TELEGRAM)
             .order_by(Chat.id.asc())
             .options(selectinload(Chat.groups))
         ).all()
-        changed_total = 0
-        checked = 0
-        for channel in channels:
-            identifier = _chat_identifier(channel)
-            if identifier == "—":
+        # Обрабатываем только один "root"-кандидат на billing_key (или сам чат, если ключ не задан),
+        # чтобы не делать повторные запросы к Telegram для уже добавленных discussion-чатов.
+        candidates: list[Chat] = []
+        seen_units: set[str] = set()
+        for ch in all_tg_chats:
+            unit_key = (getattr(ch, "billing_key", None) or f"chat:{ch.id}").strip()
+            if unit_key in seen_units:
                 continue
-            checked += 1
-            # Обеспечиваем доступ к каналу/чату под сервисным аккаунтом до попытки резолва discussion.
-            _ensure_telegram_membership(identifier)
-            meta = _resolve_telegram_channel_bundle_meta(identifier)
+            seen_units.add(unit_key)
+            candidates.append(ch)
+
+        checked, meta_by_chat_id = asyncio.run(_collect_linked_meta_batch(candidates))
+        changed_total = 0
+        for channel in candidates:
+            meta = meta_by_chat_id.get(channel.id)
             if not meta:
                 continue
             linked_tg_chat_id = meta.get("linked_tg_chat_id")
             if linked_tg_chat_id is None:
                 continue
-            _ensure_telegram_membership(str(linked_tg_chat_id))
 
             billing_key = (
                 getattr(channel, "billing_key", None)
@@ -3553,6 +3649,44 @@ class LinkedChatsBackfillBody(BaseModel):
     force: bool = True  # True = запускать даже если флаг уже выставлен
 
 
+def _linked_backfill_state_out() -> dict[str, Any]:
+    with _linked_backfill_lock:
+        return {
+            "running": bool(_linked_backfill_state.get("running", False)),
+            "lastStartedAt": _linked_backfill_state.get("lastStartedAt"),
+            "lastFinishedAt": _linked_backfill_state.get("lastFinishedAt"),
+            "lastResult": _linked_backfill_state.get("lastResult"),
+            "lastError": _linked_backfill_state.get("lastError"),
+        }
+
+
+def _run_linked_backfill_job(force: bool) -> None:
+    from parser_log import append as parser_log_append
+    with _linked_backfill_lock:
+        _linked_backfill_state["running"] = True
+        _linked_backfill_state["lastStartedAt"] = _now_utc().isoformat()
+        _linked_backfill_state["lastFinishedAt"] = None
+        _linked_backfill_state["lastResult"] = None
+        _linked_backfill_state["lastError"] = None
+    parser_log_append(f"Запуск TG linked-chat backfill (force={force}).")
+    try:
+        result = _backfill_telegram_linked_chats_once(force=force)
+        with _linked_backfill_lock:
+            _linked_backfill_state["lastResult"] = result
+        parser_log_append(
+            "TG linked-chat backfill завершён: "
+            f"skipped={result.get('skipped')} checked={result.get('checked')} changed={result.get('changed')}."
+        )
+    except Exception as e:
+        with _linked_backfill_lock:
+            _linked_backfill_state["lastError"] = str(e)
+        parser_log_append(f"Ошибка TG linked-chat backfill: {e}")
+    finally:
+        with _linked_backfill_lock:
+            _linked_backfill_state["running"] = False
+            _linked_backfill_state["lastFinishedAt"] = _now_utc().isoformat()
+
+
 @app.post("/api/admin/parser/auth/request-code")
 async def parser_auth_request_code(
     body: ParserAuthRequestCodeBody,
@@ -3680,22 +3814,21 @@ async def backfill_linked_chats(
     body: LinkedChatsBackfillBody,
     _: User = Depends(get_current_admin),
 ) -> dict[str, Any]:
-    """Принудительно запустить бэкфилл связок канал↔discussion для всех TG-чатов."""
-    from parser_log import append as parser_log_append
-    parser_log_append(f"Запуск TG linked-chat backfill (force={bool(body.force)}).")
-    try:
-        result = await asyncio.get_running_loop().run_in_executor(
-            None,
-            lambda: _backfill_telegram_linked_chats_once(force=bool(body.force)),
-        )
-    except Exception as e:
-        parser_log_append(f"Ошибка TG linked-chat backfill: {e}")
-        raise HTTPException(status_code=500, detail=f"Backfill failed: {e}")
-    parser_log_append(
-        "TG linked-chat backfill завершён: "
-        f"skipped={result.get('skipped')} checked={result.get('checked')} changed={result.get('changed')}."
-    )
-    return result
+    """Запустить бэкфилл в фоне (чтобы не упираться в gateway timeout)."""
+    force = bool(body.force)
+    is_running = False
+    with _linked_backfill_lock:
+        is_running = bool(_linked_backfill_state.get("running"))
+    if is_running:
+        return {"ok": True, "started": False, "status": _linked_backfill_state_out()}
+    t = threading.Thread(target=_run_linked_backfill_job, args=(force,), daemon=True, name="TGLinkedBackfill")
+    t.start()
+    return {"ok": True, "started": True, "status": _linked_backfill_state_out()}
+
+
+@app.get("/api/admin/parser/chats/backfill-linked/status")
+def backfill_linked_chats_status(_: User = Depends(get_current_admin)) -> dict[str, Any]:
+    return {"ok": True, "status": _linked_backfill_state_out()}
 
 
 @app.get("/api/chats/available", response_model=list[ChatAvailableOut])
