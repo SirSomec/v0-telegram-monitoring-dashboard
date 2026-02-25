@@ -2634,7 +2634,7 @@ def _backfill_telegram_linked_chats_once(*, force: bool = False) -> dict[str, An
             "detail": "Backfill уже был выполнен ранее.",
         }
 
-    async def _collect_linked_meta_batch(chats: list[Chat]) -> tuple[int, dict[int, dict[str, Any]], dict[str, int]]:
+    async def _collect_linked_meta_batch(chats: list[Chat]) -> tuple[int, dict[int, dict[str, Any]], dict[str, Any]]:
         api_id = get_parser_setting_str("TG_API_ID")
         api_hash = get_parser_setting_str("TG_API_HASH")
         if not api_id or not api_hash:
@@ -2652,14 +2652,30 @@ def _backfill_telegram_linked_chats_once(*, force: bool = False) -> dict[str, An
         checked = 0
         meta_by_chat_id: dict[int, dict[str, Any]] = {}
         joined_chat_ids: set[int] = set()
-        join_stats: dict[str, int] = {"ok": 0, "request_sent": 0, "failed": 0}
+        join_stats: dict[str, Any] = {
+            "ok": 0,
+            "request_sent": 0,
+            "failed": 0,
+            "ok_targets": [],
+            "request_targets": [],
+            "failed_targets": [],
+            "auth_user_id": None,
+            "auth_username": None,
+        }
 
         try:
             await client.connect()
             if not await client.is_user_authorized():
                 return (0, {}, join_stats)
+            try:
+                me = await client.get_me()
+                if me is not None:
+                    join_stats["auth_user_id"] = getattr(me, "id", None)
+                    join_stats["auth_username"] = getattr(me, "username", None)
+            except Exception:
+                pass
 
-            async def _join_once(entity_or_ident: Any, tg_chat_id: int | None = None) -> str:
+            async def _join_once(entity_or_ident: Any, tg_chat_id: int | None = None, target_label: str | None = None) -> str:
                 key = int(tg_chat_id) if tg_chat_id is not None else None
                 if key is not None and key in joined_chat_ids:
                     return "already"
@@ -2669,11 +2685,15 @@ def _backfill_telegram_linked_chats_once(*, force: bool = False) -> dict[str, An
                         entity = await client.get_entity(entity_or_ident)
                     await client(JoinChannelRequest(entity))
                     join_stats["ok"] = join_stats.get("ok", 0) + 1
+                    if target_label and len(join_stats["ok_targets"]) < 50:
+                        join_stats["ok_targets"].append(target_label)
                     return "joined"
                 except UserAlreadyParticipantError:
                     return "already"
                 except InviteRequestSentError:
                     join_stats["request_sent"] = join_stats.get("request_sent", 0) + 1
+                    if target_label and len(join_stats["request_targets"]) < 50:
+                        join_stats["request_targets"].append(target_label)
                     return "request_sent"
                 except FloodWaitError as e:
                     try:
@@ -2683,17 +2703,25 @@ def _backfill_telegram_linked_chats_once(*, force: bool = False) -> dict[str, An
                             entity = await client.get_entity(entity_or_ident)
                         await client(JoinChannelRequest(entity))
                         join_stats["ok"] = join_stats.get("ok", 0) + 1
+                        if target_label and len(join_stats["ok_targets"]) < 50:
+                            join_stats["ok_targets"].append(target_label)
                         return "joined"
                     except UserAlreadyParticipantError:
                         return "already"
                     except InviteRequestSentError:
                         join_stats["request_sent"] = join_stats.get("request_sent", 0) + 1
+                        if target_label and len(join_stats["request_targets"]) < 50:
+                            join_stats["request_targets"].append(target_label)
                         return "request_sent"
                     except Exception:
                         join_stats["failed"] = join_stats.get("failed", 0) + 1
+                        if target_label and len(join_stats["failed_targets"]) < 50:
+                            join_stats["failed_targets"].append(target_label)
                         return "failed"
                 except Exception:
                     join_stats["failed"] = join_stats.get("failed", 0) + 1
+                    if target_label and len(join_stats["failed_targets"]) < 50:
+                        join_stats["failed_targets"].append(target_label)
                     return "failed"
                 finally:
                     if key is not None:
@@ -2708,7 +2736,11 @@ def _backfill_telegram_linked_chats_once(*, force: bool = False) -> dict[str, An
                 try:
                     entity = await client.get_entity(identifier)
                     channel_tg_chat_id = _normalize_telethon_chat_id(getattr(entity, "id", None))
-                    await _join_once(entity, channel_tg_chat_id)
+                    await _join_once(
+                        entity,
+                        channel_tg_chat_id,
+                        target_label=f"channel:{identifier}",
+                    )
                     full = await client(GetFullChannelRequest(entity))
                     full_chat = getattr(full, "full_chat", None)
                     linked_tg_chat_id = _normalize_telethon_chat_id(getattr(full_chat, "linked_chat_id", None))
@@ -2727,14 +2759,19 @@ def _backfill_telegram_linked_chats_once(*, force: bool = False) -> dict[str, An
                             except Exception:
                                 linked_entity = None
                         if linked_entity is not None:
-                            join_result = await _join_once(linked_entity, linked_tg_chat_id)
+                            link_label = f"linked:{linked_username or linked_tg_chat_id}"
+                            join_result = await _join_once(linked_entity, linked_tg_chat_id, target_label=link_label)
                             if join_result == "failed":
                                 # fallback на id, если объект не подошёл для join
-                                await _join_once(str(linked_tg_chat_id), linked_tg_chat_id)
+                                await _join_once(str(linked_tg_chat_id), linked_tg_chat_id, target_label=link_label)
                             linked_username = getattr(linked_entity, "username", None)
                             linked_title = getattr(linked_entity, "title", None) or getattr(linked_entity, "name", None)
                         else:
-                            await _join_once(str(linked_tg_chat_id), linked_tg_chat_id)
+                            await _join_once(
+                                str(linked_tg_chat_id),
+                                linked_tg_chat_id,
+                                target_label=f"linked:{linked_tg_chat_id}",
+                            )
 
                     meta_by_chat_id[ch.id] = {
                         "channel_tg_chat_id": channel_tg_chat_id,
@@ -2820,6 +2857,10 @@ def _backfill_telegram_linked_chats_once(*, force: bool = False) -> dict[str, An
             "join_ok": int(join_stats.get("ok", 0)),
             "join_requests": int(join_stats.get("request_sent", 0)),
             "join_failed": int(join_stats.get("failed", 0)),
+            "join_request_targets": list(join_stats.get("request_targets", [])),
+            "join_failed_targets": list(join_stats.get("failed_targets", [])),
+            "auth_user_id": join_stats.get("auth_user_id"),
+            "auth_username": join_stats.get("auth_username"),
             "flag": _TG_LINKED_BACKFILL_FLAG,
             "detail": "Backfill выполнен.",
         }
@@ -3738,7 +3779,9 @@ def _run_linked_backfill_job(force: bool) -> None:
         parser_log_append(
             "TG linked-chat backfill завершён: "
             f"skipped={result.get('skipped')} checked={result.get('checked')} changed={result.get('changed')} "
-            f"join_ok={result.get('join_ok', 0)} join_requests={result.get('join_requests', 0)} join_failed={result.get('join_failed', 0)}."
+            f"join_ok={result.get('join_ok', 0)} join_requests={result.get('join_requests', 0)} join_failed={result.get('join_failed', 0)} "
+            f"auth={result.get('auth_user_id')}@{result.get('auth_username') or '-'} "
+            f"request_targets={result.get('join_request_targets', [])} failed_targets={result.get('join_failed_targets', [])}."
         )
     except Exception as e:
         with _linked_backfill_lock:
