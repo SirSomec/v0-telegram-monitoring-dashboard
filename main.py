@@ -2499,13 +2499,23 @@ def _upsert_linked_chat_for_channel(
 
     db.flush()
     if bool(channel_chat.is_global):
-        sub_rows = db.execute(
-            select(
-                user_chat_subscriptions.c.user_id,
-                user_chat_subscriptions.c.via_group_id,
-                user_chat_subscriptions.c.enabled,
-            ).where(user_chat_subscriptions.c.chat_id == channel_chat.id)
-        ).all()
+        try:
+            sub_rows = db.execute(
+                select(
+                    user_chat_subscriptions.c.user_id,
+                    user_chat_subscriptions.c.via_group_id,
+                    user_chat_subscriptions.c.enabled,
+                ).where(user_chat_subscriptions.c.chat_id == channel_chat.id)
+            ).all()
+        except Exception:
+            # Совместимость со старыми БД до миграции колонки enabled.
+            sub_rows_raw = db.execute(
+                select(
+                    user_chat_subscriptions.c.user_id,
+                    user_chat_subscriptions.c.via_group_id,
+                ).where(user_chat_subscriptions.c.chat_id == channel_chat.id)
+            ).all()
+            sub_rows = [(uid, via_group_id, True) for uid, via_group_id in sub_rows_raw]
         for uid, via_group_id, sub_enabled in sub_rows:
             existing = db.execute(
                 select(user_chat_subscriptions).where(
@@ -2514,30 +2524,51 @@ def _upsert_linked_chat_for_channel(
                 )
             ).first()
             if existing is None:
-                db.execute(
-                    user_chat_subscriptions.insert().values(
-                        user_id=uid,
-                        chat_id=linked.id,
-                        via_group_id=via_group_id,
-                        enabled=True if sub_enabled is None else bool(sub_enabled),
+                try:
+                    db.execute(
+                        user_chat_subscriptions.insert().values(
+                            user_id=uid,
+                            chat_id=linked.id,
+                            via_group_id=via_group_id,
+                            enabled=True if sub_enabled is None else bool(sub_enabled),
+                        )
                     )
-                )
+                except Exception:
+                    db.execute(
+                        user_chat_subscriptions.insert().values(
+                            user_id=uid,
+                            chat_id=linked.id,
+                            via_group_id=via_group_id,
+                        )
+                    )
                 changed = True
                 continue
             existing_via = existing[user_chat_subscriptions.c.via_group_id]
             merged_via = None if (existing_via is None or via_group_id is None) else existing_via
-            existing_enabled = existing[user_chat_subscriptions.c.enabled]
-            merged_enabled = bool(existing_enabled) or bool(sub_enabled)
-            if existing_via != merged_via or bool(existing_enabled) != merged_enabled:
-                db.execute(
-                    update(user_chat_subscriptions)
-                    .where(
-                        user_chat_subscriptions.c.user_id == uid,
-                        user_chat_subscriptions.c.chat_id == linked.id,
+            try:
+                existing_enabled = existing[user_chat_subscriptions.c.enabled]
+                merged_enabled = bool(existing_enabled) or bool(sub_enabled)
+                if existing_via != merged_via or bool(existing_enabled) != merged_enabled:
+                    db.execute(
+                        update(user_chat_subscriptions)
+                        .where(
+                            user_chat_subscriptions.c.user_id == uid,
+                            user_chat_subscriptions.c.chat_id == linked.id,
+                        )
+                        .values(via_group_id=merged_via, enabled=merged_enabled)
                     )
-                    .values(via_group_id=merged_via, enabled=merged_enabled)
-                )
-                changed = True
+                    changed = True
+            except Exception:
+                if existing_via != merged_via:
+                    db.execute(
+                        update(user_chat_subscriptions)
+                        .where(
+                            user_chat_subscriptions.c.user_id == uid,
+                            user_chat_subscriptions.c.chat_id == linked.id,
+                        )
+                        .values(via_group_id=merged_via)
+                    )
+                    changed = True
     return changed
 
 
@@ -3639,10 +3670,14 @@ async def backfill_linked_chats(
     """Принудительно запустить бэкфилл связок канал↔discussion для всех TG-чатов."""
     from parser_log import append as parser_log_append
     parser_log_append(f"Запуск TG linked-chat backfill (force={bool(body.force)}).")
-    result = await asyncio.get_running_loop().run_in_executor(
-        None,
-        lambda: _backfill_telegram_linked_chats_once(force=bool(body.force)),
-    )
+    try:
+        result = await asyncio.get_running_loop().run_in_executor(
+            None,
+            lambda: _backfill_telegram_linked_chats_once(force=bool(body.force)),
+        )
+    except Exception as e:
+        parser_log_append(f"Ошибка TG linked-chat backfill: {e}")
+        raise HTTPException(status_code=500, detail=f"Backfill failed: {e}")
     parser_log_append(
         "TG linked-chat backfill завершён: "
         f"skipped={result.get('skipped')} checked={result.get('checked')} changed={result.get('changed')}."
