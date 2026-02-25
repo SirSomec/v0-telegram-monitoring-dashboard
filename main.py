@@ -17,8 +17,10 @@ from sqlalchemy import desc, func, select, update, text
 from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.orm import Session, selectinload
 from telethon import TelegramClient
+from telethon.errors import UserAlreadyParticipantError
 from telethon.sessions import StringSession
 from telethon.tl.functions.channels import GetFullChannelRequest
+from telethon.tl.functions.channels import JoinChannelRequest
 from telethon.tl.types import PeerChannel
 import socks
 
@@ -33,6 +35,7 @@ from parser_config import (
     get_parser_setting_bool,
     get_parser_setting_int,
     get_parser_setting_str,
+    set_parser_setting,
     save_parser_settings,
 )
 from parser_log import get_lines as get_parser_log_lines
@@ -667,6 +670,7 @@ ws_manager = ConnectionManager()
 scanner: TelegramScanner | None = None
 max_scanner: MaxScanner | None = None
 main_loop: asyncio.AbstractEventLoop | None = None
+_TG_LINKED_BACKFILL_FLAG = "TG_LINKED_CHAT_BACKFILL_V1_DONE"
 
 
 def _ensure_default_user(db: Session) -> User:
@@ -1029,6 +1033,13 @@ async def on_startup() -> None:
 
     with SessionLocal() as db:
         _ensure_default_user(db)
+
+    # Одноразовый бэкфилл после релиза: найти discussion-чаты для существующих каналов
+    # и добавить их в мониторинг/подписки по новой логике бандлов.
+    try:
+        await asyncio.get_running_loop().run_in_executor(None, _backfill_telegram_linked_chats_once)
+    except Exception:
+        _startup_log.exception("Ошибка TG linked-chat backfill на старте")
 
     # Сканер можно включить через настройки (админ) или ENV AUTO_START_SCANNER=1
     global max_scanner
@@ -2312,6 +2323,50 @@ async def _resolve_telegram_channel_bundle_meta_async(identifier: str) -> dict[s
             pass
 
 
+async def _ensure_telegram_membership_async(identifier: str) -> bool:
+    """Best-effort: попытка вступить в канал/чат по username|id|entity через сервисный TG-аккаунт."""
+    api_id = get_parser_setting_str("TG_API_ID")
+    api_hash = get_parser_setting_str("TG_API_HASH")
+    if not api_id or not api_hash:
+        return False
+    try:
+        api_id_int = int(api_id)
+    except ValueError:
+        return False
+
+    session_string = get_parser_setting_str("TG_SESSION_STRING")
+    session_name = get_parser_setting_str("TG_SESSION_NAME") or "telegram_monitor"
+    proxy = _proxy_tuple_from_settings()
+    client = TelegramClient(StringSession(session_string), api_id_int, api_hash, proxy=proxy) if session_string else TelegramClient(session_name, api_id_int, api_hash, proxy=proxy)
+
+    try:
+        await client.connect()
+        if not await client.is_user_authorized():
+            return False
+        entity = await client.get_entity(identifier)
+        try:
+            await client(JoinChannelRequest(entity))
+            return True
+        except UserAlreadyParticipantError:
+            return True
+        except Exception:
+            return False
+    except Exception:
+        return False
+    finally:
+        try:
+            await client.disconnect()
+        except Exception:
+            pass
+
+
+def _ensure_telegram_membership(identifier: str) -> bool:
+    try:
+        return asyncio.run(_ensure_telegram_membership_async(identifier))
+    except Exception:
+        return False
+
+
 def _resolve_telegram_channel_bundle_meta(identifier: str) -> dict[str, Any] | None:
     try:
         return asyncio.run(_resolve_telegram_channel_bundle_meta_async(identifier))
@@ -2375,6 +2430,182 @@ def _upsert_individual_subscriptions(db: Session, user_id: int, chats: list[Chat
                     user_id=user_id, chat_id=chat.id, via_group_id=None, enabled=True
                 )
             )
+
+
+def _upsert_linked_chat_for_channel(
+    db: Session,
+    channel_chat: Chat,
+    *,
+    linked_tg_chat_id: int,
+    linked_username: str | None,
+    linked_title: str | None,
+    billing_key: str | None,
+) -> bool:
+    """Создать/обновить linked discussion-чат для канала. Возвращает True, если были изменения."""
+    changed = False
+    linked = db.scalar(
+        select(Chat).where(
+            Chat.user_id == channel_chat.user_id,
+            Chat.source == CHAT_SOURCE_TELEGRAM,
+            Chat.tg_chat_id == linked_tg_chat_id,
+        )
+    )
+    if linked is None and linked_username:
+        linked = db.scalar(
+            select(Chat).where(
+                Chat.user_id == channel_chat.user_id,
+                Chat.source == CHAT_SOURCE_TELEGRAM,
+                Chat.username == linked_username,
+            )
+        )
+
+    if linked is None:
+        linked = Chat(
+            user_id=channel_chat.user_id,
+            source=CHAT_SOURCE_TELEGRAM,
+            username=linked_username,
+            tg_chat_id=linked_tg_chat_id,
+            max_chat_id=None,
+            invite_hash=None,
+            title=linked_title,
+            description=None,
+            enabled=bool(channel_chat.enabled),
+            is_global=bool(channel_chat.is_global),
+            billing_key=billing_key,
+        )
+        linked.groups = list(channel_chat.groups or [])
+        db.add(linked)
+        changed = True
+    else:
+        if billing_key and getattr(linked, "billing_key", None) != billing_key:
+            linked.billing_key = billing_key
+            changed = True
+        if linked_username and (getattr(linked, "username", None) or "").strip() != linked_username:
+            linked.username = linked_username
+            changed = True
+        if linked_title and (getattr(linked, "title", None) or "").strip() != linked_title:
+            linked.title = linked_title
+            changed = True
+        if bool(channel_chat.is_global) and not bool(linked.is_global):
+            linked.is_global = True
+            changed = True
+        if channel_chat.groups:
+            linked_group_ids = {g.id for g in (linked.groups or [])}
+            for g in (channel_chat.groups or []):
+                if g.id not in linked_group_ids:
+                    linked.groups.append(g)
+                    changed = True
+        db.add(linked)
+
+    db.flush()
+    if bool(channel_chat.is_global):
+        sub_rows = db.execute(
+            select(
+                user_chat_subscriptions.c.user_id,
+                user_chat_subscriptions.c.via_group_id,
+                user_chat_subscriptions.c.enabled,
+            ).where(user_chat_subscriptions.c.chat_id == channel_chat.id)
+        ).all()
+        for uid, via_group_id, sub_enabled in sub_rows:
+            existing = db.execute(
+                select(user_chat_subscriptions).where(
+                    user_chat_subscriptions.c.user_id == uid,
+                    user_chat_subscriptions.c.chat_id == linked.id,
+                )
+            ).first()
+            if existing is None:
+                db.execute(
+                    user_chat_subscriptions.insert().values(
+                        user_id=uid,
+                        chat_id=linked.id,
+                        via_group_id=via_group_id,
+                        enabled=True if sub_enabled is None else bool(sub_enabled),
+                    )
+                )
+                changed = True
+                continue
+            existing_via = existing[user_chat_subscriptions.c.via_group_id]
+            merged_via = None if (existing_via is None or via_group_id is None) else existing_via
+            existing_enabled = existing[user_chat_subscriptions.c.enabled]
+            merged_enabled = bool(existing_enabled) or bool(sub_enabled)
+            if existing_via != merged_via or bool(existing_enabled) != merged_enabled:
+                db.execute(
+                    update(user_chat_subscriptions)
+                    .where(
+                        user_chat_subscriptions.c.user_id == uid,
+                        user_chat_subscriptions.c.chat_id == linked.id,
+                    )
+                    .values(via_group_id=merged_via, enabled=merged_enabled)
+                )
+                changed = True
+    return changed
+
+
+def _backfill_telegram_linked_chats_once() -> None:
+    """Одноразовый бэкфилл: для существующих TG-каналов добавить/привязать discussion-чаты и подписки."""
+    from database import SessionLocal
+    import logging
+
+    log = logging.getLogger(__name__)
+    if get_parser_setting_bool(_TG_LINKED_BACKFILL_FLAG, False):
+        return
+
+    with SessionLocal() as db:
+        channels = db.scalars(
+            select(Chat)
+            .where(Chat.source == CHAT_SOURCE_TELEGRAM)
+            .order_by(Chat.id.asc())
+            .options(selectinload(Chat.groups))
+        ).all()
+        changed_total = 0
+        checked = 0
+        for channel in channels:
+            identifier = _chat_identifier(channel)
+            if identifier == "—":
+                continue
+            checked += 1
+            # Обеспечиваем доступ к каналу/чату под сервисным аккаунтом до попытки резолва discussion.
+            _ensure_telegram_membership(identifier)
+            meta = _resolve_telegram_channel_bundle_meta(identifier)
+            if not meta:
+                continue
+            linked_tg_chat_id = meta.get("linked_tg_chat_id")
+            if linked_tg_chat_id is None:
+                continue
+            _ensure_telegram_membership(str(linked_tg_chat_id))
+
+            billing_key = (
+                getattr(channel, "billing_key", None)
+                or _make_telegram_billing_key(
+                    meta.get("channel_tg_chat_id") or channel.tg_chat_id,
+                    meta.get("channel_username") or channel.username,
+                    channel.invite_hash,
+                )
+            )
+            if billing_key and getattr(channel, "billing_key", None) != billing_key:
+                channel.billing_key = billing_key
+                db.add(channel)
+                changed_total += 1
+
+            changed = _upsert_linked_chat_for_channel(
+                db,
+                channel,
+                linked_tg_chat_id=int(linked_tg_chat_id),
+                linked_username=meta.get("linked_username"),
+                linked_title=meta.get("linked_title"),
+                billing_key=billing_key,
+            )
+            if changed:
+                changed_total += 1
+            db.commit()
+
+        set_parser_setting(_TG_LINKED_BACKFILL_FLAG, "1")
+        log.info(
+            "TG linked-chat backfill complete: checked=%s changed=%s (flag=%s).",
+            checked,
+            changed_total,
+            _TG_LINKED_BACKFILL_FLAG,
+        )
 
 
 def _chat_bundle_meta(db: Session | None, c: Chat) -> tuple[int, bool]:
@@ -2535,6 +2766,8 @@ def create_chat(body: ChatCreate, user: User = Depends(get_current_user), db: Se
         linked_tg_chat_id = None
         linked_username = None
         linked_title = None
+        # Чтобы мониторинг действительно стартовал, пробуем вступить в канал заранее.
+        _ensure_telegram_membership(ident)
         meta = _resolve_telegram_channel_bundle_meta(ident)
         if meta:
             tg_chat_id = meta.get("channel_tg_chat_id") or tg_chat_id
@@ -2542,6 +2775,8 @@ def create_chat(body: ChatCreate, user: User = Depends(get_current_user), db: Se
             linked_tg_chat_id = meta.get("linked_tg_chat_id")
             linked_username = meta.get("linked_username")
             linked_title = meta.get("linked_title")
+            if linked_tg_chat_id is not None:
+                _ensure_telegram_membership(str(linked_tg_chat_id))
         billing_key = _make_telegram_billing_key(tg_chat_id, username, invite_hash)
         existing_global = None
         if billing_key:
