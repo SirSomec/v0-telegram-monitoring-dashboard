@@ -2304,11 +2304,23 @@ async def _resolve_telegram_channel_bundle_meta_async(identifier: str) -> dict[s
         full_chat = getattr(full, "full_chat", None)
         linked_chat_id = _normalize_telethon_chat_id(getattr(full_chat, "linked_chat_id", None))
         linked_entity = None
-        if linked_chat_id is not None:
+        if linked_chat_id is not None and getattr(full, "chats", None):
+            for ch_obj in (full.chats or []):
+                if _normalize_telethon_chat_id(getattr(ch_obj, "id", None)) == linked_chat_id:
+                    linked_entity = ch_obj
+                    break
+        if linked_entity is None and linked_chat_id is not None:
             try:
                 linked_entity = await client.get_entity(PeerChannel(abs(linked_chat_id) % (10**10)))
             except Exception:
                 linked_entity = None
+        if linked_entity is not None:
+            try:
+                await client(JoinChannelRequest(linked_entity))
+            except UserAlreadyParticipantError:
+                pass
+            except Exception:
+                pass
         return {
             "channel_tg_chat_id": _normalize_telethon_chat_id(getattr(entity, "id", None)),
             "channel_username": getattr(entity, "username", None),
@@ -2666,10 +2678,16 @@ def _backfill_telegram_linked_chats_once(*, force: bool = False) -> dict[str, An
                     linked_title = None
                     if linked_tg_chat_id is not None:
                         linked_entity = None
-                        try:
-                            linked_entity = await client.get_entity(PeerChannel(abs(linked_tg_chat_id) % (10**10)))
-                        except Exception:
-                            linked_entity = None
+                        if getattr(full, "chats", None):
+                            for ch_obj in (full.chats or []):
+                                if _normalize_telethon_chat_id(getattr(ch_obj, "id", None)) == linked_tg_chat_id:
+                                    linked_entity = ch_obj
+                                    break
+                        if linked_entity is None:
+                            try:
+                                linked_entity = await client.get_entity(PeerChannel(abs(linked_tg_chat_id) % (10**10)))
+                            except Exception:
+                                linked_entity = None
                         if linked_entity is not None:
                             await _join_once(linked_entity, linked_tg_chat_id)
                             linked_username = getattr(linked_entity, "username", None)
