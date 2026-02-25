@@ -123,6 +123,8 @@ class ChatOut(BaseModel):
     isGlobal: bool = False
     isOwner: bool = True  # True = свой канал, False = подписка на глобальный
     source: str = "telegram"
+    hasLinkedChat: bool = False  # есть ли связанный discussion-чат в бандле
+    bundleSize: int = 1  # сколько чатов входит в бандл тарификации
     createdAt: str
 
 
@@ -143,6 +145,8 @@ class ChatAvailableOut(BaseModel):
     enabled: bool
     subscribed: bool  # подписан ли текущий пользователь
     subscriptionEnabled: bool | None  # при подписке — включён ли мониторинг у пользователя
+    hasLinkedChat: bool = False
+    bundleSize: int = 1
     createdAt: str
 
 
@@ -2373,6 +2377,35 @@ def _upsert_individual_subscriptions(db: Session, user_id: int, chats: list[Chat
             )
 
 
+def _chat_bundle_meta(db: Session | None, c: Chat) -> tuple[int, bool]:
+    if db is None:
+        return (1, False)
+    source = getattr(c, "source", None) or CHAT_SOURCE_TELEGRAM
+    if source != CHAT_SOURCE_TELEGRAM:
+        return (1, False)
+    billing_key = (getattr(c, "billing_key", None) or "").strip()
+    if not billing_key:
+        return (1, False)
+    if bool(getattr(c, "is_global", False)):
+        size = db.scalar(
+            select(func.count(Chat.id)).where(
+                Chat.is_global.is_(True),
+                Chat.source == CHAT_SOURCE_TELEGRAM,
+                Chat.billing_key == billing_key,
+            )
+        ) or 0
+    else:
+        size = db.scalar(
+            select(func.count(Chat.id)).where(
+                Chat.user_id == c.user_id,
+                Chat.source == CHAT_SOURCE_TELEGRAM,
+                Chat.billing_key == billing_key,
+            )
+        ) or 0
+    size = max(1, int(size))
+    return (size, size > 1)
+
+
 def _chat_identifier(c: Chat) -> str:
     """Человекочитаемый идентификатор чата для API."""
     source = getattr(c, "source", None) or CHAT_SOURCE_TELEGRAM
@@ -2389,7 +2422,12 @@ def _chat_identifier(c: Chat) -> str:
     return "—"
 
 
-def _chat_to_out(c: Chat, is_owner: bool, subscription_enabled: bool | None = None) -> ChatOut:
+def _chat_to_out(
+    c: Chat,
+    is_owner: bool,
+    subscription_enabled: bool | None = None,
+    db: Session | None = None,
+) -> ChatOut:
     source = getattr(c, "source", None) or CHAT_SOURCE_TELEGRAM
     if source == CHAT_SOURCE_MAX:
         identifier = (getattr(c, "max_chat_id", None) or "") or (c.title or "—")
@@ -2403,6 +2441,7 @@ def _chat_to_out(c: Chat, is_owner: bool, subscription_enabled: bool | None = No
     if created_at.tzinfo is None:
         created_at = created_at.replace(tzinfo=timezone.utc)
     enabled = bool(subscription_enabled) if subscription_enabled is not None else bool(c.enabled)
+    bundle_size, has_linked_chat = _chat_bundle_meta(db, c)
     return ChatOut(
         id=c.id,
         identifier=identifier,
@@ -2414,6 +2453,8 @@ def _chat_to_out(c: Chat, is_owner: bool, subscription_enabled: bool | None = No
         isGlobal=bool(c.is_global),
         isOwner=is_owner,
         source=source,
+        hasLinkedChat=has_linked_chat,
+        bundleSize=bundle_size,
         createdAt=created_at.isoformat(),
     )
 
@@ -2427,7 +2468,7 @@ def list_chats(user: User = Depends(get_current_user), db: Session = Depends(get
     owned = db.scalars(select(Chat).where(Chat.user_id == user.id).order_by(Chat.id.asc())).all()
     for c in owned:
         seen_ids.add(c.id)
-        out.append(_chat_to_out(c, is_owner=True))
+        out.append(_chat_to_out(c, is_owner=True, db=db))
     # Подписки на глобальные каналы
     sub_rows = (
         db.execute(
@@ -2451,7 +2492,7 @@ def list_chats(user: User = Depends(get_current_user), db: Session = Depends(get
     for c in sub_rows:
         if c.id not in seen_ids:
             seen_ids.add(c.id)
-            out.append(_chat_to_out(c, is_owner=False, subscription_enabled=sub_enabled_map.get(c.id, True)))
+            out.append(_chat_to_out(c, is_owner=False, subscription_enabled=sub_enabled_map.get(c.id, True), db=db))
     out.sort(key=lambda x: x.id)
     return out
 
@@ -2531,7 +2572,7 @@ def create_chat(body: ChatCreate, user: User = Depends(get_current_user), db: Se
         _upsert_individual_subscriptions(db, user_id, bundle_chats)
         db.commit()
         db.refresh(existing_global)
-        return _chat_to_out(existing_global, is_owner=False)
+        return _chat_to_out(existing_global, is_owner=False, db=db)
 
     _check_limits(db, user, delta_channels=1, delta_own_channels=1)
     c = Chat(
@@ -2599,7 +2640,7 @@ def create_chat(body: ChatCreate, user: User = Depends(get_current_user), db: Se
             db.add(linked_existing)
         db.commit()
 
-    return _chat_to_out(c, is_owner=True)
+    return _chat_to_out(c, is_owner=True, db=db)
 
 
 @app.patch("/api/chats/{chat_id}", response_model=ChatOut)
@@ -2629,7 +2670,7 @@ def update_chat(chat_id: int, body: ChatUpdate, user: User = Depends(get_current
     db.commit()
     db.refresh(c)
 
-    return _chat_to_out(c, is_owner=True)
+    return _chat_to_out(c, is_owner=True, db=db)
 
 
 @app.get("/api/chat-groups", response_model=list[ChatGroupOut])
@@ -3350,6 +3391,14 @@ def list_available_chats(user: User = Depends(get_current_user), db: Session = D
         select(user_chat_subscriptions.c.chat_id).where(user_chat_subscriptions.c.user_id == user.id)
     ).all()
     sub_ids = {r[0] for r in sub_rows}
+    bundle_sizes: dict[str, int] = {}
+    for c in rows:
+        if (getattr(c, "source", None) or CHAT_SOURCE_TELEGRAM) != CHAT_SOURCE_TELEGRAM:
+            continue
+        key = (getattr(c, "billing_key", None) or "").strip()
+        if not key:
+            continue
+        bundle_sizes[key] = bundle_sizes.get(key, 0) + 1
     sub_enabled: dict[int, bool] = {cid: True for cid in sub_ids}
     try:
         sub_enabled_rows = db.execute(
@@ -3372,6 +3421,8 @@ def list_available_chats(user: User = Depends(get_current_user), db: Session = D
             or (f"t.me/joinchat/{c.invite_hash}" if getattr(c, "invite_hash", None) else "")
         ) or "—"
         group_names = [g.name for g in (c.groups or [])]
+        key = (getattr(c, "billing_key", None) or "").strip()
+        bundle_size = bundle_sizes.get(key, 1) if key else 1
         out.append(
             ChatAvailableOut(
                 id=c.id,
@@ -3382,6 +3433,8 @@ def list_available_chats(user: User = Depends(get_current_user), db: Session = D
                 enabled=bool(c.enabled),
                 subscribed=c.id in sub_ids,
                 subscriptionEnabled=sub_enabled.get(c.id) if c.id in sub_ids else None,
+                hasLinkedChat=bundle_size > 1,
+                bundleSize=bundle_size,
                 createdAt=created_at.isoformat(),
             )
         )
@@ -3441,7 +3494,7 @@ def subscribe_by_identifier(
     _upsert_individual_subscriptions(db, user.id, bundle_chats)
     db.commit()
     db.refresh(c)
-    return _chat_to_out(c, is_owner=False)
+    return _chat_to_out(c, is_owner=False, db=db)
 
 
 @app.post("/api/chats/{chat_id}/subscribe", response_model=ChatOut)
@@ -3458,7 +3511,7 @@ def subscribe_chat(chat_id: int, user: User = Depends(get_current_user), db: Ses
     _upsert_individual_subscriptions(db, user.id, bundle_chats)
     db.commit()
     db.refresh(c)
-    return _chat_to_out(c, is_owner=False)
+    return _chat_to_out(c, is_owner=False, db=db)
 
 
 @app.patch("/api/chats/{chat_id}/subscription", response_model=ChatOut)
@@ -3495,7 +3548,7 @@ def update_chat_subscription(
     except Exception:
         raise HTTPException(status_code=500, detail="subscription update not supported (migrate DB)")
     db.refresh(c)
-    return _chat_to_out(c, is_owner=False, subscription_enabled=body.enabled)
+    return _chat_to_out(c, is_owner=False, subscription_enabled=body.enabled, db=db)
 
 
 @app.delete("/api/chats/{chat_id}/unsubscribe")

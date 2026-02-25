@@ -16,6 +16,8 @@ export type Chat = {
   userId: number
   isGlobal?: boolean
   isOwner?: boolean
+  hasLinkedChat?: boolean
+  bundleSize?: number
   createdAt: string
 }
 

@@ -22,6 +22,8 @@ export type ChatOut = {
   userId: number
   isGlobal: boolean
   isOwner: boolean
+  hasLinkedChat: boolean
+  bundleSize: number
   createdAt: string
 }
 
@@ -34,6 +36,8 @@ export type ChatAvailableOut = {
   enabled: boolean
   subscribed: boolean
   subscriptionEnabled: boolean | null
+  hasLinkedChat: boolean
+  bundleSize: number
   createdAt: string
 }
 
@@ -263,7 +267,14 @@ export function UserChannelsManager(
               {myChannels.map((c) => (
                 <TableRow key={c.id}>
                   <TableCell className="whitespace-normal">
-                    <div className="font-medium">{c.title || c.identifier}</div>
+                    <div className="font-medium flex flex-wrap items-center gap-2">
+                      <span>{c.title || c.identifier}</span>
+                      {c.hasLinkedChat && (
+                        <Badge variant="secondary" className="text-[10px]">
+                          Канал + обсуждение x{c.bundleSize}
+                        </Badge>
+                      )}
+                    </div>
                     <div className="text-xs text-muted-foreground font-mono">{c.identifier}</div>
                   </TableCell>
                   <TableCell>
@@ -354,7 +365,14 @@ export function UserChannelsManager(
                 {filteredAndSortedChannels.map((av) => (
                   <TableRow key={av.id}>
                     <TableCell className="whitespace-normal">
-                      <div className="font-medium">{av.title || av.identifier}</div>
+                      <div className="font-medium flex flex-wrap items-center gap-2">
+                        <span>{av.title || av.identifier}</span>
+                        {av.hasLinkedChat && (
+                          <Badge variant="secondary" className="text-[10px]">
+                            Канал + обсуждение x{av.bundleSize}
+                          </Badge>
+                        )}
+                      </div>
                       <div className="text-xs text-muted-foreground font-mono">{av.identifier}</div>
                     </TableCell>
                     <TableCell className="max-w-[200px]">

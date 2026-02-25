@@ -299,7 +299,14 @@ export function ChannelsManager({ userId = 1 }: { userId?: number }) {
               {channels.map((c) => (
                 <TableRow key={c.id}>
                   <TableCell className="whitespace-normal">
-                    <div className="font-medium">{c.title || c.identifier}</div>
+                    <div className="font-medium flex flex-wrap items-center gap-2">
+                      <span>{c.title || c.identifier}</span>
+                      {c.hasLinkedChat && (
+                        <Badge variant="secondary" className="text-[10px]">
+                          Канал + обсуждение x{c.bundleSize ?? 2}
+                        </Badge>
+                      )}
+                    </div>
                     <div className="text-xs text-muted-foreground font-mono">{c.identifier}</div>
                   </TableCell>
                   <TableCell className="whitespace-normal">{c.description || "—"}</TableCell>
