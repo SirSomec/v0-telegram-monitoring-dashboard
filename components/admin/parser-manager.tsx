@@ -140,6 +140,9 @@ export function ParserManager() {
   const [emailTestLoading, setEmailTestLoading] = useState(false)
   const [emailTestMessage, setEmailTestMessage] = useState<string>("")
   const [emailTestOk, setEmailTestOk] = useState<boolean | null>(null)
+  const [linkedBackfillLoading, setLinkedBackfillLoading] = useState(false)
+  const [linkedBackfillMessage, setLinkedBackfillMessage] = useState<string>("")
+  const [linkedBackfillOk, setLinkedBackfillOk] = useState<boolean | null>(null)
 
   // Локальное состояние формы настроек (для редактирования)
   const [form, setForm] = useState<
@@ -348,6 +351,37 @@ export function ParserManager() {
     }
   }
 
+  async function runLinkedChatsBackfill() {
+    setLinkedBackfillLoading(true)
+    setLinkedBackfillMessage("")
+    setLinkedBackfillOk(null)
+    setError("")
+    try {
+      const res = await apiJson<{
+        ok: boolean
+        skipped: boolean
+        checked: number
+        changed: number
+        detail?: string
+      }>("/api/admin/parser/chats/backfill-linked", {
+        method: "POST",
+        body: JSON.stringify({ force: true }),
+      })
+      setLinkedBackfillOk(Boolean(res.ok))
+      const detail = res.detail?.trim() || "Backfill выполнен."
+      setLinkedBackfillMessage(
+        `${detail} Проверено: ${res.checked}, изменений: ${res.changed}${res.skipped ? " (пропущено)" : ""}.`
+      )
+      await fetchLogs()
+    } catch (e) {
+      setLinkedBackfillOk(false)
+      setLinkedBackfillMessage(e instanceof Error ? e.message : "Ошибка запуска backfill")
+      await fetchLogs()
+    } finally {
+      setLinkedBackfillLoading(false)
+    }
+  }
+
   async function startMaxParser() {
     setActionLoading(true)
     setError("")
@@ -548,7 +582,21 @@ export function ParserManager() {
               <RotateCw className="mr-2 size-4" />
               Перезапустить
             </Button>
+            <Button
+              variant="outline"
+              onClick={runLinkedChatsBackfill}
+              disabled={linkedBackfillLoading || actionLoading}
+              aria-label="Перепроверить связанные discussion-чаты"
+            >
+              <RefreshCw className={`mr-2 size-4 ${linkedBackfillLoading ? "animate-spin" : ""}`} />
+              Перепроверить linked-чаты
+            </Button>
           </div>
+          {linkedBackfillMessage && (
+            <p className={linkedBackfillOk === false ? "text-destructive text-sm" : "text-muted-foreground text-sm"}>
+              {linkedBackfillMessage}
+            </p>
+          )}
         </CardContent>
       </Card>
 
