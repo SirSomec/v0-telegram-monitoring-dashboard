@@ -2442,6 +2442,19 @@ def _upsert_linked_chat_for_channel(
     billing_key: str | None,
 ) -> bool:
     """Создать/обновить linked discussion-чат для канала. Возвращает True, если были изменения."""
+    def _row_get(row: Any, column_name: str, fallback_index: int, default: Any = None) -> Any:
+        mapping = getattr(row, "_mapping", None)
+        if mapping is not None:
+            if column_name in mapping:
+                return mapping[column_name]
+            for k in mapping.keys():
+                if str(k).endswith(f".{column_name}") or str(k) == column_name:
+                    return mapping[k]
+        try:
+            return row[fallback_index]
+        except Exception:
+            return default
+
     changed = False
     linked = db.scalar(
         select(Chat).where(
@@ -2543,10 +2556,10 @@ def _upsert_linked_chat_for_channel(
                     )
                 changed = True
                 continue
-            existing_via = existing[user_chat_subscriptions.c.via_group_id]
+            existing_via = _row_get(existing, "via_group_id", 2, None)
             merged_via = None if (existing_via is None or via_group_id is None) else existing_via
             try:
-                existing_enabled = existing[user_chat_subscriptions.c.enabled]
+                existing_enabled = _row_get(existing, "enabled", 3, True)
                 merged_enabled = bool(existing_enabled) or bool(sub_enabled)
                 if existing_via != merged_via or bool(existing_enabled) != merged_enabled:
                     db.execute(
