@@ -163,6 +163,9 @@ def send_test_email(to_email: str) -> bool:
     msg["Subject"] = subject
     msg["From"] = SMTP_FROM
     msg["To"] = to_email
+    msg["Date"] = formatdate(localtime=True)
+    sender_domain = SMTP_FROM.split("@", 1)[1] if "@" in SMTP_FROM else None
+    msg["Message-ID"] = make_msgid(domain=sender_domain)
     msg.attach(MIMEText(body_plain, "plain", "utf-8"))
     msg.attach(MIMEText(body_html, "html", "utf-8"))
 
@@ -205,6 +208,9 @@ def send_mention_notification_email(to_email: str, keyword: str, message: str, m
     msg["Subject"] = subject
     msg["From"] = SMTP_FROM
     msg["To"] = to_email
+    msg["Date"] = formatdate(localtime=True)
+    sender_domain = SMTP_FROM.split("@", 1)[1] if "@" in SMTP_FROM else None
+    msg["Message-ID"] = make_msgid(domain=sender_domain)
     msg.attach(MIMEText(body_plain, "plain", "utf-8"))
     msg.attach(MIMEText(body_html, "html", "utf-8"))
 
@@ -248,6 +254,9 @@ def send_support_reply_email(to_email: str, ticket_subject: str, reply_preview: 
     msg["Subject"] = subject
     msg["From"] = SMTP_FROM
     msg["To"] = to_email
+    msg["Date"] = formatdate(localtime=True)
+    sender_domain = SMTP_FROM.split("@", 1)[1] if "@" in SMTP_FROM else None
+    msg["Message-ID"] = make_msgid(domain=sender_domain)
     msg.attach(MIMEText(body_plain, "plain", "utf-8"))
     msg.attach(MIMEText(body_html, "html", "utf-8"))
 
