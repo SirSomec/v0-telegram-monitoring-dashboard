@@ -17,7 +17,7 @@ from sqlalchemy import desc, func, select, update, text
 from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.orm import Session, selectinload
 from telethon import TelegramClient
-from telethon.errors import UserAlreadyParticipantError
+from telethon.errors import UserAlreadyParticipantError, InviteRequestSentError, FloodWaitError
 from telethon.sessions import StringSession
 from telethon.tl.functions.channels import GetFullChannelRequest
 from telethon.tl.functions.channels import JoinChannelRequest
@@ -2319,6 +2319,19 @@ async def _resolve_telegram_channel_bundle_meta_async(identifier: str) -> dict[s
                 await client(JoinChannelRequest(linked_entity))
             except UserAlreadyParticipantError:
                 pass
+            except InviteRequestSentError:
+                pass
+            except FloodWaitError as e:
+                try:
+                    await asyncio.sleep(max(1, int(getattr(e, "seconds", 1))))
+                    await client(JoinChannelRequest(linked_entity))
+                except Exception:
+                    pass
+            except Exception:
+                pass
+        elif linked_chat_id is not None:
+            try:
+                await client(JoinChannelRequest(PeerChannel(abs(linked_chat_id) % (10**10))))
             except Exception:
                 pass
         return {
@@ -2621,7 +2634,7 @@ def _backfill_telegram_linked_chats_once(*, force: bool = False) -> dict[str, An
             "detail": "Backfill уже был выполнен ранее.",
         }
 
-    async def _collect_linked_meta_batch(chats: list[Chat]) -> tuple[int, dict[int, dict[str, Any]]]:
+    async def _collect_linked_meta_batch(chats: list[Chat]) -> tuple[int, dict[int, dict[str, Any]], dict[str, int]]:
         api_id = get_parser_setting_str("TG_API_ID")
         api_hash = get_parser_setting_str("TG_API_HASH")
         if not api_id or not api_hash:
@@ -2639,28 +2652,53 @@ def _backfill_telegram_linked_chats_once(*, force: bool = False) -> dict[str, An
         checked = 0
         meta_by_chat_id: dict[int, dict[str, Any]] = {}
         joined_chat_ids: set[int] = set()
+        join_stats: dict[str, int] = {"ok": 0, "request_sent": 0, "failed": 0}
 
         try:
             await client.connect()
             if not await client.is_user_authorized():
-                return (0, {})
+                return (0, {}, join_stats)
 
-            async def _join_once(entity_or_ident: Any, tg_chat_id: int | None = None) -> None:
+            async def _join_once(entity_or_ident: Any, tg_chat_id: int | None = None) -> str:
                 key = int(tg_chat_id) if tg_chat_id is not None else None
                 if key is not None and key in joined_chat_ids:
-                    return
+                    return "already"
                 try:
                     entity = entity_or_ident
                     if isinstance(entity_or_ident, str):
                         entity = await client.get_entity(entity_or_ident)
                     await client(JoinChannelRequest(entity))
+                    join_stats["ok"] = join_stats.get("ok", 0) + 1
+                    return "joined"
                 except UserAlreadyParticipantError:
-                    pass
+                    return "already"
+                except InviteRequestSentError:
+                    join_stats["request_sent"] = join_stats.get("request_sent", 0) + 1
+                    return "request_sent"
+                except FloodWaitError as e:
+                    try:
+                        await asyncio.sleep(max(1, int(getattr(e, "seconds", 1))))
+                        entity = entity_or_ident
+                        if isinstance(entity_or_ident, str):
+                            entity = await client.get_entity(entity_or_ident)
+                        await client(JoinChannelRequest(entity))
+                        join_stats["ok"] = join_stats.get("ok", 0) + 1
+                        return "joined"
+                    except UserAlreadyParticipantError:
+                        return "already"
+                    except InviteRequestSentError:
+                        join_stats["request_sent"] = join_stats.get("request_sent", 0) + 1
+                        return "request_sent"
+                    except Exception:
+                        join_stats["failed"] = join_stats.get("failed", 0) + 1
+                        return "failed"
                 except Exception:
-                    pass
+                    join_stats["failed"] = join_stats.get("failed", 0) + 1
+                    return "failed"
                 finally:
                     if key is not None:
                         joined_chat_ids.add(key)
+                return "failed"
 
             for ch in chats:
                 identifier = _chat_identifier(ch)
@@ -2689,7 +2727,10 @@ def _backfill_telegram_linked_chats_once(*, force: bool = False) -> dict[str, An
                             except Exception:
                                 linked_entity = None
                         if linked_entity is not None:
-                            await _join_once(linked_entity, linked_tg_chat_id)
+                            join_result = await _join_once(linked_entity, linked_tg_chat_id)
+                            if join_result == "failed":
+                                # fallback на id, если объект не подошёл для join
+                                await _join_once(str(linked_tg_chat_id), linked_tg_chat_id)
                             linked_username = getattr(linked_entity, "username", None)
                             linked_title = getattr(linked_entity, "title", None) or getattr(linked_entity, "name", None)
                         else:
@@ -2704,7 +2745,7 @@ def _backfill_telegram_linked_chats_once(*, force: bool = False) -> dict[str, An
                     }
                 except Exception:
                     continue
-            return (checked, meta_by_chat_id)
+            return (checked, meta_by_chat_id, join_stats)
         finally:
             try:
                 await client.disconnect()
@@ -2729,7 +2770,7 @@ def _backfill_telegram_linked_chats_once(*, force: bool = False) -> dict[str, An
             seen_units.add(unit_key)
             candidates.append(ch)
 
-        checked, meta_by_chat_id = asyncio.run(_collect_linked_meta_batch(candidates))
+        checked, meta_by_chat_id, join_stats = asyncio.run(_collect_linked_meta_batch(candidates))
         changed_total = 0
         for channel in candidates:
             meta = meta_by_chat_id.get(channel.id)
@@ -2776,6 +2817,9 @@ def _backfill_telegram_linked_chats_once(*, force: bool = False) -> dict[str, An
             "skipped": False,
             "checked": checked,
             "changed": changed_total,
+            "join_ok": int(join_stats.get("ok", 0)),
+            "join_requests": int(join_stats.get("request_sent", 0)),
+            "join_failed": int(join_stats.get("failed", 0)),
             "flag": _TG_LINKED_BACKFILL_FLAG,
             "detail": "Backfill выполнен.",
         }
@@ -3693,7 +3737,8 @@ def _run_linked_backfill_job(force: bool) -> None:
             _linked_backfill_state["lastResult"] = result
         parser_log_append(
             "TG linked-chat backfill завершён: "
-            f"skipped={result.get('skipped')} checked={result.get('checked')} changed={result.get('changed')}."
+            f"skipped={result.get('skipped')} checked={result.get('checked')} changed={result.get('changed')} "
+            f"join_ok={result.get('join_ok', 0)} join_requests={result.get('join_requests', 0)} join_failed={result.get('join_failed', 0)}."
         )
     except Exception as e:
         with _linked_backfill_lock:
