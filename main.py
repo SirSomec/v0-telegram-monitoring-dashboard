@@ -2541,14 +2541,21 @@ def _upsert_linked_chat_for_channel(
     return changed
 
 
-def _backfill_telegram_linked_chats_once() -> None:
+def _backfill_telegram_linked_chats_once(*, force: bool = False) -> dict[str, Any]:
     """Одноразовый бэкфилл: для существующих TG-каналов добавить/привязать discussion-чаты и подписки."""
     from database import SessionLocal
     import logging
 
     log = logging.getLogger(__name__)
-    if get_parser_setting_bool(_TG_LINKED_BACKFILL_FLAG, False):
-        return
+    if get_parser_setting_bool(_TG_LINKED_BACKFILL_FLAG, False) and not force:
+        return {
+            "ok": True,
+            "skipped": True,
+            "checked": 0,
+            "changed": 0,
+            "flag": _TG_LINKED_BACKFILL_FLAG,
+            "detail": "Backfill уже был выполнен ранее.",
+        }
 
     with SessionLocal() as db:
         channels = db.scalars(
@@ -2606,6 +2613,14 @@ def _backfill_telegram_linked_chats_once() -> None:
             changed_total,
             _TG_LINKED_BACKFILL_FLAG,
         )
+        return {
+            "ok": True,
+            "skipped": False,
+            "checked": checked,
+            "changed": changed_total,
+            "flag": _TG_LINKED_BACKFILL_FLAG,
+            "detail": "Backfill выполнен.",
+        }
 
 
 def _chat_bundle_meta(db: Session | None, c: Chat) -> tuple[int, bool]:
@@ -3490,6 +3505,10 @@ class ParserAuthSubmitCodeBody(BaseModel):
     password: str | None = Field(None, description="Пароль 2FA, если включён")
 
 
+class LinkedChatsBackfillBody(BaseModel):
+    force: bool = True  # True = запускать даже если флаг уже выставлен
+
+
 @app.post("/api/admin/parser/auth/request-code")
 async def parser_auth_request_code(
     body: ParserAuthRequestCodeBody,
@@ -3610,6 +3629,25 @@ def stop_max_parser(_: User = Depends(get_current_admin)) -> ParserStatusOut:
         max_scanner = None
         parser_log_append("[MAX] Парсер MAX остановлен.")
     return _parser_status()
+
+
+@app.post("/api/admin/parser/chats/backfill-linked")
+async def backfill_linked_chats(
+    body: LinkedChatsBackfillBody,
+    _: User = Depends(get_current_admin),
+) -> dict[str, Any]:
+    """Принудительно запустить бэкфилл связок канал↔discussion для всех TG-чатов."""
+    from parser_log import append as parser_log_append
+    parser_log_append(f"Запуск TG linked-chat backfill (force={bool(body.force)}).")
+    result = await asyncio.get_running_loop().run_in_executor(
+        None,
+        lambda: _backfill_telegram_linked_chats_once(force=bool(body.force)),
+    )
+    parser_log_append(
+        "TG linked-chat backfill завершён: "
+        f"skipped={result.get('skipped')} checked={result.get('checked')} changed={result.get('changed')}."
+    )
+    return result
 
 
 @app.get("/api/chats/available", response_model=list[ChatAvailableOut])
