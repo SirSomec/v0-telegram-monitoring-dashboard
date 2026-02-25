@@ -16,6 +16,11 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import desc, func, select, update, text
 from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.orm import Session, selectinload
+from telethon import TelegramClient
+from telethon.sessions import StringSession
+from telethon.tl.functions.channels import GetFullChannelRequest
+from telethon.tl.types import PeerChannel
+import socks
 
 from auth_utils import create_token, decode_token, hash_password, verify_password
 from database import get_db, init_db
@@ -27,6 +32,7 @@ from parser_config import (
     get_all_parser_settings,
     get_parser_setting_bool,
     get_parser_setting_int,
+    get_parser_setting_str,
     save_parser_settings,
 )
 from parser_log import get_lines as get_parser_log_lines
@@ -710,14 +716,17 @@ def _usage_counts(db: Session, user_id: int) -> dict[str, int]:
         or 0
     )
     groups = own_groups + subscribed_thematic
-    own_chats = db.scalar(select(func.count(Chat.id)).where(Chat.user_id == user_id)) or 0
+    billing_expr = func.coalesce(Chat.billing_key, func.concat("chat:", Chat.id))
+    own_chats = db.scalar(
+        select(func.count(func.distinct(billing_expr))).where(Chat.user_id == user_id)
+    ) or 0
     # В лимит каналов входят только индивидуальные подписки (via_group_id IS NULL),
     # но канал не должен тарифицироваться отдельно, если пользователь уже подписан
     # на тематическую группу, в которую этот канал входит.
     sub_count_individual = (
         db.scalar(
-            select(func.count())
-            .select_from(user_chat_subscriptions)
+            select(func.count(func.distinct(billing_expr)))
+            .select_from(user_chat_subscriptions.join(Chat, Chat.id == user_chat_subscriptions.c.chat_id))
             .where(
                 user_chat_subscriptions.c.user_id == user_id,
                 user_chat_subscriptions.c.via_group_id.is_(None),
@@ -2210,6 +2219,160 @@ def _parse_chat_identifier(ident: str) -> tuple[str | None, int | None, str | No
     return (raw.lstrip("@"), None, None)
 
 
+def _normalize_telethon_chat_id(chat_id: int | None) -> int | None:
+    if chat_id is None:
+        return None
+    cid = int(chat_id)
+    return cid if cid < 0 else (-1000000000000 - cid)
+
+
+def _make_telegram_billing_key(tg_chat_id: int | None, username: str | None, invite_hash: str | None) -> str | None:
+    if tg_chat_id is not None:
+        return f"tg_bundle:{abs(int(tg_chat_id))}"
+    uname = (username or "").strip().lstrip("@")
+    if uname:
+        return f"tg_bundle:uname:{uname.casefold()}"
+    ih = (invite_hash or "").strip()
+    if ih:
+        return f"tg_bundle:invite:{ih}"
+    return None
+
+
+def _proxy_tuple_from_settings() -> tuple | None:
+    host = get_parser_setting_str("TG_PROXY_HOST")
+    port_str = get_parser_setting_str("TG_PROXY_PORT")
+    if not host or not port_str:
+        return None
+    try:
+        port = int(port_str)
+    except ValueError:
+        return None
+    return (
+        socks.SOCKS5,
+        host,
+        port,
+        True,
+        get_parser_setting_str("TG_PROXY_USER") or None,
+        get_parser_setting_str("TG_PROXY_PASS") or None,
+    )
+
+
+async def _resolve_telegram_channel_bundle_meta_async(identifier: str) -> dict[str, Any] | None:
+    api_id = get_parser_setting_str("TG_API_ID")
+    api_hash = get_parser_setting_str("TG_API_HASH")
+    if not api_id or not api_hash:
+        return None
+    try:
+        api_id_int = int(api_id)
+    except ValueError:
+        return None
+
+    session_string = get_parser_setting_str("TG_SESSION_STRING")
+    session_name = get_parser_setting_str("TG_SESSION_NAME") or "telegram_monitor"
+    proxy = _proxy_tuple_from_settings()
+    client = TelegramClient(StringSession(session_string), api_id_int, api_hash, proxy=proxy) if session_string else TelegramClient(session_name, api_id_int, api_hash, proxy=proxy)
+
+    try:
+        await client.connect()
+        if not await client.is_user_authorized():
+            return None
+        entity = await client.get_entity(identifier)
+        full = await client(GetFullChannelRequest(entity))
+        full_chat = getattr(full, "full_chat", None)
+        linked_chat_id = _normalize_telethon_chat_id(getattr(full_chat, "linked_chat_id", None))
+        linked_entity = None
+        if linked_chat_id is not None:
+            try:
+                linked_entity = await client.get_entity(PeerChannel(abs(linked_chat_id) % (10**10)))
+            except Exception:
+                linked_entity = None
+        return {
+            "channel_tg_chat_id": _normalize_telethon_chat_id(getattr(entity, "id", None)),
+            "channel_username": getattr(entity, "username", None),
+            "channel_title": getattr(entity, "title", None) or getattr(entity, "name", None),
+            "channel_description": getattr(full_chat, "about", None),
+            "linked_tg_chat_id": linked_chat_id,
+            "linked_username": getattr(linked_entity, "username", None) if linked_entity is not None else None,
+            "linked_title": (
+                (getattr(linked_entity, "title", None) or getattr(linked_entity, "name", None))
+                if linked_entity is not None
+                else None
+            ),
+        }
+    except Exception:
+        return None
+    finally:
+        try:
+            await client.disconnect()
+        except Exception:
+            pass
+
+
+def _resolve_telegram_channel_bundle_meta(identifier: str) -> dict[str, Any] | None:
+    try:
+        return asyncio.run(_resolve_telegram_channel_bundle_meta_async(identifier))
+    except Exception:
+        return None
+
+
+def _bundle_global_chats(db: Session, base_chat: Chat) -> list[Chat]:
+    if not bool(getattr(base_chat, "is_global", False)):
+        return [base_chat]
+    source = getattr(base_chat, "source", None) or CHAT_SOURCE_TELEGRAM
+    if source != CHAT_SOURCE_TELEGRAM:
+        return [base_chat]
+    billing_key = getattr(base_chat, "billing_key", None)
+    if not billing_key:
+        return [base_chat]
+    rows = db.scalars(
+        select(Chat).where(
+            Chat.is_global.is_(True),
+            Chat.source == CHAT_SOURCE_TELEGRAM,
+            Chat.billing_key == billing_key,
+        ).order_by(Chat.id.asc())
+    ).all()
+    return rows or [base_chat]
+
+
+def _bundle_needs_individual_limit(db: Session, user_id: int, chats: list[Chat]) -> bool:
+    chat_ids = [c.id for c in chats]
+    if not chat_ids:
+        return False
+    exists_individual = db.execute(
+        select(user_chat_subscriptions).where(
+            user_chat_subscriptions.c.user_id == user_id,
+            user_chat_subscriptions.c.chat_id.in_(chat_ids),
+            user_chat_subscriptions.c.via_group_id.is_(None),
+        )
+    ).first()
+    return exists_individual is None
+
+
+def _upsert_individual_subscriptions(db: Session, user_id: int, chats: list[Chat]) -> None:
+    for chat in chats:
+        existing = db.execute(
+            select(user_chat_subscriptions).where(
+                user_chat_subscriptions.c.user_id == user_id,
+                user_chat_subscriptions.c.chat_id == chat.id,
+            )
+        ).first()
+        if existing:
+            db.execute(
+                update(user_chat_subscriptions)
+                .where(
+                    user_chat_subscriptions.c.user_id == user_id,
+                    user_chat_subscriptions.c.chat_id == chat.id,
+                )
+                .values(via_group_id=None, enabled=True)
+            )
+        else:
+            db.execute(
+                user_chat_subscriptions.insert().values(
+                    user_id=user_id, chat_id=chat.id, via_group_id=None, enabled=True
+                )
+            )
+
+
 def _chat_identifier(c: Chat) -> str:
     """Человекочитаемый идентификатор чата для API."""
     source = getattr(c, "source", None) or CHAT_SOURCE_TELEGRAM
@@ -2314,6 +2477,10 @@ def create_chat(body: ChatCreate, user: User = Depends(get_current_user), db: Se
     if source == CHAT_SOURCE_MAX:
         username, tg_chat_id, invite_hash = None, None, None
         max_chat_id = ident
+        billing_key = None
+        linked_tg_chat_id = None
+        linked_username = None
+        linked_title = None
         existing_global = db.scalar(
             select(Chat).where(
                 Chat.is_global.is_(True),
@@ -2324,8 +2491,27 @@ def create_chat(body: ChatCreate, user: User = Depends(get_current_user), db: Se
     else:
         username, tg_chat_id, invite_hash = _parse_chat_identifier(ident)
         max_chat_id = None
+        linked_tg_chat_id = None
+        linked_username = None
+        linked_title = None
+        meta = _resolve_telegram_channel_bundle_meta(ident)
+        if meta:
+            tg_chat_id = meta.get("channel_tg_chat_id") or tg_chat_id
+            username = meta.get("channel_username") or username
+            linked_tg_chat_id = meta.get("linked_tg_chat_id")
+            linked_username = meta.get("linked_username")
+            linked_title = meta.get("linked_title")
+        billing_key = _make_telegram_billing_key(tg_chat_id, username, invite_hash)
         existing_global = None
-        if tg_chat_id is not None:
+        if billing_key:
+            existing_global = db.scalar(
+                select(Chat).where(
+                    Chat.is_global.is_(True),
+                    Chat.source == CHAT_SOURCE_TELEGRAM,
+                    Chat.billing_key == billing_key,
+                )
+            )
+        if existing_global is None and tg_chat_id is not None:
             existing_global = db.scalar(
                 select(Chat).where(Chat.is_global.is_(True), Chat.source == CHAT_SOURCE_TELEGRAM, Chat.tg_chat_id == tg_chat_id)
             )
@@ -2339,31 +2525,11 @@ def create_chat(body: ChatCreate, user: User = Depends(get_current_user), db: Se
             )
 
     if existing_global is not None:
-        already = db.execute(
-            select(user_chat_subscriptions).where(
-                user_chat_subscriptions.c.user_id == user_id,
-                user_chat_subscriptions.c.chat_id == existing_global.id,
-            )
-        ).first()
-        if already:
-            if already[user_chat_subscriptions.c.via_group_id] is not None:
-                db.execute(
-                    update(user_chat_subscriptions)
-                    .where(
-                        user_chat_subscriptions.c.user_id == user_id,
-                        user_chat_subscriptions.c.chat_id == existing_global.id,
-                    )
-                    .values(via_group_id=None)
-                )
-            db.commit()
-        else:
+        bundle_chats = _bundle_global_chats(db, existing_global)
+        if _bundle_needs_individual_limit(db, user_id, bundle_chats):
             _check_limits(db, user, delta_channels=1)
-            db.execute(
-                user_chat_subscriptions.insert().values(
-                    user_id=user_id, chat_id=existing_global.id, via_group_id=None, enabled=True
-                )
-            )
-            db.commit()
+        _upsert_individual_subscriptions(db, user_id, bundle_chats)
+        db.commit()
         db.refresh(existing_global)
         return _chat_to_out(existing_global, is_owner=False)
 
@@ -2379,6 +2545,7 @@ def create_chat(body: ChatCreate, user: User = Depends(get_current_user), db: Se
         description=body.description,
         enabled=body.enabled,
         is_global=is_global,
+        billing_key=billing_key,
     )
 
     if body.groupIds:
@@ -2387,6 +2554,50 @@ def create_chat(body: ChatCreate, user: User = Depends(get_current_user), db: Se
     db.add(c)
     db.commit()
     db.refresh(c)
+
+    if source == CHAT_SOURCE_TELEGRAM and linked_tg_chat_id is not None:
+        linked_existing = db.scalar(
+            select(Chat).where(
+                Chat.user_id == user_id,
+                Chat.source == CHAT_SOURCE_TELEGRAM,
+                Chat.tg_chat_id == linked_tg_chat_id,
+            )
+        )
+        if linked_existing is None and linked_username:
+            linked_existing = db.scalar(
+                select(Chat).where(
+                    Chat.user_id == user_id,
+                    Chat.source == CHAT_SOURCE_TELEGRAM,
+                    Chat.username == linked_username,
+                )
+            )
+        if linked_existing is None:
+            linked_chat = Chat(
+                user_id=user_id,
+                source=CHAT_SOURCE_TELEGRAM,
+                username=linked_username,
+                tg_chat_id=linked_tg_chat_id,
+                max_chat_id=None,
+                invite_hash=None,
+                title=linked_title,
+                description=None,
+                enabled=body.enabled,
+                is_global=is_global,
+                billing_key=billing_key,
+            )
+            if body.groupIds:
+                linked_chat.groups = list(c.groups or [])
+            db.add(linked_chat)
+        else:
+            linked_existing.billing_key = billing_key
+            if linked_existing.enabled != bool(body.enabled):
+                linked_existing.enabled = bool(body.enabled)
+            if is_global:
+                linked_existing.is_global = True
+            if body.groupIds:
+                linked_existing.groups = list(c.groups or [])
+            db.add(linked_existing)
+        db.commit()
 
     return _chat_to_out(c, is_owner=True)
 
@@ -3224,29 +3435,10 @@ def subscribe_by_identifier(
             status_code=404,
             detail="Канал не найден среди доступных. Добавьте свой канал выше или попросите администратора добавить его в список доступных.",
         )
-    existing = db.execute(
-        select(user_chat_subscriptions).where(
-            user_chat_subscriptions.c.user_id == user.id,
-            user_chat_subscriptions.c.chat_id == c.id,
-        )
-    ).first()
-    if existing:
-        if existing[user_chat_subscriptions.c.via_group_id] is not None:
-            db.execute(
-                update(user_chat_subscriptions)
-                .where(
-                    user_chat_subscriptions.c.user_id == user.id,
-                    user_chat_subscriptions.c.chat_id == c.id,
-                )
-                .values(via_group_id=None)
-            )
-        db.commit()
-        db.refresh(c)
-        return _chat_to_out(c, is_owner=False)
-    _check_limits(db, user, delta_channels=1)
-    db.execute(
-        user_chat_subscriptions.insert().values(user_id=user.id, chat_id=c.id, via_group_id=None, enabled=True)
-    )
+    bundle_chats = _bundle_global_chats(db, c)
+    if _bundle_needs_individual_limit(db, user.id, bundle_chats):
+        _check_limits(db, user, delta_channels=1)
+    _upsert_individual_subscriptions(db, user.id, bundle_chats)
     db.commit()
     db.refresh(c)
     return _chat_to_out(c, is_owner=False)
@@ -3260,29 +3452,10 @@ def subscribe_chat(chat_id: int, user: User = Depends(get_current_user), db: Ses
         raise HTTPException(status_code=404, detail="chat not found")
     if not c.is_global:
         raise HTTPException(status_code=400, detail="only global channels can be subscribed to")
-    existing = db.execute(
-        select(user_chat_subscriptions).where(
-            user_chat_subscriptions.c.user_id == user.id,
-            user_chat_subscriptions.c.chat_id == chat_id,
-        )
-    ).first()
-    if existing:
-        if existing[user_chat_subscriptions.c.via_group_id] is not None:
-            db.execute(
-                update(user_chat_subscriptions)
-                .where(
-                    user_chat_subscriptions.c.user_id == user.id,
-                    user_chat_subscriptions.c.chat_id == chat_id,
-                )
-                .values(via_group_id=None)
-            )
-        db.commit()
-        db.refresh(c)
-        return _chat_to_out(c, is_owner=False)
-    _check_limits(db, user, delta_channels=1)
-    db.execute(
-        user_chat_subscriptions.insert().values(user_id=user.id, chat_id=chat_id, via_group_id=None, enabled=True)
-    )
+    bundle_chats = _bundle_global_chats(db, c)
+    if _bundle_needs_individual_limit(db, user.id, bundle_chats):
+        _check_limits(db, user, delta_channels=1)
+    _upsert_individual_subscriptions(db, user.id, bundle_chats)
     db.commit()
     db.refresh(c)
     return _chat_to_out(c, is_owner=False)
@@ -3327,10 +3500,15 @@ def update_chat_subscription(
 
 @app.delete("/api/chats/{chat_id}/unsubscribe")
 def unsubscribe_chat(chat_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict[str, Any]:
+    c = db.scalar(select(Chat).where(Chat.id == chat_id))
+    if not c:
+        raise HTTPException(status_code=404, detail="chat not found")
+    bundle_chats = _bundle_global_chats(db, c)
+    bundle_ids = [ch.id for ch in bundle_chats]
     deleted = db.execute(
         user_chat_subscriptions.delete().where(
             user_chat_subscriptions.c.user_id == user.id,
-            user_chat_subscriptions.c.chat_id == chat_id,
+            user_chat_subscriptions.c.chat_id.in_(bundle_ids),
         )
     )
     db.commit()
@@ -3347,10 +3525,12 @@ def delete_chat(chat_id: int, user: User = Depends(get_current_user), db: Sessio
     if c.user_id != user.id:
         # Пользователь не владелец: если он подписан на глобальный канал — отписать
         if c.is_global:
+            bundle_chats = _bundle_global_chats(db, c)
+            bundle_ids = [ch.id for ch in bundle_chats]
             r = db.execute(
                 user_chat_subscriptions.delete().where(
                     user_chat_subscriptions.c.user_id == user.id,
-                    user_chat_subscriptions.c.chat_id == chat_id,
+                    user_chat_subscriptions.c.chat_id.in_(bundle_ids),
                 )
             )
             db.commit()

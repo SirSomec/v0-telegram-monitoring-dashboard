@@ -16,3 +16,9 @@ __pycache__/
 
 # Cursor / temp
 .tmp/
+
+# Mail server runtime/secrets
+mailserver/docker-data/
+mailserver/config/opendkim/
+mailserver/config/postfix-accounts.cf
+mailserver/config/postfix-virtual.cf

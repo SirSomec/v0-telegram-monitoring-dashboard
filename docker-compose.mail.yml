@@ -1,0 +1,35 @@
+services:
+  mailserver:
+    image: ghcr.io/docker-mailserver/docker-mailserver:latest
+    hostname: mail
+    domainname: integration-wa.ru
+    container_name: mailserver
+    env_file:
+      - .env
+    environment:
+      ENABLE_IMAP: 1
+      ENABLE_OPENDKIM: 1
+      ENABLE_OPENDMARC: 1
+      ENABLE_POLICYD_SPF: 1
+      ENABLE_RSPAMD: 1
+      ENABLE_CLAMAV: 0
+      ENABLE_FAIL2BAN: 0
+      SSL_TYPE: manual
+      SSL_CERT_PATH: /etc/letsencrypt/live/mail.integration-wa.ru/fullchain.pem
+      SSL_KEY_PATH: /etc/letsencrypt/live/mail.integration-wa.ru/privkey.pem
+      POSTMASTER_ADDRESS: postmaster@integration-wa.ru
+      PERMIT_DOCKER: network
+      ONE_DIR: 1
+    ports:
+      - "25:25"
+      - "465:465"
+      - "587:587"
+      - "993:993"
+    volumes:
+      - ./mailserver/docker-data/mail-data/:/var/mail/
+      - ./mailserver/docker-data/mail-state/:/var/mail-state/
+      - ./mailserver/docker-data/mail-logs/:/var/log/mail/
+      - ./mailserver/config/:/tmp/docker-mailserver/
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - /etc/localtime:/etc/localtime:ro
+    restart: unless-stopped

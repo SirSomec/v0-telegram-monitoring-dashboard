@@ -181,6 +181,22 @@ def _migrate_chats_is_global_and_invite_hash() -> None:
             conn.commit()
 
 
+def _migrate_chats_billing_key() -> None:
+    """Добавить колонку billing_key в chats для объединения связанных чатов в одну биллинговую единицу."""
+    with engine.connect() as conn:
+        r = conn.execute(
+            text(
+                "SELECT 1 FROM information_schema.columns "
+                "WHERE table_schema = 'public' AND table_name = 'chats' AND column_name = 'billing_key'"
+            )
+        )
+        if r.scalar() is not None:
+            return
+        conn.execute(text("ALTER TABLE chats ADD COLUMN billing_key VARCHAR(128)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_chats_billing_key ON chats (billing_key)"))
+        conn.commit()
+
+
 def _migrate_support_ticket_user_last_read_at() -> None:
     """Добавить колонку user_last_read_at в support_tickets при отсутствии."""
     with engine.connect() as conn:
@@ -360,6 +376,7 @@ def init_db() -> None:
     _migrate_mentions_semantic_matched_span()
     _migrate_plan_limits()
     _migrate_chats_is_global_and_invite_hash()
+    _migrate_chats_billing_key()
     _migrate_support_ticket_user_last_read_at()
     _migrate_user_thematic_group_subscriptions()
     _migrate_user_chat_subscriptions_via_group_id()
