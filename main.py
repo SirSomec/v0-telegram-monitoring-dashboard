@@ -9,7 +9,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, Response, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, field_validator
@@ -526,6 +526,27 @@ class ParserStatusOut(BaseModel):
     multiUser: bool
     userId: int | None = None
     maxRunning: bool = False
+
+
+class ParserChannelDiagnosticsOut(BaseModel):
+    identifier: str
+    userId: int | None = None
+    parserRunning: bool
+    parserMode: str
+    parserUserId: int | None = None
+    parsedUsername: str | None = None
+    parsedTgChatId: int | None = None
+    parsedInviteHash: str | None = None
+    candidates: list[str] = Field(default_factory=list)
+    inActiveFilter: bool = False
+    activeFilterSize: int = 0
+    queueSize: int | None = None
+    queueMax: int | None = None
+    droppedMessages: int | None = None
+    dbMatches: int = 0
+    enabledMatches: int = 0
+    keywordEnabledCount: int | None = None
+    reasons: list[str] = Field(default_factory=list)
 
 
 class ParserSettingsOut(BaseModel):
@@ -2252,6 +2273,22 @@ def _parse_chat_identifier(ident: str) -> tuple[str | None, int | None, str | No
     return (raw.lstrip("@"), None, None)
 
 
+def _normalize_filter_token(value: str | int | None) -> str | int | None:
+    if value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    v = str(value).strip()
+    if not v:
+        return None
+    if v.lstrip("-").isdigit():
+        try:
+            return int(v)
+        except Exception:
+            pass
+    return v.lstrip("@").casefold()
+
+
 def _normalize_telethon_chat_id(chat_id: int | None) -> int | None:
     if chat_id is None:
         return None
@@ -3712,6 +3749,123 @@ def get_parser_status(_: User = Depends(get_current_admin)) -> ParserStatusOut:
 def get_parser_logs(_: User = Depends(get_current_admin)) -> list[str]:
     """Последние 80 строк лога парсера (ошибки, старт/стоп)."""
     return get_parser_log_lines()
+
+
+@app.get("/api/admin/parser/chats/diagnose", response_model=ParserChannelDiagnosticsOut)
+def diagnose_parser_chat(
+    identifier: str = Query(..., min_length=1, max_length=256),
+    userId: int | None = Query(None),
+    _: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+) -> ParserChannelDiagnosticsOut:
+    ident = identifier.strip()
+    username, tg_chat_id, invite_hash = _parse_chat_identifier(ident)
+    parsed_username = (username or "").strip().lstrip("@").casefold() or None
+    candidates_norm: list[str | int] = []
+    if tg_chat_id is not None:
+        candidates_norm.append(int(tg_chat_id))
+    if parsed_username:
+        candidates_norm.append(parsed_username)
+    candidates = [str(c) for c in candidates_norm]
+
+    diag = {
+        "running": False,
+        "multiUser": True,
+        "userId": None,
+        "activeFilter": [],
+        "activeFilterSize": 0,
+        "queueSize": None,
+        "queueMax": None,
+        "droppedMessages": None,
+    }
+    if scanner is not None:
+        try:
+            diag = scanner.diagnostics_snapshot()
+        except Exception:
+            pass
+
+    active_filter_norm: set[str | int] = set()
+    for token in (diag.get("activeFilter") or []):
+        n = _normalize_filter_token(token)
+        if n is not None:
+            active_filter_norm.add(n)
+    in_active_filter = any(c in active_filter_norm for c in candidates_norm)
+
+    reasons: list[str] = []
+    if not bool(diag.get("running")):
+        reasons.append("Парсер сейчас не запущен.")
+    if not candidates_norm:
+        reasons.append("Не удалось распознать идентификатор: используйте @username, ссылку t.me/... или chat_id.")
+
+    tg_chats_setting = get_parser_setting_str("TG_CHATS")
+    single_user_mode = not bool(diag.get("multiUser"))
+    if single_user_mode and tg_chats_setting.strip():
+        env_tokens = [_normalize_filter_token(x.strip()) for x in tg_chats_setting.split(",") if x.strip()]
+        env_set = {x for x in env_tokens if x is not None}
+        if not any(c in env_set for c in candidates_norm):
+            reasons.append(
+                "В режиме одного пользователя задан TG_CHATS: каналов из БД может не быть в фильтре парсера."
+            )
+    if not in_active_filter and bool(diag.get("running")) and candidates_norm:
+        reasons.append("Канал не попал в активный фильтр событий Telethon.")
+
+    db_rows: list[Chat] = []
+    if tg_chat_id is not None:
+        db_rows.extend(
+            db.scalars(
+                select(Chat).where(Chat.source == CHAT_SOURCE_TELEGRAM, Chat.tg_chat_id == tg_chat_id)
+            ).all()
+        )
+    if parsed_username:
+        db_rows.extend(
+            db.scalars(
+                select(Chat).where(
+                    Chat.source == CHAT_SOURCE_TELEGRAM,
+                    func.lower(Chat.username) == parsed_username,
+                )
+            ).all()
+        )
+    uniq_rows: dict[int, Chat] = {r.id: r for r in db_rows}
+    rows = list(uniq_rows.values())
+    if not rows:
+        reasons.append("Канал не найден в таблице chats (telegram).")
+    enabled_rows = [r for r in rows if bool(r.enabled)]
+    if rows and not enabled_rows:
+        reasons.append("Канал найден в БД, но выключен (enabled=false).")
+
+    keyword_enabled_count: int | None = None
+    if userId is not None:
+        keyword_enabled_count = int(
+            db.scalar(
+                select(func.count()).select_from(Keyword).where(
+                    Keyword.user_id == userId,
+                    Keyword.enabled.is_(True),
+                )
+            ) or 0
+        )
+        if keyword_enabled_count == 0:
+            reasons.append("У пользователя нет включённых ключевых слов — совпадения не будут создаваться.")
+
+    return ParserChannelDiagnosticsOut(
+        identifier=ident,
+        userId=userId,
+        parserRunning=bool(diag.get("running")),
+        parserMode="multi-user" if bool(diag.get("multiUser")) else "single-user",
+        parserUserId=diag.get("userId"),
+        parsedUsername=parsed_username,
+        parsedTgChatId=tg_chat_id,
+        parsedInviteHash=invite_hash,
+        candidates=candidates,
+        inActiveFilter=in_active_filter,
+        activeFilterSize=int(diag.get("activeFilterSize") or 0),
+        queueSize=diag.get("queueSize"),
+        queueMax=diag.get("queueMax"),
+        droppedMessages=diag.get("droppedMessages"),
+        dbMatches=len(rows),
+        enabledMatches=len(enabled_rows),
+        keywordEnabledCount=keyword_enabled_count,
+        reasons=reasons,
+    )
 
 
 # --- Email (SMTP) для админки: статус и тестовое письмо ---

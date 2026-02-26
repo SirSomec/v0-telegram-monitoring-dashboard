@@ -98,3 +98,24 @@ export type EmailStatus = {
   smtpFrom: string
 }
 
+export type ParserChannelDiagnostics = {
+  identifier: string
+  userId: number | null
+  parserRunning: boolean
+  parserMode: string
+  parserUserId: number | null
+  parsedUsername: string | null
+  parsedTgChatId: number | null
+  parsedInviteHash: string | null
+  candidates: string[]
+  inActiveFilter: boolean
+  activeFilterSize: number
+  queueSize: number | null
+  queueMax: number | null
+  droppedMessages: number | null
+  dbMatches: number
+  enabledMatches: number
+  keywordEnabledCount: number | null
+  reasons: string[]
+}
+

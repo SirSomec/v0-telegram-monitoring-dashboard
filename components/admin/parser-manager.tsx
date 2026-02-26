@@ -20,6 +20,7 @@ import type {
   ParserSettings,
   ParserSettingsUpdate,
   EmailStatus,
+  ParserChannelDiagnostics,
 } from "@/components/admin/types"
 
 const PARSER_HINTS: Record<string, string> = {
@@ -144,6 +145,11 @@ export function ParserManager() {
   const [linkedBackfillMessage, setLinkedBackfillMessage] = useState<string>("")
   const [linkedBackfillOk, setLinkedBackfillOk] = useState<boolean | null>(null)
   const [linkedBackfillRunning, setLinkedBackfillRunning] = useState(false)
+  const [diagIdentifier, setDiagIdentifier] = useState("")
+  const [diagUserId, setDiagUserId] = useState("")
+  const [diagLoading, setDiagLoading] = useState(false)
+  const [diagError, setDiagError] = useState("")
+  const [diagResult, setDiagResult] = useState<ParserChannelDiagnostics | null>(null)
 
   // Локальное состояние формы настроек (для редактирования)
   const [form, setForm] = useState<
@@ -421,6 +427,29 @@ export function ParserManager() {
     }
   }
 
+  async function runChannelDiagnosis() {
+    const ident = diagIdentifier.trim()
+    if (!ident) {
+      setDiagError("Введите идентификатор канала: @username, ссылку t.me/... или chat_id")
+      return
+    }
+    setDiagLoading(true)
+    setDiagError("")
+    try {
+      const params = new URLSearchParams()
+      params.set("identifier", ident)
+      const uid = diagUserId.trim()
+      if (uid) params.set("userId", uid)
+      const data = await apiJson<ParserChannelDiagnostics>(`/api/admin/parser/chats/diagnose?${params.toString()}`)
+      setDiagResult(data)
+    } catch (e) {
+      setDiagResult(null)
+      setDiagError(e instanceof Error ? e.message : "Ошибка диагностики")
+    } finally {
+      setDiagLoading(false)
+    }
+  }
+
   async function startMaxParser() {
     setActionLoading(true)
     setError("")
@@ -635,6 +664,87 @@ export function ParserManager() {
             <p className={linkedBackfillOk === false ? "text-destructive text-sm" : "text-muted-foreground text-sm"}>
               {linkedBackfillMessage}
             </p>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Диагностика канала</CardTitle>
+          <CardDescription>
+            Проверка, попал ли канал в текущий фильтр парсера и какие есть стоп-факторы.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div className="sm:col-span-2">
+              <Label htmlFor="diag-identifier">Канал</Label>
+              <Input
+                id="diag-identifier"
+                placeholder="@channel, https://t.me/channel, -100123..."
+                value={diagIdentifier}
+                onChange={(e) => setDiagIdentifier(e.target.value)}
+              />
+            </div>
+            <div>
+              <Label htmlFor="diag-user-id">User ID (опционально)</Label>
+              <Input
+                id="diag-user-id"
+                type="number"
+                placeholder="2"
+                value={diagUserId}
+                onChange={(e) => setDiagUserId(e.target.value)}
+              />
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button onClick={runChannelDiagnosis} disabled={diagLoading}>
+              {diagLoading ? "Проверка…" : "Проверить канал"}
+            </Button>
+            {diagError && <span className="text-destructive text-sm">{diagError}</span>}
+          </div>
+          {diagResult && (
+            <div className="space-y-3 rounded-lg border bg-muted/20 p-3 text-sm">
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant={diagResult.parserRunning ? "default" : "secondary"}>
+                  {diagResult.parserRunning ? "Парсер запущен" : "Парсер остановлен"}
+                </Badge>
+                <Badge variant={diagResult.inActiveFilter ? "default" : "secondary"}>
+                  {diagResult.inActiveFilter ? "Канал в активном фильтре" : "Канала нет в активном фильтре"}
+                </Badge>
+              </div>
+              <p className="text-muted-foreground">
+                Режим: <span className="font-medium">{diagResult.parserMode}</span>
+                {diagResult.parserUserId !== null ? `, parser user_id: ${diagResult.parserUserId}` : ""}
+                {diagResult.activeFilterSize ? `, размер фильтра: ${diagResult.activeFilterSize}` : ""}
+              </p>
+              <p className="text-muted-foreground">
+                Кандидаты: {diagResult.candidates.length ? diagResult.candidates.join(", ") : "—"}
+              </p>
+              <p className="text-muted-foreground">
+                В БД найдено: {diagResult.dbMatches}, включено: {diagResult.enabledMatches}
+                {diagResult.keywordEnabledCount !== null
+                  ? `, активных ключей у user ${diagResult.userId}: ${diagResult.keywordEnabledCount}`
+                  : ""}
+              </p>
+              {(diagResult.queueMax ?? 0) > 0 && (
+                <p className="text-muted-foreground">
+                  Очередь: {diagResult.queueSize ?? 0}/{diagResult.queueMax}, дропов: {diagResult.droppedMessages ?? 0}
+                </p>
+              )}
+              <div>
+                <p className="font-medium text-muted-foreground mb-1">Причины/подсказки</p>
+                {diagResult.reasons.length === 0 ? (
+                  <p>Явных стоп-факторов не найдено.</p>
+                ) : (
+                  <ul className="list-disc pl-5 space-y-1">
+                    {diagResult.reasons.map((r) => (
+                      <li key={r}>{r}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </div>
           )}
         </CardContent>
       </Card>

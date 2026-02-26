@@ -223,6 +223,11 @@ class TelegramScanner:
         self._semantic_executor: ThreadPoolExecutor | None = None
         self._chat_ids_to_users: dict[int, set[int]] = {}
         self._chat_usernames_to_users: dict[str, set[int]] = {}
+        self._state_lock = threading.Lock()
+        self._active_filter: tuple[str | int, ...] = ()
+        self._queue_max: int = 0
+        self._queue_size: int = 0
+        self._dropped_messages: int = 0
         self._embedding_cache: KeywordEmbeddingCache | None = (
             KeywordEmbeddingCache() if KeywordEmbeddingCache else None
         )
@@ -256,6 +261,24 @@ class TelegramScanner:
                 asyncio.run(client.disconnect())
             except Exception:
                 pass
+
+    def diagnostics_snapshot(self) -> dict[str, Any]:
+        """Снимок runtime-состояния сканера для админ-диагностики."""
+        with self._state_lock:
+            active_filter = list(self._active_filter)
+            queue_max = int(self._queue_max)
+            queue_size = int(self._queue_size)
+            dropped_messages = int(self._dropped_messages)
+        return {
+            "running": bool(self.is_running),
+            "multiUser": bool(self._multi_user),
+            "userId": self.user_id,
+            "activeFilter": active_filter,
+            "activeFilterSize": len(active_filter),
+            "queueMax": queue_max,
+            "queueSize": queue_size,
+            "droppedMessages": dropped_messages,
+        }
 
     def _run_thread(self) -> None:
         try:
@@ -304,12 +327,18 @@ class TelegramScanner:
             ) from None
 
         chats_filter = await self._load_chats_filter(client)
+        with self._state_lock:
+            self._active_filter = tuple(chats_filter or [])
+            self._queue_size = 0
+            self._dropped_messages = 0
         state: dict = {"filter": chats_filter, "handler": None}
         concurrency = max(1, min(50, get_parser_setting_int("MESSAGE_CONCURRENCY", 10)))
         # Защита от всплеска сообщений: ограниченная очередь + воркеры вместо
         # create_task на каждое сообщение (иначе можно "забить" event loop).
         queue_max = max(200, min(5000, concurrency * 200))
         message_queue: asyncio.Queue[events.NewMessage.Event | None] = asyncio.Queue(maxsize=queue_max)
+        with self._state_lock:
+            self._queue_max = queue_max
         dropped_messages = 0
         workers = max(1, min(16, get_parser_setting_int("SEMANTIC_EXECUTOR_WORKERS", 6)))
         self._semantic_executor = ThreadPoolExecutor(max_workers=workers) if embed else None
@@ -326,6 +355,8 @@ class TelegramScanner:
                         log_exception(e)
                 finally:
                     message_queue.task_done()
+                    with self._state_lock:
+                        self._queue_size = message_queue.qsize()
 
         worker_tasks = [asyncio.create_task(message_worker()) for _ in range(concurrency)]
 
@@ -333,8 +364,12 @@ class TelegramScanner:
             nonlocal dropped_messages
             try:
                 message_queue.put_nowait(event)
+                with self._state_lock:
+                    self._queue_size = message_queue.qsize()
             except asyncio.QueueFull:
                 dropped_messages += 1
+                with self._state_lock:
+                    self._dropped_messages = dropped_messages
                 if dropped_messages == 1 or dropped_messages % 100 == 0:
                     log_append(
                         f"Парсер: очередь сообщений переполнена ({message_queue.qsize()}/{queue_max}), "
@@ -360,6 +395,8 @@ class TelegramScanner:
                     if old_set != new_set:
                         client.remove_event_handler(state["handler"])
                         state["filter"] = new_filter
+                        with self._state_lock:
+                            self._active_filter = tuple(new_filter or [])
                         state["handler"] = client.add_event_handler(
                             on_message,
                             events.NewMessage(chats=new_filter or None),
