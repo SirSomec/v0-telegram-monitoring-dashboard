@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 import os
 import threading
 import time
@@ -305,18 +306,40 @@ class TelegramScanner:
         chats_filter = await self._load_chats_filter(client)
         state: dict = {"filter": chats_filter, "handler": None}
         concurrency = max(1, min(50, get_parser_setting_int("MESSAGE_CONCURRENCY", 10)))
-        msg_semaphore = asyncio.Semaphore(concurrency)
+        # Защита от всплеска сообщений: ограниченная очередь + воркеры вместо
+        # create_task на каждое сообщение (иначе можно "забить" event loop).
+        queue_max = max(200, min(5000, concurrency * 200))
+        message_queue: asyncio.Queue[events.NewMessage.Event | None] = asyncio.Queue(maxsize=queue_max)
+        dropped_messages = 0
         workers = max(1, min(16, get_parser_setting_int("SEMANTIC_EXECUTOR_WORKERS", 6)))
         self._semantic_executor = ThreadPoolExecutor(max_workers=workers) if embed else None
 
-        async def on_message(event: events.NewMessage.Event) -> None:
-            async def process_one() -> None:
-                async with msg_semaphore:
+        async def message_worker() -> None:
+            while True:
+                event = await message_queue.get()
+                try:
+                    if event is None:
+                        return
                     try:
                         await self._handle_message(event)
                     except Exception as e:
                         log_exception(e)
-            asyncio.create_task(process_one())
+                finally:
+                    message_queue.task_done()
+
+        worker_tasks = [asyncio.create_task(message_worker()) for _ in range(concurrency)]
+
+        async def on_message(event: events.NewMessage.Event) -> None:
+            nonlocal dropped_messages
+            try:
+                message_queue.put_nowait(event)
+            except asyncio.QueueFull:
+                dropped_messages += 1
+                if dropped_messages == 1 or dropped_messages % 100 == 0:
+                    log_append(
+                        f"Парсер: очередь сообщений переполнена ({message_queue.qsize()}/{queue_max}), "
+                        f"пропущено: {dropped_messages}"
+                    )
 
         state["handler"] = client.add_event_handler(
             on_message,
@@ -345,9 +368,19 @@ class TelegramScanner:
                 except Exception as e:
                     log_exception(e)
 
-        asyncio.create_task(refresh_chats_loop())
+        refresh_task = asyncio.create_task(refresh_chats_loop())
 
-        await client.run_until_disconnected()
+        try:
+            await client.run_until_disconnected()
+        finally:
+            refresh_task.cancel()
+            with suppress(Exception):
+                await refresh_task
+            for _ in worker_tasks:
+                with suppress(Exception):
+                    message_queue.put_nowait(None)
+            with suppress(Exception):
+                await asyncio.gather(*worker_tasks, return_exceptions=True)
 
     def _resolve_invite_cached_result(self, invite_hash: str) -> int | str | None:
         """Возвращает закэшированный chat_id/username по инвайту, если кэш валиден."""
