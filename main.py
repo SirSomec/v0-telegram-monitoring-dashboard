@@ -2976,7 +2976,12 @@ def _chat_to_out(
     created_at = c.created_at
     if created_at.tzinfo is None:
         created_at = created_at.replace(tzinfo=timezone.utc)
-    enabled = bool(subscription_enabled) if subscription_enabled is not None else bool(c.enabled)
+    # Для подписок реальное состояние мониторинга = состояние подписки пользователя И состояние канала.
+    enabled = (
+        bool(c.enabled) and bool(subscription_enabled)
+        if subscription_enabled is not None
+        else bool(c.enabled)
+    )
     bundle_size, has_linked_chat = _chat_bundle_meta(db, c)
     return ChatOut(
         id=c.id,
@@ -3196,7 +3201,27 @@ def update_chat(chat_id: int, body: ChatUpdate, user: User = Depends(get_current
     if body.description is not None:
         c.description = body.description
     if body.enabled is not None:
-        c.enabled = bool(body.enabled)
+        enabled_value = bool(body.enabled)
+        source = getattr(c, "source", None) or CHAT_SOURCE_TELEGRAM
+        billing_key = (getattr(c, "billing_key", None) or "").strip()
+        if source == CHAT_SOURCE_TELEGRAM and billing_key:
+            # Для бандла (канал + linked discussion) переключатель должен синхронно
+            # менять состояние всех чатов в бандле у одного владельца.
+            bundle_rows = db.scalars(
+                select(Chat).where(
+                    Chat.user_id == c.user_id,
+                    Chat.source == CHAT_SOURCE_TELEGRAM,
+                    Chat.billing_key == billing_key,
+                )
+            ).all()
+            if bundle_rows:
+                for row in bundle_rows:
+                    row.enabled = enabled_value
+                    db.add(row)
+            else:
+                c.enabled = enabled_value
+        else:
+            c.enabled = enabled_value
     if body.isGlobal is not None and user.is_admin:
         c.is_global = bool(body.isGlobal)
 
@@ -4260,11 +4285,13 @@ def update_chat_subscription(
     if not sub:
         raise HTTPException(status_code=404, detail="subscription not found")
     try:
+        bundle_chats = _bundle_global_chats(db, c) if bool(c.is_global) else [c]
+        bundle_ids = [ch.id for ch in bundle_chats]
         db.execute(
             update(user_chat_subscriptions)
             .where(
                 user_chat_subscriptions.c.user_id == user.id,
-                user_chat_subscriptions.c.chat_id == chat_id,
+                user_chat_subscriptions.c.chat_id.in_(bundle_ids),
             )
             .values(enabled=body.enabled)
         )

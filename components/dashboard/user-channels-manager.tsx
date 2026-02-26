@@ -397,9 +397,12 @@ export function UserChannelsManager(
                     </TableCell>
                     <TableCell>
                       <Switch
-                        checked={av.subscribed && (av.subscriptionEnabled ?? true)}
+                        checked={av.subscribed && (av.subscriptionEnabled ?? true) && av.enabled}
                         onCheckedChange={(v) => {
                           if (av.subscribed) {
+                            // Если канал глобально выключен админом, локальное включение
+                            // подписки не даст фактического мониторинга.
+                            if (v && !av.enabled) return
                             setSubscriptionEnabled(av.id, v)
                           } else {
                             if (v) subscribe(av.id)
