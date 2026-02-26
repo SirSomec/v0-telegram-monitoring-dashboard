@@ -482,24 +482,24 @@ class TelegramScanner:
                 user_ids = user_ids_by_chat.get(r.id, set())
                 if not user_ids:
                     continue
-                resolved: int | str | None = None
+                resolved_items: list[int | str] = []
                 if r.tg_chat_id is not None:
-                    resolved = int(r.tg_chat_id)
-                elif (r.username or "").strip():
-                    resolved = _normalize_chat_username(r.username)
-                elif getattr(r, "invite_hash", None) and client:
+                    resolved_items.append(int(r.tg_chat_id))
+                normalized_username = _normalize_chat_username(r.username)
+                if normalized_username:
+                    resolved_items.append(normalized_username)
+                if not resolved_items and getattr(r, "invite_hash", None) and client:
                     resolved = await self._resolve_invite(client, r.invite_hash)
-                if resolved is not None:
+                    if resolved is not None:
+                        resolved_items.append(resolved)
+                for resolved in resolved_items:
                     if isinstance(resolved, int):
                         self._chat_ids_to_users.setdefault(resolved, set()).update(user_ids)
-                        if resolved not in seen:
-                            seen.add(resolved)
-                            result.append(resolved)
                     else:
                         self._chat_usernames_to_users.setdefault(resolved, set()).update(user_ids)
-                        if resolved not in seen:
-                            seen.add(resolved)
-                            result.append(resolved)
+                    if resolved not in seen:
+                        seen.add(resolved)
+                        result.append(resolved)
             return result if result else None
 
         # Один пользователь: TG_CHATS или БД. Не загружаем чаты, если у пользователя тариф free.
@@ -552,21 +552,30 @@ class TelegramScanner:
                 .all()
             ) if sub_chat_ids else []
         seen_id: set[int] = set()
+        seen_filters: set[str | int] = set()
         parsed2: list[str | int] = []
         for r in rows_owned + rows_subs:
             if r.id in seen_id:
                 continue
             seen_id.add(r.id)
+            added_any = False
             if r.tg_chat_id is not None:
-                parsed2.append(int(r.tg_chat_id))
-            elif (r.username or "").strip():
+                cid = int(r.tg_chat_id)
+                if cid not in seen_filters:
+                    parsed2.append(cid)
+                    seen_filters.add(cid)
+                    added_any = True
+            if (r.username or "").strip():
                 uname = _normalize_chat_username(r.username)
-                if uname:
+                if uname and uname not in seen_filters:
                     parsed2.append(uname)
-            elif getattr(r, "invite_hash", None) and client:
+                    seen_filters.add(uname)
+                    added_any = True
+            if (not added_any) and getattr(r, "invite_hash", None) and client:
                 resolved = await self._resolve_invite(client, r.invite_hash)
-                if resolved is not None:
+                if resolved is not None and resolved not in seen_filters:
                     parsed2.append(resolved)
+                    seen_filters.add(resolved)
         return parsed2
 
     async def _handle_message(self, event: events.NewMessage.Event) -> None:
