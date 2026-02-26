@@ -55,6 +55,8 @@ type AvailableChannelDetails = {
   identifier: string
   description: string | null
   subscribed: boolean
+  subscriptionEnabled: boolean | null
+  enabled: boolean
 }
 
 export function ChannelGroupsSection({ onSubscribedChange, canAddResources = true }: { onSubscribedChange?: () => void; canAddResources?: boolean }) {
@@ -169,15 +171,18 @@ export function ChannelGroupsSection({ onSubscribedChange, canAddResources = tru
     }
   }
 
-  async function unsubscribeChannel(chatId: number) {
+  async function setChannelSubscriptionEnabled(chatId: number, enabled: boolean) {
     setActingChannelId(chatId)
     setError("")
     try {
-      await apiJson(`/api/chats/${chatId}`, { method: "DELETE" })
+      await apiJson(`/api/chats/${chatId}/subscription`, {
+        method: "PATCH",
+        body: JSON.stringify({ enabled }),
+      })
       await refresh()
       onSubscribedChange?.()
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Ошибка отписки от канала")
+      setError(e instanceof Error ? e.message : "Ошибка переключения мониторинга канала")
     } finally {
       setActingChannelId(null)
     }
@@ -335,6 +340,7 @@ export function ChannelGroupsSection({ onSubscribedChange, canAddResources = tru
                 const identifier = details?.identifier || channel.identifier
                 const description = details?.description
                 const isSubscribed = Boolean(details?.subscribed)
+                const monitorEnabled = isSubscribed && (details?.subscriptionEnabled ?? true) && Boolean(details?.enabled ?? true)
                 return (
                   <div
                     key={channel.id}
@@ -353,16 +359,24 @@ export function ChannelGroupsSection({ onSubscribedChange, canAddResources = tru
                     </div>
                     <div className="flex items-center gap-2 pt-1 shrink-0">
                       <span className="text-xs text-muted-foreground hidden sm:inline">
-                        {isSubscribed ? "Подписан" : "Не подписан"}
+                        {monitorEnabled ? "Мониторинг вкл" : isSubscribed ? "Мониторинг выкл" : "Не подписан"}
                       </span>
                       <Switch
-                        checked={isSubscribed}
-                        disabled={actingChannelId !== null || (!canAddResources && !isSubscribed)}
+                        checked={monitorEnabled}
+                        disabled={
+                          actingChannelId !== null ||
+                          (!canAddResources && !isSubscribed) ||
+                          (isSubscribed && !details?.enabled)
+                        }
                         onCheckedChange={(checked) => {
+                          if (!isSubscribed) {
+                            if (checked) subscribeChannel(channel.id)
+                            return
+                          }
                           if (checked) {
-                            subscribeChannel(channel.id)
+                            setChannelSubscriptionEnabled(channel.id, true)
                           } else {
-                            unsubscribeChannel(channel.id)
+                            setChannelSubscriptionEnabled(channel.id, false)
                           }
                         }}
                       />
