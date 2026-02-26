@@ -58,7 +58,17 @@ function scoreChannelMatch(ch: ChatAvailableOut, q: string): number {
 }
 
 export function UserChannelsManager(
-  { canAddResources = true, onMyChannelsChange }: { canAddResources?: boolean; onMyChannelsChange?: (count: number) => void } = {}
+  {
+    canAddResources = true,
+    onMyChannelsChange,
+    onSubscriptionsChange,
+    refreshToken = 0,
+  }: {
+    canAddResources?: boolean
+    onMyChannelsChange?: (count: number) => void
+    onSubscriptionsChange?: () => void
+    refreshToken?: number
+  } = {}
 ) {
   const [myChannels, setMyChannels] = useState<ChatOut[]>([])
   const [availableChannels, setAvailableChannels] = useState<ChatAvailableOut[]>([])
@@ -102,7 +112,7 @@ export function UserChannelsManager(
 
   useEffect(() => {
     refresh()
-  }, [])
+  }, [refreshToken])
 
   const canCreate = identifier.trim().length > 0
 
@@ -126,6 +136,7 @@ export function UserChannelsManager(
       setDescription("")
       setEnabled(true)
       await refresh()
+      onSubscriptionsChange?.()
     } catch (e) {
       setError(e instanceof Error ? e.message : "Ошибка создания")
     } finally {
@@ -139,6 +150,7 @@ export function UserChannelsManager(
     try {
       await apiJson<{ ok: boolean }>(`/api/chats/${c.id}`, { method: "DELETE" })
       await refresh()
+      onSubscriptionsChange?.()
     } catch (e) {
       setError(e instanceof Error ? e.message : "Ошибка")
     } finally {
@@ -156,6 +168,7 @@ export function UserChannelsManager(
         body: JSON.stringify({ enabled: value }),
       })
       await refresh()
+      onSubscriptionsChange?.()
     } catch (e) {
       setError(e instanceof Error ? e.message : "Ошибка обновления")
     } finally {
@@ -169,6 +182,7 @@ export function UserChannelsManager(
     try {
       await apiJson<ChatOut>(`/api/chats/${chatId}/subscribe`, { method: "POST" })
       await refresh()
+      onSubscriptionsChange?.()
     } catch (e) {
       setError(e instanceof Error ? e.message : "Ошибка подписки")
     } finally {
@@ -185,6 +199,7 @@ export function UserChannelsManager(
         body: JSON.stringify({ enabled }),
       })
       await refresh()
+      onSubscriptionsChange?.()
     } catch (e) {
       setError(e instanceof Error ? e.message : "Ошибка обновления")
     } finally {

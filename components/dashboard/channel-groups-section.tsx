@@ -59,7 +59,9 @@ type AvailableChannelDetails = {
   enabled: boolean
 }
 
-export function ChannelGroupsSection({ onSubscribedChange, canAddResources = true }: { onSubscribedChange?: () => void; canAddResources?: boolean }) {
+export function ChannelGroupsSection(
+  { onSubscribedChange, canAddResources = true, refreshToken = 0 }: { onSubscribedChange?: () => void; canAddResources?: boolean; refreshToken?: number }
+) {
   const [groups, setGroups] = useState<ChatGroupAvailableOut[]>([])
   const [planData, setPlanData] = useState<PlanUsage | null>(null)
   const [channelsMap, setChannelsMap] = useState<Record<number, AvailableChannelDetails>>({})
@@ -96,7 +98,7 @@ export function ChannelGroupsSection({ onSubscribedChange, canAddResources = tru
 
   useEffect(() => {
     refresh()
-  }, [refresh])
+  }, [refresh, refreshToken])
 
   const groupsUsed = planData?.groups ?? 0
   const maxGroups = planData?.limits.maxGroups ?? 0
@@ -329,7 +331,7 @@ export function ChannelGroupsSection({ onSubscribedChange, canAddResources = tru
           <DialogHeader>
             <DialogTitle>{openedGroup?.name || "Каналы группы"}</DialogTitle>
             <DialogDescription>
-              Переключатель управляет подпиской на канал. После подписки на группу можно отключить отдельные каналы.
+              Переключатель управляет мониторингом канала. Подписка сохраняется, можно отдельно выключать и включать мониторинг.
             </DialogDescription>
           </DialogHeader>
           <div className="max-h-[60vh] overflow-y-auto pr-1 space-y-2">

@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import { cn } from "@/lib/utils"
 import { SidebarNav } from "@/components/dashboard/sidebar-nav"
@@ -31,6 +31,17 @@ export default function DashboardPage() {
   const [channelsRefreshKey, setChannelsRefreshKey] = useState(0)
   const [supportHasUnread, setSupportHasUnread] = useState(false)
   const [hasTrackedChannels, setHasTrackedChannels] = useState<boolean | null>(null)
+  const channelsRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const scheduleChannelsRefresh = useCallback(() => {
+    if (channelsRefreshTimerRef.current !== null) {
+      clearTimeout(channelsRefreshTimerRef.current)
+    }
+    channelsRefreshTimerRef.current = setTimeout(() => {
+      setChannelsRefreshKey((k) => k + 1)
+      channelsRefreshTimerRef.current = null
+    }, 250)
+  }, [])
 
   async function fetchSupportUnread() {
     try {
@@ -89,6 +100,14 @@ export default function DashboardPage() {
     if (!user) return
     fetchTrackedChannelsPresence()
   }, [user, channelsRefreshKey])
+
+  useEffect(() => {
+    return () => {
+      if (channelsRefreshTimerRef.current !== null) {
+        clearTimeout(channelsRefreshTimerRef.current)
+      }
+    }
+  }, [])
 
   function handleNavigate(item: string) {
     if (item === "Оплата") {
@@ -154,10 +173,15 @@ export default function DashboardPage() {
                   Подпишитесь на группы каналов по тематикам или управляйте своими каналами для мониторинга.
                 </p>
               </div>
-              <ChannelGroupsSection onSubscribedChange={() => setChannelsRefreshKey((k) => k + 1)} canAddResources={user.plan !== "free"} />
-              <UserChannelsManager
-                key={channelsRefreshKey}
+              <ChannelGroupsSection
+                refreshToken={channelsRefreshKey}
+                onSubscribedChange={scheduleChannelsRefresh}
                 canAddResources={user.plan !== "free"}
+              />
+              <UserChannelsManager
+                refreshToken={channelsRefreshKey}
+                canAddResources={user.plan !== "free"}
+                onSubscriptionsChange={scheduleChannelsRefresh}
                 onMyChannelsChange={(count) => setHasTrackedChannels(count > 0)}
               />
             </>
