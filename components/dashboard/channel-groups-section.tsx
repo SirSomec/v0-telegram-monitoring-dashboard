@@ -177,10 +177,22 @@ export function ChannelGroupsSection(
     setActingChannelId(chatId)
     setError("")
     try {
-      await apiJson(`/api/chats/${chatId}/subscription`, {
-        method: "PATCH",
-        body: JSON.stringify({ enabled }),
-      })
+      try {
+        await apiJson(`/api/chats/${chatId}/subscription`, {
+          method: "PATCH",
+          body: JSON.stringify({ enabled }),
+        })
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e)
+        if (!msg.includes("use PATCH /api/chats/:id for own channels")) {
+          throw e
+        }
+        // Для собственных каналов backend принимает переключение через PATCH /api/chats/:id.
+        await apiJson(`/api/chats/${chatId}`, {
+          method: "PATCH",
+          body: JSON.stringify({ enabled }),
+        })
+      }
       await refresh()
       onSubscribedChange?.()
     } catch (e) {
