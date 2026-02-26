@@ -2224,16 +2224,26 @@ def _parse_chat_identifier(ident: str) -> tuple[str | None, int | None, str | No
                 part = s.split(prefix, 1)[-1].split("?")[0].rstrip("/")
                 if not part:
                     break
-                # t.me/c/1234567890 -> -1001234567890
-                if part.startswith("c/") and part[2:].lstrip("-").isdigit():
-                    return (None, -1000000000000 - int(part[2:]), None)
-                # t.me/joinchat/HASH или t.me/+HASH
+                # t.me/s/username[/123] -> username
+                if part.startswith("s/"):
+                    part = part[2:].lstrip("/")
+                # t.me/c/1234567890[/123] -> -1001234567890
+                if part.startswith("c/"):
+                    c_parts = part.split("/")
+                    if len(c_parts) >= 2 and c_parts[1].lstrip("-").isdigit():
+                        return (None, -1000000000000 - int(c_parts[1]), None)
+                # t.me/joinchat/HASH[/...] или t.me/+HASH[/...]
                 if part.startswith("joinchat/"):
-                    return (None, None, part[9:].strip())
+                    invite_part = part[9:].strip()
+                    invite_hash = invite_part.split("/", 1)[0].strip()
+                    return (None, None, invite_hash or None)
                 if part.startswith("+"):
-                    return (None, None, part[1:].strip())
-                # t.me/username
-                return (part.strip(), None, None)
+                    invite_part = part[1:].strip()
+                    invite_hash = invite_part.split("/", 1)[0].strip()
+                    return (None, None, invite_hash or None)
+                # t.me/username[/123]
+                username = part.split("/", 1)[0].strip().lstrip("@")
+                return (username or None, None, None)
         return (None, None, None)
     # Числовой chat_id
     if raw.lstrip("-").isdigit():

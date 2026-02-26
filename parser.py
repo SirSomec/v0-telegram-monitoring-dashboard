@@ -178,6 +178,26 @@ def _parse_chat_identifiers(raw: str | None) -> list[str]:
     return items
 
 
+def _normalize_chat_username(value: str | None) -> str | None:
+    """Нормализовать username канала из @name, t.me/name[/post], telegram.me/..."""
+    v = (value or "").strip()
+    if not v:
+        return None
+    if "t.me/" in v or "telegram.me/" in v:
+        s = v.replace("https://", "").replace("http://", "").strip()
+        for prefix in ("t.me/", "telegram.me/"):
+            if prefix in s:
+                v = s.split(prefix, 1)[-1]
+                break
+    v = v.split("?", 1)[0].strip().strip("/")
+    if v.startswith("s/"):
+        v = v[2:].lstrip("/")
+    v = v.lstrip("@")
+    if "/" in v:
+        v = v.split("/", 1)[0].strip()
+    return v.casefold() if v else None
+
+
 class TelegramScanner:
     """
     Сканер Telegram на Telethon.
@@ -466,7 +486,7 @@ class TelegramScanner:
                 if r.tg_chat_id is not None:
                     resolved = int(r.tg_chat_id)
                 elif (r.username or "").strip():
-                    resolved = (r.username or "").strip()
+                    resolved = _normalize_chat_username(r.username)
                 elif getattr(r, "invite_hash", None) and client:
                     resolved = await self._resolve_invite(client, r.invite_hash)
                 if resolved is not None:
@@ -540,7 +560,9 @@ class TelegramScanner:
             if r.tg_chat_id is not None:
                 parsed2.append(int(r.tg_chat_id))
             elif (r.username or "").strip():
-                parsed2.append((r.username or "").strip())
+                uname = _normalize_chat_username(r.username)
+                if uname:
+                    parsed2.append(uname)
             elif getattr(r, "invite_hash", None) and client:
                 resolved = await self._resolve_invite(client, r.invite_hash)
                 if resolved is not None:
@@ -579,8 +601,9 @@ class TelegramScanner:
             user_ids = set()
             if chat_id is not None:
                 user_ids |= self._chat_ids_to_users.get(int(chat_id), set())
-            if chat_username:
-                user_ids |= self._chat_usernames_to_users.get((chat_username or "").strip(), set())
+            normalized_chat_username = _normalize_chat_username(chat_username)
+            if normalized_chat_username:
+                user_ids |= self._chat_usernames_to_users.get(normalized_chat_username, set())
             if not user_ids:
                 return
             keywords_by_user = self._load_keywords_multi()
