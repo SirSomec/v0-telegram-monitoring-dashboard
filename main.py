@@ -4270,12 +4270,33 @@ def update_chat_subscription(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> ChatOut:
-    """Включить/выключить мониторинг для подписанного канала (только для подписок, не для своих каналов)."""
+    """Включить/выключить мониторинг для канала в контексте подписки.
+    Для собственных каналов работает как переключение Chat.enabled.
+    """
     c = db.scalar(select(Chat).where(Chat.id == chat_id))
     if not c:
         raise HTTPException(status_code=404, detail="chat not found")
     if c.user_id == user.id:
-        raise HTTPException(status_code=400, detail="use PATCH /api/chats/:id for own channels")
+        enabled_value = bool(body.enabled)
+        source = getattr(c, "source", None) or CHAT_SOURCE_TELEGRAM
+        billing_key = (getattr(c, "billing_key", None) or "").strip()
+        if source == CHAT_SOURCE_TELEGRAM and billing_key:
+            bundle_rows = db.scalars(
+                select(Chat).where(
+                    Chat.user_id == c.user_id,
+                    Chat.source == CHAT_SOURCE_TELEGRAM,
+                    Chat.billing_key == billing_key,
+                )
+            ).all()
+            for row in bundle_rows:
+                row.enabled = enabled_value
+                db.add(row)
+        else:
+            c.enabled = enabled_value
+            db.add(c)
+        db.commit()
+        db.refresh(c)
+        return _chat_to_out(c, is_owner=True, db=db)
     sub = db.execute(
         select(user_chat_subscriptions).where(
             user_chat_subscriptions.c.user_id == user.id,
@@ -4283,6 +4304,13 @@ def update_chat_subscription(
         )
     ).first()
     if not sub:
+        # Без подписки: при включении глобального канала создаём подписку на весь бандл.
+        if bool(body.enabled) and bool(c.is_global):
+            bundle_chats = _bundle_global_chats(db, c)
+            _upsert_individual_subscriptions(db, user.id, bundle_chats)
+            db.commit()
+            db.refresh(c)
+            return _chat_to_out(c, is_owner=False, subscription_enabled=True, db=db)
         raise HTTPException(status_code=404, detail="subscription not found")
     try:
         bundle_chats = _bundle_global_chats(db, c) if bool(c.is_global) else [c]
