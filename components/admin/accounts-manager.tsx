@@ -89,6 +89,7 @@ type AdminMention = {
   id: string
   groupName: string
   userName: string
+  senderPhone?: string | null
   message: string
   keyword: string
   timestamp: string
@@ -728,6 +729,9 @@ export function AccountsManager() {
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="text-sm font-medium text-foreground">{m.groupName}</span>
                         <span className="text-xs text-muted-foreground">/ {m.userName}</span>
+                        {m.senderPhone ? (
+                          <span className="text-xs font-mono text-muted-foreground">{m.senderPhone}</span>
+                        ) : null}
                         <Badge variant="secondary">{m.keyword}</Badge>
                         <Badge variant={m.isLead ? "default" : "outline"}>{m.isLead ? "Лид" : "Обычное"}</Badge>
                         <Badge variant={m.isRead ? "outline" : "default"}>{m.isRead ? "Прочитано" : "Новое"}</Badge>

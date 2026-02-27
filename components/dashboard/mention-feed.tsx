@@ -20,6 +20,8 @@ export interface MentionGroup {
   userName: string
   userInitials: string
   userLink?: string | null
+  /** Номер телефона лида, если доступен */
+  senderPhone?: string | null
   message: string
   keywords: string[]
   /** Фрагменты сообщения, давшие семантическое совпадение (для подсветки). */
@@ -474,6 +476,11 @@ export function MentionFeed({ userId }: { userId?: number }) {
                         {mention.userName}
                       </span>
                     )}
+                    {mention.senderPhone ? (
+                      <span className="text-xs text-muted-foreground font-mono">
+                        {mention.senderPhone}
+                      </span>
+                    ) : null}
                     <Badge variant="outline" className="ml-auto border-border text-xs text-muted-foreground font-mono">
                       {mention.timestamp}
                     </Badge>

@@ -58,6 +58,21 @@ def _migrate_mentions_sender_username() -> None:
         conn.commit()
 
 
+def _migrate_mentions_sender_phone() -> None:
+    """Добавить колонку sender_phone в mentions (номер телефона лида, если доступен)."""
+    with engine.connect() as conn:
+        r = conn.execute(
+            text(
+                "SELECT 1 FROM information_schema.columns "
+                "WHERE table_name = 'mentions' AND column_name = 'sender_phone'"
+            )
+        )
+        if r.scalar() is not None:
+            return
+        conn.execute(text("ALTER TABLE mentions ADD COLUMN sender_phone VARCHAR(32)"))
+        conn.commit()
+
+
 def _migrate_users_plan() -> None:
     """Добавить колонки plan_slug и plan_expires_at в users, если их ещё нет."""
     with engine.connect() as conn:
@@ -369,6 +384,7 @@ def init_db() -> None:
     Base.metadata.create_all(bind=engine)
     _migrate_keywords_use_semantic()
     _migrate_mentions_sender_username()
+    _migrate_mentions_sender_phone()
     _migrate_users_plan()
     _migrate_chats_source_and_max_chat_id()
     _migrate_mentions_source()

@@ -266,6 +266,8 @@ class MaxScanner:
                 if not sender_name and from_obj.get("last_name"):
                     sender_name = f"{sender_name} {from_obj.get('last_name')}".strip()
                 sender_username = from_obj.get("username")
+                sender_phone_raw = from_obj.get("phone")
+                sender_phone = str(sender_phone_raw).strip() if sender_phone_raw else None
 
                 text_cf = text.casefold()
                 created_at = _now_utc()
@@ -311,6 +313,7 @@ class MaxScanner:
                                 sender_id=int(sender_id) if sender_id is not None else None,
                                 sender_name=sender_name or None,
                                 sender_username=str(sender_username).strip() if sender_username else None,
+                                sender_phone=sender_phone,
                                 is_read=False,
                                 is_lead=False,
                                 created_at=created_at,

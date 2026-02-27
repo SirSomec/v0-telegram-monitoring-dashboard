@@ -367,12 +367,15 @@ export function ChannelGroupsSection(
                         checked={monitorEnabled}
                         disabled={
                           actingChannelId !== null ||
-                          (!canAddResources && !isSubscribed) ||
-                          (isSubscribed && !details?.enabled)
+                          (!canAddResources && !isSubscribed)
                         }
                         onCheckedChange={(checked) => {
                           if (!isSubscribed) {
                             if (checked) subscribeChannel(channel.id)
+                            return
+                          }
+                          if (checked && details?.enabled === false) {
+                            setError("Этот канал временно отключён администратором. Включить мониторинг можно после его активации в админке.")
                             return
                           }
                           if (checked) {

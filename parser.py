@@ -668,6 +668,8 @@ class TelegramScanner:
         first_name = getattr(sender, "first_name", None) or ""
         last_name = getattr(sender, "last_name", None) or ""
         sender_username = getattr(sender, "username", None)
+        sender_phone_raw = getattr(sender, "phone", None)
+        sender_phone = str(sender_phone_raw).strip() if sender_phone_raw else None
         sender_name = (f"{first_name} {last_name}").strip() or sender_username
 
         created_at = msg.date
@@ -732,6 +734,7 @@ class TelegramScanner:
                         sender_id=int(sender_id) if sender_id is not None else None,
                         sender_name=sender_name,
                         sender_username=sender_username,
+                        sender_phone=sender_phone,
                         is_read=False,
                         is_lead=False,
                         semantic_similarity=sim,
@@ -816,6 +819,7 @@ class TelegramScanner:
                     sender_id=int(sender_id) if sender_id is not None else None,
                     sender_name=sender_name,
                     sender_username=sender_username,
+                    sender_phone=sender_phone,
                     is_read=False,
                     is_lead=False,
                     semantic_similarity=sim,

@@ -368,6 +368,7 @@ class MentionOut(BaseModel):
     userName: str
     userInitials: str
     userLink: str | None = None  # ссылка на профиль TG: t.me/username или tg://user?id=...
+    senderPhone: str | None = None  # номер телефона лида, если доступен
     message: str
     keyword: str
     timestamp: str
@@ -388,6 +389,7 @@ class MentionGroupOut(BaseModel):
     userName: str
     userInitials: str
     userLink: str | None = None
+    senderPhone: str | None = None  # номер телефона лида, если доступен
     message: str
     keywords: list[str]
     """Фрагменты сообщения, давшие семантическое совпадение (в том же порядке, что и keywords); для подсветки."""
@@ -1031,6 +1033,7 @@ def _mention_to_front(m: Mention) -> MentionOut:
         userName=user_name,
         userInitials=_initials(user_name),
         userLink=_user_profile_link(m),
+        senderPhone=(getattr(m, "sender_phone", None) or "").strip() or None,
         message=(m.message_text or ""),
         keyword=m.keyword_text,
         timestamp=_humanize_ru(created_at),
@@ -3608,7 +3611,7 @@ def get_admin_user_mentions(
         order_sql = "DESC" if sortOrder == "desc" else "ASC"
         rows = db.execute(
             text(
-                "SELECT id, chat_name, chat_username, sender_name, sender_id, "
+                "SELECT id, chat_name, chat_username, sender_name, sender_id, sender_phone, "
                 "message_text, keyword_text, is_lead, is_read, created_at, chat_id, message_id "
                 "FROM mentions "
                 f"{where_sql} "
@@ -3630,6 +3633,7 @@ def get_admin_user_mentions(
             group_name = (r.get("chat_name") or r.get("chat_username") or "Неизвестный чат").strip()
             user_name = (r.get("sender_name") or "Неизвестный пользователь").strip()
             sender_id = r.get("sender_id")
+            sender_phone = (r.get("sender_phone") or "").strip() or None
             out.append(
                 MentionOut(
                     id=str(r.get("id")),
@@ -3638,6 +3642,7 @@ def get_admin_user_mentions(
                     userName=user_name,
                     userInitials=_initials(user_name),
                     userLink=(f"tg://user?id={sender_id}" if sender_id is not None else None),
+                    senderPhone=sender_phone,
                     message=(r.get("message_text") or ""),
                     keyword=(r.get("keyword_text") or ""),
                     timestamp=_humanize_ru(created_at),
@@ -4399,6 +4404,7 @@ def _group_keys():
         Mention.sender_id,
         Mention.sender_name,
         Mention.sender_username,
+        Mention.sender_phone,
         Mention.source,
     ]
 
@@ -4415,6 +4421,7 @@ def _row_to_group_out(row) -> MentionGroupOut:
         user_link = f"https://t.me/{str(row.sender_username).strip().lstrip('@')}"
     elif getattr(row, "sender_id", None) is not None:
         user_link = f"tg://user?id={row.sender_id}"
+    sender_phone = (getattr(row, "sender_phone", None) or "").strip() or None
     kws = list(row.keywords or [])
     spans = list(getattr(row, "matched_spans", None) or [])
     seen: set[str] = set()
@@ -4435,6 +4442,7 @@ def _row_to_group_out(row) -> MentionGroupOut:
         userName=user_name,
         userInitials=_initials(user_name),
         userLink=user_link,
+        senderPhone=sender_phone,
         message=(row.message_text or ""),
         keywords=keywords,
         matchedSpans=matched_spans_out if matched_spans_out else None,
@@ -4504,6 +4512,7 @@ def list_mentions(
             Mention.sender_id,
             Mention.sender_name,
             Mention.sender_username,
+            Mention.sender_phone,
             Mention.source,
             func.array_agg(Mention.keyword_text).label("keywords"),
             func.array_agg(Mention.semantic_matched_span).label("matched_spans"),
@@ -4531,6 +4540,7 @@ def list_mentions(
                 Mention.sender_id,
                 Mention.sender_name,
                 Mention.sender_username,
+                Mention.sender_phone,
                 Mention.source,
                 func.array_agg(Mention.keyword_text).label("keywords"),
                 func.bool_or(Mention.is_lead).label("is_lead"),
@@ -4596,16 +4606,17 @@ def export_mentions_csv(
     out = io.StringIO()
     writer = csv.writer(out)
     writer.writerow(
-        ["id", "created_at", "source", "chat", "sender", "message", "keyword", "is_lead", "is_read", "user_link"]
+        ["id", "created_at", "source", "chat", "sender", "phone", "message", "keyword", "is_lead", "is_read", "user_link"]
     )
     for m in rows:
         created = m.created_at.isoformat() if m.created_at else ""
         src = getattr(m, "source", None) or "telegram"
         chat = (m.chat_name or m.chat_username or "").strip()
         sender = (m.sender_name or "").strip()
+        phone = (getattr(m, "sender_phone", None) or "").strip()
         user_link = _user_profile_link(m) or ""
         writer.writerow(
-            [str(m.id), created, src, chat, sender, (m.message_text or ""), m.keyword_text, m.is_lead, m.is_read, user_link]
+            [str(m.id), created, src, chat, sender, phone, (m.message_text or ""), m.keyword_text, m.is_lead, m.is_read, user_link]
         )
     body = out.getvalue().encode("utf-8-sig")
     return Response(
